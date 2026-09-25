@@ -1,0 +1,123 @@
+"""Calibrates the physics baseline and scores it at the 11 gauges.
+
+C1 comes from the parked runs of the tower; the other five constants are
+the median of per-simulation estimates over the calibration split. The
+moment at every gauge is the base reconstruction times the height factor
+of the tower (floatsense.heights).
+
+Examples:
+  # within tower: calibrate on the train split of opt2, score its test split
+  python scripts/physics/run.py --flagfile=scripts/physics/config.cfg \
+      --tower=opt2
+
+  # zero-shot ref -> opt2: constants and height profile of ref
+  python scripts/physics/run.py ... --tower=opt2 --source=ref
+
+  # ten-shot: constants recalibrated on 10 opt2 simulations
+  python scripts/physics/run.py ... --tower=opt2 \
+      --train_split=fewshot/train_10_draw0 --tag=fs10_draw0
+"""
+
+import json
+import os
+import sys
+
+from absl import app
+from absl import flags
+from absl import logging
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+
+from floatsense import Calibration  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense import PhysicsReconstruction  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense import load_tower  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense import parked_c_theta  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.heights import calibrate_profile  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.heights import evaluate_heights  # noqa: E402  pylint: disable=wrong-import-position
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_string("dataset_dir", None,
+                    "Released FLOATSense dataset, one folder per tower.")
+flags.DEFINE_string("floatbench_dir", None,
+                    "FLOATBench dataset (tower mass of the height factor).")
+flags.DEFINE_string("tower", "opt2", "Tower scored (ref, opt1 or opt2).")
+flags.DEFINE_string("source", None,
+                    "Zero-shot: apply the constants and the height profile "
+                    "of this tower instead of calibrating on --tower.")
+flags.DEFINE_string("train_split", "train", "Calibration split.")
+flags.DEFINE_string("test_split", "test", "Evaluation split.")
+flags.DEFINE_string("direction", "fa", "Direction ('fa' or 'ss').")
+flags.DEFINE_string("tag", None,
+                    "Output suffix; defaults to none, or zs_<source>.")
+flags.DEFINE_string("output_root", "outputs/physics", "Root of the outputs.")
+flags.DEFINE_string("mass_csv", None,
+                    "Optional tower mass profile replacing the FLOATBench one.")
+flags.DEFINE_float("min_time", 400.0, "Start of the scored window (s).")
+flags.DEFINE_float("max_time", 1000.0, "End of the scored window (s).")
+flags.DEFINE_float("pad_seconds", 50.0, "Margin around the scored window.")
+flags.DEFINE_integer("segment_length", 4096, "Welch segment length.")
+flags.DEFINE_list("lf_fit_band", ["0.01", "0.05"],
+                  "Bins fitting the low-frequency polynomial (Hz).")
+flags.DEFINE_float("operating_power_kw", 100.0,
+                   "Power above which a sample counts as operating.")
+flags.DEFINE_float("lowpass_hz", 3.0, "Low-pass before the damage metric.")
+flags.DEFINE_integer("max_eval_sims", 0, "If > 0, cap the evaluated sims.")
+flags.DEFINE_list("sn_intercepts_log10", ["12.010", "15.350"],
+                  "SN curve log10 intercepts.")
+flags.DEFINE_list("sn_slopes", ["3", "5"], "SN curve slopes.")
+
+
+def main(_):
+    """Calibrates (or loads) the gains and scores the 11 gauges."""
+    tag = FLAGS.tag or (f"zs_{FLAGS.source}" if FLAGS.source else "")
+    name = FLAGS.tower + (f"_{tag}" if tag else "")
+    output_dir = os.path.join(FLAGS.output_root, name)
+    release = load_tower(FLAGS.dataset_dir, FLAGS.tower)
+    physics = PhysicsReconstruction(
+        release=release,
+        output_dir=output_dir,
+        parked_c_theta=parked_c_theta(FLAGS.dataset_dir, FLAGS.tower),
+        min_time=FLAGS.min_time,
+        max_time=FLAGS.max_time,
+        pad_seconds=FLAGS.pad_seconds,
+        segment_length=FLAGS.segment_length,
+        lf_fit_band=tuple(float(v) for v in FLAGS.lf_fit_band),
+        operating_power_kw=FLAGS.operating_power_kw,
+        lowpass_hz=FLAGS.lowpass_hz,
+        sn_intercepts_log10=[float(v) for v in FLAGS.sn_intercepts_log10],
+        sn_slopes=[float(v) for v in FLAGS.sn_slopes])
+
+    profile_tower = FLAGS.source or FLAGS.tower
+    if FLAGS.source:
+        calibration = Calibration.from_json(
+            os.path.join(FLAGS.output_root, FLAGS.source,
+                         f"calibration_{FLAGS.direction}.json"))
+    else:
+        calibration = physics.calibrate(
+            FLAGS.direction, release.split_ids(FLAGS.train_split))
+    logging.info("%s: %s", FLAGS.direction, calibration)
+
+    profile = calibrate_profile(FLAGS.dataset_dir, FLAGS.floatbench_dir,
+                                profile_tower, FLAGS.direction,
+                                mass_csv=FLAGS.mass_csv)
+    os.makedirs(output_dir, exist_ok=True)
+    with open(os.path.join(output_dir, "profile.json"), "w",
+              encoding="utf-8") as file:
+        json.dump({"profile_tower": profile_tower, **profile}, file, indent=4)
+    logging.info("%s: h_rna %.2f -> %.2f m", profile_tower,
+                 profile["h_rna_nominal"], profile["h_rna_effective"])
+
+    test_ids = release.split_ids(FLAGS.test_split)
+    if FLAGS.max_eval_sims:
+        test_ids = test_ids[:FLAGS.max_eval_sims]
+    evaluate_heights(physics, test_ids, calibration, profile["factors"],
+                     FLAGS.direction,
+                     os.path.join(output_dir, "damage_heights.csv"))
+    logging.info("Done: %s", output_dir)
+
+
+if __name__ == "__main__":
+    logging.set_verbosity(logging.INFO)
+    flags.mark_flag_as_required("dataset_dir")
+    app.run(main)
