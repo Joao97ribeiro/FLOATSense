@@ -50,7 +50,7 @@ flags.DEFINE_string(
     "seed<seed>.")
 flags.DEFINE_string("output_root", "outputs", "Root of the default outputs.")
 flags.DEFINE_list("models", ["tcn"], "Models to train.")
-flags.DEFINE_list("directions", ["fa", "ss"], "Directions to process.")
+flags.DEFINE_list("directions", ["fa"], "Directions to process.")
 flags.DEFINE_integer("seed", 0, "Training seed.")
 flags.DEFINE_integer("max_train_sims", 0, "If > 0, cap the training sims.")
 flags.DEFINE_integer("max_eval_sims", 0, "If > 0, cap the evaluated sims.")
@@ -86,7 +86,7 @@ flags.DEFINE_integer("damage_section", 0, "Tower section of the damage.")
 flags.DEFINE_list("input_channels", None,
                   "Replaces the default input stack (sensor ablations).")
 flags.DEFINE_bool(
-    "height_targets", False,
+    "height_targets", True,
     "Height-conditioned task: one model reconstructs the "
     "moment at the 11 instrumented heights.")
 flags.DEFINE_enum("loss", "mse", ["mse", "damage"], "Training loss.")

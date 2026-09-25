@@ -119,8 +119,11 @@ metrics.py     damage metrics and cluster bootstrap
 
 ## Scripts
 
-Each folder under [`scripts/`](./scripts) is a self-contained pipeline
-stage with its own `run.py` and a `--flagfile` `config.cfg`:
+Each folder under [`scripts/`](./scripts) is a pipeline stage; the
+three benchmark stages have their own `run.py` and a `--flagfile`
+`config.cfg`. Run every command from the repository root (the scripts
+add it to the Python path; for the Python snippets below, run them from
+the root or `export PYTHONPATH=$PWD`):
 
 - [`scripts/physics/`](./scripts/physics) — calibrate the physics
   baseline on a tower (C1 from the parked runs, the other five constants
@@ -133,9 +136,10 @@ stage with its own `run.py` and a `--flagfile` `config.cfg`:
 - [`scripts/benchmark/`](./scripts/benchmark) — score every run under
   an output tree: one long table per file, gauge and regime cell, with
   cluster-bootstrap 95% intervals.
-- [`scripts/data/`](./scripts/data) — build the label files of the
-  release (`metadata`, `sections`, `damage`) from the series and the
-  FLOATBench dataset.
+- [`scripts/data/build_labels.py`](./scripts/data/build_labels.py) —
+  build the label files of the release (`metadata`, `sections`,
+  `damage`) from the series and the FLOATBench dataset (maintainers
+  only; the released files already contain them).
 
 ## Install
 
@@ -150,8 +154,10 @@ conda activate floatsense
 
 This installs Python 3.11, PyTorch 2.7.1 with CUDA 12.8, and the
 dependencies of `requirements.txt`, including the pretrained encoders
-(Chronos, MOMENT). TimesFM 2.5 is installed from
-[google-research/timesfm](https://github.com/google-research/timesfm).
+Chronos and MOMENT. TimesFM is not included: `--models=timesfm` and
+`timesfm_ft` need the TimesFM 2.5 PyTorch package installed separately
+from [google-research/timesfm](https://github.com/google-research/timesfm)
+(it provides `timesfm.timesfm_2p5_torch`).
 
 **Alternative (pip, CPU or existing venv):**
 
@@ -195,7 +201,9 @@ FLOATSense/                          24.0 GB
 │   └── damage.parquet                sim_id, section_id, damage (reference fore-aft damage)
 ├── opt1/                             same files
 ├── opt2/                             same files
-└── parked.parquet                    the 22 parked runs (waves only) of each tower
+├── parked.parquet                    the 22 parked runs (waves only) of each tower
+├── assets/                           figures of the dataset card
+└── README.md                         dataset card (schema, channels, OpenFAST mapping)
 ```
 
 Column names and order follow FLOATBench, so a run joins its FLOATBench
@@ -227,7 +235,7 @@ unweighted per-simulation damage.
 ## Quickstart
 
 ```bash
-# Physics baseline on one tower (CPU, ~10 min): calibrate on train, score test
+# Physics baseline on one tower (CPU, ~3 min): calibrate on train, score test
 python scripts/physics/run.py --flagfile=scripts/physics/config.cfg --tower=opt2
 
 # One learned model on one tower, scored zero-shot on the other two (~10 min on one GPU)
@@ -262,7 +270,7 @@ pipeline assumes a cluster.
 | CPU | Intel Core i9-14900K (24 cores) | Rainflow counting of the evaluation runs in a process pool. |
 | RAM | 128 GB available | One run reads one simulation at a time from the shards. |
 | Disk | 24.0 GB dataset + a few MB per run | One checkpoint per model, tower and seed. |
-| Wall-clock | 7–9 min per run for the small models | 10–60 min for the pretrained encoders, 142 min for Mamba; physics ~10 min per tower on CPU. |
+| Wall-clock | 7–9 min per run for the small models (with zero-shot on two towers) | 10–60 min for the pretrained encoders, 142 min for Mamba; physics ~3 min per tower on CPU. |
 
 ### What lands in `outputs/`
 
@@ -281,6 +289,10 @@ outputs/
 │   └── summary_<model>_fa[_zs_<t>].json          base-height metrics
 └── tables/results.csv                 every file x gauge x regime cell: metrics and 95% intervals
 ```
+
+Zero-shot physics runs (`<tower>_zs_<source>`) reuse the calibration of
+the source tower, so they hold only `profile.json` and
+`damage_heights.csv`.
 
 ### Protocols
 
@@ -308,10 +320,15 @@ python scripts/train/run.py --flagfile=scripts/train/config.cfg --tower=opt2 --m
     --input_channels=tower_top_afa_mod,tower_top_ass_mod,rotor_speed,blade_pitch,wind_speed \
     --output_dir=outputs/ablation/twoaxis/opt2
 
-# Model selection on the held-out validation split
+# Model selection on the held-out validation split (scored on val/val, which
+# has no regime cells: the benchmark reports it under the 'all' group only)
 python scripts/train/run.py --flagfile=scripts/train/config.cfg --tower=opt2 --models=tcn \
     --train_split=val/train --test_split=val/val --output_root=outputs/val_select
 ```
+
+`--max_train_sims` / `--max_eval_sims` cap a run for a quick test; they
+take the first simulations by `sim_id`, one realization per operating
+point, so the within-condition correlation of such a run is undefined.
 
 Field-style SCADA (the ten-minute statistics a turbine logs) is an
 input set too: `stat:<channel>:<mean|std|min|max>` reads
@@ -347,9 +364,12 @@ ci = cluster_bootstrap(df.damage_true_tower_top.values,
 - The parked constant C1 is recomputed from `parked.parquet` and
   rounded to 0.1 MN s², as in the paper; the physics baseline reproduces
   the paper to $10^{-7}$.
-- Training on GPU is not bit-for-bit deterministic (cuDNN). Rerunning a
-  seed moves the scores by less than the spread between seeds (TCN on
-  `opt2`: base $R^2$ 0.991 against 0.990 in the paper).
+- Training on GPU is not bit-for-bit deterministic (cuDNN), so rerunning
+  the same seed does not give the same numbers; the spread of reruns is
+  that of the seeds. TCN on `opt2`, base $R^2$: 0.984, 0.991 and 0.992 in
+  three reruns of seed 0, 0.987 to 0.992 over the three seeds of the
+  paper; top $R^2$: 0.754 to 0.785 in reruns, 0.713 to 0.866 over the
+  seeds. Compare a model with the paper through its three-seed median.
 
 ## Headline findings
 

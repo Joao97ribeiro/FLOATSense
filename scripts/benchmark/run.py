@@ -49,11 +49,11 @@ _CONTEXTS = {}
 
 
 def tower_context(tower: str) -> dict:
-    """Regime cells and operating conditions of a tower's test split."""
+    """Regime cells of the test split and operating conditions of every
+    simulation (so runs scored on other splits, e.g. val/val, work too)."""
     release = load_tower(FLAGS.dataset_dir, tower)
-    meta = release.metadata.loc[release.split_ids(FLAGS.test_split)]
     return {"cells": release.regime_cells(FLAGS.test_split),
-            "clusters": condition_key(meta)}
+            "clusters": condition_key(release.metadata)}
 
 
 def describe(path: str) -> dict:
