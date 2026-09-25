@@ -226,9 +226,9 @@ def parked_constants(dataset_dir: str, tower: str,
 
 
 def parked_c_theta(dataset_dir: str, tower: str) -> Dict[str, float]:
-    """Base C1 per direction [kN.s^2], rounded to 0.1 as in the paper."""
+    """Base C1 per direction [kN.s^2], rounded to 0.1 MN.s^2 as in the paper."""
     base = parked_constants(dataset_dir, tower).iloc[0]
-    return {d: round(float(base[d]), 1) for d in DIRECTION_CHANNELS}
+    return {d: round(float(base[d]), -2) for d in DIRECTION_CHANNELS}
 
 
 class PhysicsReconstruction:

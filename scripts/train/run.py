@@ -38,8 +38,6 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string("dataset_dir", None,
                     "Released FLOATSense dataset, one folder per tower.")
-flags.DEFINE_string("floatbench_dir", None,
-                    "FLOATBench dataset (tower mass of the hybrid models).")
 flags.DEFINE_string("tower", "opt2", "Training tower (ref, opt1 or opt2).")
 flags.DEFINE_string("train_split", "train",
                     "Training split: train, val/train or fewshot/<name>.")
@@ -124,7 +122,6 @@ def main(_):
 
     hybrid = any(m.startswith("hybrid") for m in FLAGS.models)
     height_factors = (calibrate_profile(FLAGS.dataset_dir,
-                                        FLAGS.floatbench_dir,
                                         FLAGS.tower)["factors"]
                       if FLAGS.height_targets and hybrid else None)
     for model_name in FLAGS.models:

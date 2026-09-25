@@ -39,8 +39,6 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string("dataset_dir", None,
                     "Released FLOATSense dataset, one folder per tower.")
-flags.DEFINE_string("floatbench_dir", None,
-                    "FLOATBench dataset (tower mass of the height factor).")
 flags.DEFINE_string("tower", "opt2", "Tower scored (ref, opt1 or opt2).")
 flags.DEFINE_string("source", None,
                     "Zero-shot: apply the constants and the height profile "
@@ -52,7 +50,7 @@ flags.DEFINE_string("tag", None,
                     "Output suffix; defaults to none, or zs_<source>.")
 flags.DEFINE_string("output_root", "outputs/physics", "Root of the outputs.")
 flags.DEFINE_string("mass_csv", None,
-                    "Optional tower mass profile replacing the FLOATBench one.")
+                    "Tower mass profile; defaults to towers/<tower>_mass.csv.")
 flags.DEFINE_float("min_time", 400.0, "Start of the scored window (s).")
 flags.DEFINE_float("max_time", 1000.0, "End of the scored window (s).")
 flags.DEFINE_float("pad_seconds", 50.0, "Margin around the scored window.")
@@ -98,8 +96,8 @@ def main(_):
             FLAGS.direction, release.split_ids(FLAGS.train_split))
     logging.info("%s: %s", FLAGS.direction, calibration)
 
-    profile = calibrate_profile(FLAGS.dataset_dir, FLAGS.floatbench_dir,
-                                profile_tower, FLAGS.direction,
+    profile = calibrate_profile(FLAGS.dataset_dir, profile_tower,
+                                FLAGS.direction,
                                 mass_csv=FLAGS.mass_csv)
     os.makedirs(output_dir, exist_ok=True)
     with open(os.path.join(output_dir, "profile.json"), "w",

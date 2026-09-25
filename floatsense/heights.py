@@ -14,9 +14,8 @@ parked C_theta measured at the highest instrumented section (two-point
 calibration, base and top gauge). The harmonic and low-frequency constants
 stay those of the base.
 
-The tower mass per unit length is that of the steel shell of the 30
-FLOATBench sections (mean outer radius and wall thickness, 7,850 kg/m^3),
-read from the FLOATBench dataset.
+The tower mass per unit length is the ElastoDyn tower mass density
+(TMassDen) of each tower, shipped in `towers/<tower>_mass.csv`.
 """
 
 import os
@@ -75,34 +74,11 @@ def height_factor(z: np.ndarray, s: np.ndarray, m: np.ndarray, h_rna: float,
     return moment(np.asarray(z, float)) / moment(0.0)
 
 
-STEEL_DENSITY = 7850.0
-
-
-def tower_mass(floatbench_dir: str, tower: str) -> Tuple[np.ndarray, np.ndarray]:
-    """Mass per unit length [kg/m] of the tower from the FLOATBench sections.
-
-    Args:
-        floatbench_dir (str): FLOATBench dataset directory.
-        tower (str): Tower name.
-
-    Returns:
-        (heights [m], mass per length [kg/m]): the 30 section midpoints,
-        extended with constant values to the base and the top.
-    """
-    sections = pd.read_csv(os.path.join(floatbench_dir, tower, "data.csv"),
-                           usecols=["section_id", "section_height_m",
-                                    "section_radius_m", "section_thickness_m"])
-    sections = sections.drop_duplicates("section_id").sort_values("section_id")
-    radius = sections["section_radius_m"].to_numpy()
-    thickness = sections["section_thickness_m"].to_numpy()
-    mass = STEEL_DENSITY * np.pi * (radius**2 - (radius - thickness)**2)
-    heights = sections["section_height_m"].to_numpy()
-    return (np.concatenate([[0.0], heights, [HEIGHT]]),
-            np.concatenate([[mass[0]], mass, [mass[-1]]]))
+TOWERS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                          "towers")
 
 
 def calibrate_profile(dataset_dir: str,
-                      floatbench_dir: str,
                       tower: str,
                       direction: str = "fa",
                       mass_csv: Optional[str] = None) -> Dict:
@@ -110,21 +86,18 @@ def calibrate_profile(dataset_dir: str,
 
     Args:
         dataset_dir (str): Released dataset directory (parked runs).
-        floatbench_dir (str): FLOATBench dataset directory (tower mass).
         tower (str): Tower name.
         direction (str): 'fa' or 'ss'.
         mass_csv (str, optional): Two-column CSV (height above the base [m],
-          mass per length [kg/m]) that replaces the FLOATBench-derived mass.
+          mass per length [kg/m]); defaults to towers/<tower>_mass.csv.
 
     Returns:
         dict: The effective RNA lever arm, the factor at the 11 target
           heights and the parked profile it was fitted to.
     """
-    if mass_csv:
-        mass = pd.read_csv(mass_csv)
-        s, m = mass.iloc[:, 0].values, mass.iloc[:, 1].values
-    else:
-        s, m = tower_mass(floatbench_dir, tower)
+    mass = pd.read_csv(mass_csv or
+                       os.path.join(TOWERS_DIR, f"{tower}_mass.csv"))
+    s, m = mass.iloc[:, 0].values, mass.iloc[:, 1].values
     parked = parked_constants(dataset_dir, tower)
     parked_f = (parked[direction] / parked[direction].iloc[0]).values
     anchor = len(parked_f) - 1

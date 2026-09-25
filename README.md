@@ -73,6 +73,8 @@ scripts/
   physics/       calibrate and score the physics baseline  run.py + config.cfg
   benchmark/     results table from every run              run.py + config.cfg
   data/          build the label files of the release      build_labels.py
+towers/          ElastoDyn tower mass density (TMassDen) of each tower, for the
+                 physics height factor
 splits/
   val/           model-selection split (1,380 train / 348 val simulations)
   fewshot/       adaptation sets, 5 to 100 simulations, three draws of 5 and 10
@@ -110,16 +112,8 @@ FLOATSense/
 └── parked.parquet                    the 22 parked runs (waves only) of each tower
 ```
 
-The scripts expect the dataset at `data/FLOATSense` and FLOATBench at
-`data/FLOATBench` (the physics height factor reads the tower mass from the
-30 FLOATBench sections); change `--dataset_dir` / `--floatbench_dir`
-otherwise.
-
-```bash
-mkdir -p data
-huggingface-cli download DeCoDELab/FLOATBench --repo-type dataset --local-dir data/FLOATBench
-# FLOATSense: see the dataset link in the paper
-```
+The scripts expect the dataset at `data/FLOATSense`; change
+`--dataset_dir` otherwise.
 
 Quick look:
 
@@ -171,8 +165,9 @@ damage at the 11 gauges per test simulation) and `summary_*.json`.
   seed move the scores by far less than the spread between seeds.
 - The reference damage is computed on the even 6,000-sample window
   400.0-999.9 s, as in the evaluation, and matches the evaluation to 1e-6.
-- The parked constant C1 is recomputed from `parked.parquet` and matches
-  the paper to 0.1 kN s^2.
+- The parked constant C1 is recomputed from `parked.parquet` and rounded
+  to 0.1 MN s^2, as in the paper; the physics baseline then reproduces the
+  paper to 1e-7.
 
 ## License
 
