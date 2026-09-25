@@ -78,6 +78,9 @@ def within_condition_correlation(damage_true: np.ndarray,
                           "condition": np.asarray(conditions)[valid]})
     means = frame.groupby("condition")[["true", "rec"]].transform("mean")
     deviations = frame[["true", "rec"]] - means
+    if (deviations.std() == 0).any():
+        # One realization per condition (e.g. a capped quick run): undefined.
+        return float("nan")
     return float(np.corrcoef(deviations["true"], deviations["rec"])[0, 1])
 
 

@@ -87,6 +87,10 @@ def _init(contexts):
 def score_file(path: str) -> pd.DataFrame:
     """Scores one CSV at every gauge (runs in a worker)."""
     meta = describe(path)
+    if meta["target"] not in _CONTEXTS:
+        logging.warning("Skipping %s: no tower (ref, opt1, opt2) in its path.",
+                        path)
+        return pd.DataFrame()
     context = _CONTEXTS[meta["target"]]
     df = pd.read_csv(path).set_index("sim_id")
     cells = context["cells"].loc[context["cells"].index.intersection(df.index)]

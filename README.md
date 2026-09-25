@@ -135,7 +135,9 @@ the root or `export PYTHONPATH=$PWD`):
   (`--init_checkpoint_dir`); sensor ablation (`--input_channels`).
 - [`scripts/benchmark/`](./scripts/benchmark) — score every run under
   an output tree: one long table per file, gauge and regime cell, with
-  cluster-bootstrap 95% intervals.
+  cluster-bootstrap 95% intervals. The scored tower is read from the path
+  (`ref`, `opt1` or `opt2` in a directory name, `_zs_<tower>` or
+  `<source>_to_<target>`); files without one are skipped with a warning.
 - [`scripts/data/build_labels.py`](./scripts/data/build_labels.py) —
   build the label files of the release (`metadata`, `sections`,
   `damage`) from the series and the FLOATBench dataset (maintainers
@@ -270,7 +272,7 @@ pipeline assumes a cluster.
 | CPU | Intel Core i9-14900K (24 cores) | Rainflow counting of the evaluation runs in a process pool. |
 | RAM | 128 GB available | One run reads one simulation at a time from the shards. |
 | Disk | 24.0 GB dataset + a few MB per run | One checkpoint per model, tower and seed. |
-| Wall-clock | 7–9 min per run for the small models (with zero-shot on two towers) | 10–60 min for the pretrained encoders, 142 min for Mamba; physics ~3 min per tower on CPU. |
+| Wall-clock | 7–9 min per run for the small models (training and scoring), ~10 min with zero-shot on two towers | 10–60 min for the pretrained encoders, 142 min for Mamba; physics ~2–3 min per tower on CPU. |
 
 ### What lands in `outputs/`
 
@@ -284,9 +286,12 @@ outputs/
 ├── within/<tower>/seed<k>/
 │   ├── <model>_fa.pt                  weights, normalization statistics, settings
 │   ├── history_<model>_fa.json        training loss per epoch
-│   ├── damage_comparison_<model>_fa.csv          true and reconstructed damage at the 11 gauges
+│   ├── damage_comparison_<model>_fa.csv          true and reconstructed damage (and variance ratio) at the 11 gauges
 │   ├── damage_comparison_<model>_fa_zs_<t>.csv   the same, zero-shot on tower <t>
 │   └── summary_<model>_fa[_zs_<t>].json          base-height metrics
+├── fewshot/<source>_to_<target>/draw<k>/    adaptation runs (same files as within/)
+├── ablation/<input set>/<tower>/           sensor-ablation runs (same files as within/)
+├── val_select/<tower>/seed<k>/             model-selection runs scored on val/val
 └── tables/results.csv                 every file x gauge x regime cell: metrics and 95% intervals
 ```
 
@@ -359,8 +364,11 @@ ci = cluster_bootstrap(df.damage_true_tower_top.values,
 ## Reproducibility
 
 - The reference damage in `damage.parquet` is computed on the even
-  6,000-sample window 400.0–999.9 s, as in the evaluation, and matches
-  the evaluation to $10^{-6}$.
+  6,000-sample window 400.0–999.9 s, as in the evaluation of the learned
+  models, and matches it to $10^{-6}$. The physics baseline scores its
+  own truth on the inclusive 400–1,000 s window (6,001 samples), as in
+  the paper; the two true damages differ by a median of $2 \times 10^{-4}$
+  (a few percent on some low-damage simulations).
 - The parked constant C1 is recomputed from `parked.parquet` and
   rounded to 0.1 MN s², as in the paper; the physics baseline reproduces
   the paper to $10^{-7}$.
