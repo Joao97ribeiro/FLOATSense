@@ -1,5 +1,7 @@
 // FLOATSense project page: dataset explorer and leaderboard along the height.
 
+const DATA_VERSION = "20260926a";  // bump when static/data changes
+
 // Paper palette (paper_style.py and fs_common.py).
 const NAVY = "#294366", RED = "#b02c27", REF = "#b8b8b8", REF_DARK = "#8f8f8f", CYAN = "#7cc0cd", SCADA = "#4383ad",
   TAUPE = "#8f7a6e", SLATE = "#9aa3ab", CORAL = "#d06662", PINK = "#dd9c98", WINE = "#6f1b17", INK = "#333333";
@@ -82,7 +84,7 @@ const st = {tower: 2, sim: 11, heights: [0, 5, 10], inputs: ["tower_top_afa_mod"
 // ---------- explorer ----------
 const CACHE = {};
 async function loadTower(t) {
-  if (!CACHE[t]) CACHE[t] = fetch(`static/data/series_${TOWERS[t]}.txt`).then(r => r.text()).then(txt => {
+  if (!CACHE[t]) CACHE[t] = fetch(`static/data/series_${TOWERS[t]}.txt?v=${DATA_VERSION}`).then(r => r.text()).then(txt => {
     const bin = atob(txt.trim()), u = new Uint8Array(bin.length);
     for (let j = 0; j < bin.length; j++) u[j] = bin.charCodeAt(j);
     return new Int16Array(u.buffer); });
@@ -167,15 +169,16 @@ function drawProfile() {
   const P = D.profiles[`${TOWERS[st.tower]}/${D.ids[st.sim]}`];
   const tr = [{x: P.true, y: D.heights, mode: "lines+markers", line: {color: "#000000", width: 3}, marker: {size: 7, color: "#000000"}, name: "True",
     hovertemplate: "True %{x:.2e}<br>%{y:.1f} m<extra></extra>"}];
-  st.models.forEach(m => tr.push({x: P[m], y: D.heights, mode: "lines+markers", name: NAMES[m],
+  const shown = st.models.filter(m => P[m]);
+  shown.forEach(m => tr.push({x: P[m], y: D.heights, mode: "lines+markers", name: NAMES[m],
     line: {color: MODEL_COLOR[m], width: 2, dash: MODEL_DASH[m] || "solid"}, marker: {size: 5, color: MODEL_COLOR[m]},
     hovertemplate: `${NAMES[m]} %{x:.2e}<br>%{y:.1f} m<extra></extra>`}));
   Plotly.react("plot-profile", tr, L({showlegend: true, legend: {orientation: "h", y: 1.02, yanchor: "bottom", x: 0}, margin: {l: 70, r: 20, t: 50, b: 50},
     xaxis: AX({type: "log", title: {text: "Fatigue damage over 600 s (log)"}, exponentformat: "power"}),
     yaxis: AX({title: {text: "Gauge height [m]"}, range: [-4, 154]})}), CFG);
   const top = D.heights.length - 1;
-  $("profile-note").textContent = st.models.length ? "Top gauge, reconstructed / true damage: " +
-    st.models.map(m => `${NAMES[m]} ${(P[m][top] / P.true[top]).toFixed(2)}`).join(", ") + "." : "Pick models to compare.";
+  $("profile-note").textContent = shown.length ? "Top gauge, reconstructed / true damage: " +
+    shown.map(m => `${NAMES[m]} ${(P[m][top] / P.true[top]).toFixed(2)}`).join(", ") + "." : "Pick models to compare.";
   $("models").querySelectorAll("label").forEach(l => {
     const m = l.dataset.m, on = st.models.includes(m);
     l.querySelector("input").checked = on;
@@ -287,7 +290,8 @@ async function init() {
   $("copy-bibtex").onclick = () => { const txt = $("bibtex-content").textContent;
     (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).catch(() => {
       const r = document.createRange(); r.selectNodeContents($("bibtex-content")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }); };
-  D = await fetch("static/data/data.json").then(r => r.json());
+  D = await fetch(`static/data/data.json?v=${DATA_VERSION}`).then(r => r.json());
+  st.models = st.models.filter(m => D.models.includes(m));
   S = {}; S[st.tower] = await loadTower(st.tower);
   time = Float32Array.from({length: D.n}, (_, j) => D.t0 + j * D.dt);
   $("ex-source").innerHTML = `<span class="icon"><i class="fas fa-check-circle"></i></span> ${D.ids.length} simulations per tower, inputs and fore-aft and side-side moments at 5 Hz.`;
