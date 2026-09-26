@@ -1,4 +1,4 @@
-// FLOATSense project page: dataset explorer, envelope, leaderboard along the height.
+// FLOATSense project page: dataset explorer and leaderboard along the height.
 
 // Paper palette (paper_style.py and fs_common.py).
 const NAVY = "#294366", RED = "#b02c27", REF = "#b8b8b8", REF_DARK = "#8f8f8f", CYAN = "#7cc0cd", SCADA = "#4383ad",
@@ -22,7 +22,6 @@ const MODEL_COLOR = {tcn: NAVY, prob_tcn: RED, lstm: CYAN, transformer: TAUPE, s
   mamba: CYAN, naive: REF_DARK, physics: "#222222", spectral: CORAL, unet: "#565656", fno: "#6b6b6b",
   itransformer: "#aaaaaa", dlinear: "#d2d2d2", chronos: CORAL, hybrid: CORAL};
 const MODEL_DASH = {mamba: "dash", naive: "dot", hybrid: "dash"};
-const DAMAGE_SCALE = [[0, "#f7f7f7"], [0.35, "#f0b3b0"], [0.7, RED], [1, WINE]];
 const MOMENT_SCALE = [[0, NAVY], [0.5, "#f7f7f7"], [1, RED]];
 const GAUGE = ["Base", "Gauge 1", "Gauge 2", "Gauge 3", "Gauge 4", "Gauge 5", "Gauge 6", "Gauge 7", "Gauge 8", "Gauge 9", "Top"];
 const GROUP_TAG = {"In-train": "tag-it", "Interpolate": "tag-ip", "Extrapolate": "tag-ex"};
@@ -124,24 +123,8 @@ function drawProfile() {
   });
 }
 
-function drawEnvelope() {
-  const z = D.env[TOWERS[st.tower]][st.sec], hl = 24;
-  const zt = z[0].map((_, j) => z.map(r => r[j]));
-  const text = zt.map((row, j) => row.map((_, w) => { const [hs, tp] = D.waves[w + 1][j], g = D.groups[w + 1][j];
-    return `U ${D.winds[w]} m/s · Hs ${hs} m · Tp ${tp} s<br>${g[0]} / ${g[1]} · ${g[2]}`; }));
-  const ids = D.ids.map((_, k) => k);
-  Plotly.react("plot-envelope", [
-    {type: "heatmap", z: zt, text, colorscale: DAMAGE_SCALE, hovertemplate: "%{text}<br>log₁₀ D %{z:.2f}<extra></extra>",
-      colorbar: {title: {text: "log₁₀ D", side: "right", font: {size: 10}}, thickness: 10, tickfont: {size: 9}}},
-    {x: ids, y: ids.map(() => hl), mode: "markers", marker: {size: 9, color: "rgba(0,0,0,0)", line: {color: INK, width: 1.2}}, hovertemplate: "Explorer simulation<extra></extra>"},
-    {x: [st.sim], y: [hl], mode: "markers", marker: {size: 14, color: "rgba(0,0,0,0)", line: {color: NAVY, width: 3}}, hoverinfo: "skip"}],
-    L({margin: {l: 60, r: 10, t: 10, b: 45},
-      xaxis: AX({title: {text: "Wind speed [m/s]"}, tickvals: [0, 5, 10, 15, 21], ticktext: [0, 5, 10, 15, 21].map(k => D.winds[k]), showgrid: false}),
-      yaxis: AX({title: {text: "Sea state (Hs, Tp)"}, tickvals: [3, 17, 31, 45], ticktext: ["Hs 1", "Hs 3", "Hs 5", "Hs 7"], showgrid: false})}), CFG);
-}
-
-function selectSim(i) { st.sim = i; simCard(); drawSeries(); drawProfile(); drawEnvelope(); }
-function selectTower(t) { st.tower = t; $("ex-tower").value = t; simCard(); drawSeries(); drawProfile(); drawEnvelope(); }
+function selectSim(i) { st.sim = i; simCard(); drawSeries(); drawProfile(); }
+function selectTower(t) { st.tower = t; $("ex-tower").value = t; simCard(); drawSeries(); drawProfile(); }
 
 // ---------- regime grid ----------
 function regimeGrid() {
@@ -255,17 +238,15 @@ async function init() {
   $("ex-tower").onchange = e => selectTower(+e.target.value);
   $("ex-sim").onchange = e => selectSim(+e.target.value);
   $("ex-wind").oninput = e => selectSim(+e.target.value);
-  $("env-sec").onclick = e => { const btn = e.target.closest("button"); if (!btn) return; st.sec = btn.dataset.sec;
-    $("env-sec").querySelectorAll("button").forEach(x => { const on = x.dataset.sec === st.sec; x.classList.toggle("is-dark", on); x.classList.toggle("is-selected", on); }); drawEnvelope(); };
+
 
   const order = ["tcn", "prob_tcn", "transformer", "mamba", "lstm", "s4", "timesnet", "unet", "fno", "itransformer", "fits", "dlinear", "spectral", "naive"].filter(m => D.models.includes(m));
   $("models").innerHTML = order.map(m => `<label data-m="${m}"><input type="checkbox" id="m-${m}"><span class="sw"></span>${NAMES[m]}</label>`).join("");
   $("models").onchange = e => { const m = e.target.closest("label").dataset.m, k = st.models.indexOf(m);
     if (k >= 0) st.models.splice(k, 1); else st.models.push(m); drawProfile(); };
 
-  simCard(); drawSeries(); drawProfile(); drawEnvelope(); regimeGrid();
+  simCard(); drawSeries(); drawProfile(); regimeGrid();
   syncZoom("plot-inputs", "plot-targets"); syncZoom("plot-targets", "plot-inputs");
-  $("plot-envelope").on("plotly_click", ev => { const p = ev.points[0]; if (p.curveNumber > 0 || p.y === 24) selectSim(p.x); });
 
   towerOptions(); families();
   $("lb-protocol").onchange = e => { st.proto = e.target.value; if (!D.lb[st.proto][st.sel]) st.sel = "tcn"; towerOptions(); drawBoard(); };

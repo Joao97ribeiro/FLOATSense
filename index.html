@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="stylesheet" href="static/css/style.css?v=4">
   <script defer src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
-  <script defer src="static/js/app.js?v=5"></script>
+  <script defer src="static/js/app.js?v=6"></script>
 </head>
 <body>
 
@@ -237,13 +237,6 @@
         <label class="label is-small">Models</label>
         <div class="model-list" id="models"></div>
         <p class="how" id="profile-note" style="margin-top:0.8rem;"></p>
-        <h3 class="title is-5" style="margin-top:1.5rem;">Operating envelope</h3>
-        <div class="buttons has-addons" id="env-sec" style="margin-bottom:0.25rem;">
-          <button type="button" class="button is-small" data-sec="base">Base</button>
-          <button type="button" class="button is-small is-dark is-selected" data-sec="top">Top</button>
-        </div>
-        <div id="plot-envelope" class="plot" style="height:360px;"></div>
-        <p class="how">Reference damage of all 1,078 operating points of the tower (log<sub>10</sub>, mean over the six realizations). Ringed: the explorer simulations; click one to open it.</p>
       </div>
     </div>
   </div>
