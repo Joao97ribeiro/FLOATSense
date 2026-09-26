@@ -115,7 +115,8 @@ function drawSeries() {
   const rows = INPUTS.filter(r => st.inputs.includes(r[0]));
   const empty = !rows.length;
   const n = Math.max(1, rows.length), gap = n > 1 ? 0.2 / n : 0, h = (1 - gap * (n - 1)) / n, lay = L({margin: {l: 80, r: 20, t: 16, b: 50}});
-  $("plot-inputs").style.height = empty ? "140px" : `${Math.max(260, 90 * n + 90)}px`;
+  const px = empty ? 140 : Math.max(260, (n > 8 ? 62 : 90) * n + 90);
+  $("plot-inputs").style.height = `${px}px`; lay.height = px;
   const tr = rows.map(([c, name, col], k) => ({x: time, y: x[c], type: "scattergl", mode: "lines", line: {width: 1, color: col},
     xaxis: "x", yaxis: `y${k ? k + 1 : ""}`, hovertemplate: `%{x:.1f} s<br>${name} %{y:.3f}<extra></extra>`}));
   if (empty) lay.yaxis = AX({domain: [0, 1], showticklabels: false, title: {text: ""}});
@@ -125,7 +126,7 @@ function drawSeries() {
   if (!$("plot-inputs")._fsBound) { syncZoom("plot-inputs"); $("plot-inputs")._fsBound = true; }
 
   const H = ["tower_bottom", "tower_1", "tower_2", "tower_3", "tower_4", "tower_5", "tower_6", "tower_7", "tower_8", "tower_9", "tower_top"];
-  const T = L({margin: {l: 80, r: 20, t: 24, b: 50}, showlegend: true,
+  const T = L({height: 520, margin: {l: 80, r: 20, t: 24, b: 50}, showlegend: true,
     legend: {orientation: "h", x: 0, y: 1.08, yanchor: "bottom", font: {size: 10}}});
   T.yaxis = AX({domain: [0.54, 1], title: {text: "Fore-aft M<sub>FA</sub> [MN m]", font: {size: 10}}});
   T.yaxis2 = AX({domain: [0, 0.46], title: {text: "Side-side M<sub>SS</sub> [MN m]", font: {size: 10}}});
