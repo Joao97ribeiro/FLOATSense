@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="stylesheet" href="static/css/style.css?v=4">
   <script defer src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
-  <script defer src="static/js/app.js?v=6"></script>
+  <script defer src="static/js/app.js?v=7"></script>
 </head>
 <body>
 
@@ -322,7 +322,7 @@ damage = tower.damage()          # sim_id x section_id</code></pre>
 <section class="section" id="leaderboard">
   <div class="container is-max-desktop">
     <h2 class="title is-3">Leaderboard</h2>
-    <p class="subtitle is-6">All 20 learned models, the physics baseline and the floor at the declared budget of 50 epochs, scored by the fatigue damage of the reconstruction. Move the height to see the ranking change from the base to the top. Each cell is the median over three seeds where they exist, else seed 0 (†). Click a row to follow that model in the plots.</p>
+    <p class="subtitle is-6">All 20 learned models, the physics baseline and the floor at the declared budget of 50 epochs, scored by the fatigue damage of the reconstruction. From the base to the middle of the tower the ranking barely moves; switch to gauge 8 and the top to see it change. Each cell is the median over three seeds where they exist, else seed 0 (†). Click a row to follow that model in the plots.</p>
 
     <div class="box">
       <div class="columns is-multiline is-vcentered">
@@ -356,8 +356,13 @@ damage = tower.damage()          # sim_id x section_id</code></pre>
           <input class="input is-small" type="search" id="lb-search" placeholder="model name">
         </div>
         <div class="column is-12">
-          <label class="label is-small" for="lb-height">Height: <output id="lb-height-out"></output></label>
-          <input type="range" id="lb-height" class="slider" min="0" max="10" step="1" value="10">
+          <label class="label is-small">Height</label>
+          <div class="buttons has-addons" id="lb-height" role="group" aria-label="Height">
+            <button type="button" class="button is-small" data-h="0">Base (z/H 0)</button>
+            <button type="button" class="button is-small" data-h="5">Middle (z/H 0.48)</button>
+            <button type="button" class="button is-small" data-h="8">Gauge 8 (z/H 0.78)</button>
+            <button type="button" class="button is-small is-dark is-selected" data-h="10">Top (z/H 1)</button>
+          </div>
         </div>
       </div>
       <div class="chips" id="lb-families" role="group" aria-label="Filter by model family"></div>

@@ -167,7 +167,6 @@ function fmt(v, k) {
 }
 function drawBoard() {
   const B = D.lb[st.proto], h = st.height, rk = ranking(h), rk0 = ranking(0);
-  $("lb-height-out").textContent = `${GAUGE[h]} (z/H ${D.zh[h].toFixed(2)})`;
   let ms = Object.keys(B).sort((a, b) => rk[a] - rk[b]);
   ms = ms.filter(m => (!st.fams.size || st.fams.has(FAMILY[m])) && (!st.search || (NAMES[m] || m).toLowerCase().includes(st.search)));
   const head = `<thead><tr><th class="l">#</th><th class="l">Model</th><th class="l">Family</th>` +
@@ -253,7 +252,8 @@ async function init() {
   $("lb-tower").onchange = e => { st.lbTower = e.target.value; drawBoard(); };
   $("lb-metric").onchange = e => { st.metric = e.target.value; drawBoard(); };
   $("lb-search").oninput = e => { st.search = e.target.value.trim().toLowerCase(); drawBoard(); };
-  $("lb-height").oninput = e => { st.height = +e.target.value; drawBoard(); };
+  $("lb-height").onclick = e => { const b = e.target.closest("button"); if (!b) return; st.height = +b.dataset.h;
+    $("lb-height").querySelectorAll("button").forEach(x => { const on = x === b; x.classList.toggle("is-dark", on); x.classList.toggle("is-selected", on); }); drawBoard(); };
   $("lb-table").onclick = e => {
     const th = e.target.closest("th.sortable"); if (th) { st.metric = th.dataset.k; $("lb-metric").value = st.metric; drawBoard(); return; }
     const tr = e.target.closest("tr[data-m]"); if (tr) { st.sel = tr.dataset.m; drawBoard(); } };
