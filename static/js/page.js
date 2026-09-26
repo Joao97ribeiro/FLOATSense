@@ -141,7 +141,7 @@ function modelPicker(){
   $("models").innerHTML = order.map(m => `<label data-m="${m}"><input type="checkbox" id="m-${m}"><span class="sw"></span>${NAMES[m]}</label>`).join("");
   $("models").onchange = e => {
     const m = e.target.closest("label").dataset.m, k = state.models.indexOf(m);
-    if(k >= 0) state.models.splice(k, 1); else { if(state.models.length >= 4) state.models.shift(); state.models.push(m); }
+    if(k >= 0) state.models.splice(k, 1); else state.models.push(m);
     drawProfile();
   };
 }
