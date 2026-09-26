@@ -32,6 +32,9 @@
         <a href="#start" class="button is-rounded is-dark">
           <span class="icon"><i class="fas fa-download"></i></span><span>Get started</span>
         </a>
+        <a href="#explorer" class="button is-rounded is-dark">
+          <span class="icon"><i class="fas fa-cube"></i></span><span>Dataset explorer</span>
+        </a>
         <a href="#leaderboard" class="button is-rounded is-dark">
           <span class="icon"><i class="fas fa-trophy"></i></span><span>Leaderboard</span>
         </a>
@@ -548,11 +551,20 @@ damage = tower.damage()          # sim_id x section_id</code></pre>
         </div>
       </div>
     </div>
-<pre><code># from the root of the code: download the review subset into data/FLOATSense
+<pre><code># 1. code
+# download the code from its anonymized link and enter it
+conda env create -f environment.yml &amp;&amp; conda activate floatsense
+
+# 2. data: download the review subset into data/FLOATSense
 python scripts/download/run.py --flagfile=scripts/download/config.cfg
 
-# read one simulation
-python -c "from floatsense import load_tower; t = load_tower('data/FLOATSense', 'opt2'); print(t.load(25).shape)"</code></pre>
+# 3. run the released checkpoints on the subset (CPU, seconds) and
+#    compare with the paper's per-simulation results
+mkdir -p outputs/review &amp;&amp; cp -r data/FLOATSense/checkpoints/opt2/seed0 outputs/review/opt2
+python scripts/train/run.py --flagfile=scripts/train/config.cfg \
+    --tower=opt2 --test_split=review/test --run_training=False \
+    --models=tcn,mamba,naive --output_dir=outputs/review/opt2
+python data/FLOATSense/compare.py outputs/review/opt2 opt2</code></pre>
   </div>
 </section>
 
