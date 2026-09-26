@@ -240,7 +240,7 @@ unweighted per-simulation damage.
 # Physics baseline on one tower (CPU, ~3 min): calibrate on train, score test
 python scripts/physics/run.py --flagfile=scripts/physics/config.cfg --tower=opt2
 
-# One learned model on one tower, scored zero-shot on the other two (~10 min on one GPU)
+# One learned model on one tower, scored zero-shot on the other two (~10–12 min on one GPU)
 python scripts/train/run.py --flagfile=scripts/train/config.cfg \
     --tower=opt2 --models=tcn --eval_towers=ref,opt1
 
@@ -272,7 +272,7 @@ pipeline assumes a cluster.
 | CPU | Intel Core i9-14900K (24 cores) | Rainflow counting of the evaluation runs in a process pool. |
 | RAM | 128 GB available | One run reads one simulation at a time from the shards. |
 | Disk | 24.0 GB dataset + a few MB per run | One checkpoint per model, tower and seed. |
-| Wall-clock | 7–9 min per run for the small models (training and scoring), ~10 min with zero-shot on two towers | 10–60 min for the pretrained encoders, 142 min for Mamba; physics ~2–3 min per tower on CPU. |
+| Wall-clock | 4–9 min per run for the small models (training and scoring), ~10–12 min with zero-shot on two towers | 10–60 min for the pretrained encoders, 142 min for Mamba; physics ~2–3 min per tower on CPU. |
 
 ### What lands in `outputs/`
 
@@ -288,7 +288,7 @@ outputs/
 │   ├── history_<model>_fa.json        training loss per epoch
 │   ├── damage_comparison_<model>_fa.csv          true and reconstructed damage (and variance ratio) at the 11 gauges
 │   ├── damage_comparison_<model>_fa_zs_<t>.csv   the same, zero-shot on tower <t>
-│   └── summary_<model>_fa[_zs_<t>].json          base-height metrics
+│   └── summary_<model>_fa[_zs_<t>].json          R², median ratio and within-2 at the base (tower_bottom)
 ├── fewshot/<source>_to_<target>/draw<k>/    adaptation runs (same files as within/)
 ├── ablation/<input set>/<tower>/           sensor-ablation runs (same files as within/)
 ├── val_select/<tower>/seed<k>/             model-selection runs scored on val/val
@@ -373,10 +373,11 @@ ci = cluster_bootstrap(df.damage_true_tower_top.values,
 - The parked constant C1 is recomputed from `parked.parquet` and
   rounded to 0.1 MN s², as in the paper; the physics baseline reproduces
   the paper to $10^{-7}$.
-- Training on GPU is not bit-for-bit deterministic for every model
-  (cuDNN convolutions): the recurrent and physics-anchored models rerun
-  identically, the convolutional ones may drift, within the spread of
-  the seeds. TCN on `opt2`, base $R^2$: 0.984, 0.991 and 0.992 in
+- Training on GPU may not be bit-for-bit deterministic (cuDNN
+  convolutions): in our reruns LSTM, PatchTST and the hybrid repeated
+  exactly, while TCN and Prob-TCN drifted within the spread of the seeds
+  (Prob-TCN top $R^2$ on `opt1`: 0.80 and 0.84 in two reruns of seed 0,
+  0.85 to 0.87 over the paper seeds). TCN on `opt2`, base $R^2$: 0.984, 0.991 and 0.992 in
   three reruns of seed 0, 0.987 to 0.992 over the three seeds of the
   paper; top $R^2$: 0.754 to 0.785 in reruns, 0.713 to 0.866 over the
   seeds. Compare a model with the paper through its three-seed median.
