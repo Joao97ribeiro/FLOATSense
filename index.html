@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FLOATSense</title>
+  <meta name="description" content="FLOATSense: a time-series dataset and benchmark for fatigue load reconstruction on floating offshore wind turbine towers.">
+  <link rel="icon" type="image/png" href="static/images/logo.png">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+  <link rel="stylesheet" href="static/css/style.css">
+</head>
+<body>
+<!-- ============ HERO ============ -->
+<section class="hero is-light">
+  <div class="hero-body has-text-centered">
+    <div class="container is-max-desktop">
+      <img src="static/images/logo.png" alt="FLOATSense logo" style="max-width:320px;margin-bottom:1rem;border-radius:12px;">
+      <h1 class="title is-2 publication-title" style="margin-bottom:1.5rem;">
+        FLOATSense: A Time-Series Dataset and Benchmark for Fatigue Load Reconstruction on Floating Offshore Wind Turbine Towers
+      </h1>
+      <div class="is-size-5 publication-authors">
+        <span class="author-block">Anonymous authors</span>
+      </div>
+      <div class="is-size-6 publication-affiliations" style="margin-top:0.4rem;">
+        <span>Paper under double-blind review</span>
+      </div>
+      <div class="publication-links" id="links" style="margin-top:1.5rem;"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ HIGHLIGHTS ============ -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <p class="has-text-centered" style="font-size:1.25rem;font-style:italic;color:#2d3748;margin-bottom:2rem;font-weight:500;">
+      Reconstruct the tower bending moment from a tower-top accelerometer and SCADA, and score it by the fatigue damage it implies.
+    </p>
+    <figure class="image" style="margin-bottom:2rem;">
+      <img src="static/images/overview.png" alt="FLOATSense overview">
+    </figure>
+
+    <h2 class="title is-3 has-text-centered" style="margin-bottom:2rem;">Paper Highlights</h2>
+    <div class="highlights">
+      <div class="box has-text-centered hl">
+        <p class="title is-3" style="color:#294366;">718 k</p>
+        <p class="subtitle is-6">time series at 10 Hz from 19,404 OpenFAST simulations</p>
+      </div>
+      <div class="box has-text-centered hl">
+        <p class="title is-3" style="color:#b02c27;">11 heights</p>
+        <p class="subtitle is-6">fore-aft moment targets, scored by fatigue damage</p>
+      </div>
+      <div class="box has-text-centered hl">
+        <p class="title is-3" style="color:#294366;">3 towers</p>
+        <p class="subtitle is-6">22 MW geometries for zero-shot and few-shot transfer</p>
+      </div>
+      <div class="box has-text-centered hl">
+        <p class="title is-3" style="color:#b02c27;">3 of 20</p>
+        <p class="subtitle is-6">learned models beat a one-gain floor at the top</p>
+      </div>
+      <div class="box has-text-centered hl">
+        <p class="title is-3" style="color:#7cc0cd;">Open</p>
+        <p class="subtitle is-6">data, code, checkpoints and leaderboard</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ABSTRACT ============ -->
+<section class="section has-background-light">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3">Abstract</h2>
+    <div class="content has-text-justified">
+      <p>Fatigue limits the lifetime of an offshore wind turbine tower and is tracked from the bending moment along it, yet the strain gauges that measure it are rare and cover one section, while a tower-top accelerometer is standard. Reconstructing the moment at every height from that one sensor is a time-series problem, and no public benchmark scores it on the quantity engineers act on, the fatigue damage.</p>
+      <p>We introduce <strong>FLOATSense</strong>, a dataset and benchmark for fatigue load reconstruction on 22 MW floating offshore wind turbines: 718 k time series at 10 Hz from the 19,404 OpenFAST simulations of FLOATBench on three tower geometries (37 channels, 1,078 operating points &times; six turbulence seeds per tower), with the accelerometer and SCADA signals as inputs and the fore-aft moment at eleven heights as target. Two choices set it apart: a reconstruction is scored by the fatigue damage it implies rather than by waveform error, and the six realizations of an operating point are kept together, so a model that reads only the condition scores zero on the within-condition metric.</p>
+      <p>Twenty learned models and a field-validated physics baseline are evaluated within tower, across towers zero-shot and few-shot, and under sensor ablation. <strong>Sensor-level leaderboards mislead</strong>: the base does not separate the models and its leaders collapse at the top, where at the declared budget only three learned models beat a one-gain floor; longer training recovers the top for the two TCNs, not for the attention and state-space models; five simulations of a new tower recover its base, not its top; and a second accelerometer axis improves the top at every budget.</p>
+      <p>Limitations: the campaign is simulated, wind and waves are aligned, and only the fore-aft moment is scored.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ DATASET ============ -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3">Dataset</h2>
+    <div class="content has-text-justified">
+      <p>Each simulation holds <strong>37 channels at 10 Hz over 1,000 s</strong>: tower-top accelerations, SCADA (rotor speed, blade pitch, power, hub wind speed), platform motions, wave elevation, and the fore-aft and side-side bending moments at 11 heights. Per tower: 1,078 operating points (22 wind speeds &times; 7 H<sub>s</sub> &times; 7 T<sub>p</sub>, IEC 61400-3-2 DLC 1.2) &times; 6 realizations = 6,468 simulations, plus 22 parked runs. Every file is keyed by the FLOATBench <code>sim_id</code>.</p>
+      <p><strong>Task.</strong> From the gravity-corrected fore-aft tower-top acceleration, rotor speed, blade pitch, hub wind speed and a height <em>z/H</em>, reconstruct the fore-aft moment at that height over 400 to 1,000 s. One model serves the whole tower. True and reconstructed moments pass through the same pipeline: 3 Hz low-pass, rainflow counting, DNV-RP-C203 S-N curve and Miner's rule.</p>
+    </div>
+    <figure class="image"><img src="static/images/channels.png" alt="The 37 channels of one simulation"></figure>
+  </div>
+</section>
+
+<!-- ============ EXPLORER ============ -->
+<section class="section has-background-light">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3">Explore the Dataset</h2>
+    <p class="subtitle is-6">Interactive view of the review subset: one simulation per wind speed on each tower (middle level of the wave grid, first realization), 66 simulations. Scored window 400 to 1,000 s shown at 5 Hz; drag to zoom, both plots follow.</p>
+
+    <div class="box">
+      <div class="columns is-vcentered is-multiline">
+        <div class="column is-3">
+          <label class="label is-small">Tower</label>
+          <div class="buttons has-addons" id="towerSeg"></div>
+        </div>
+        <div class="column is-6">
+          <label class="label is-small" for="wind">Wind speed: <span id="windVal"></span></label>
+          <input id="wind" class="slider" type="range" min="0" max="21" step="1" value="11">
+        </div>
+        <div class="column is-3">
+          <label class="label is-small" for="gauge">Moment line</label>
+          <div class="select is-fullwidth is-small"><select id="gauge"></select></div>
+        </div>
+      </div>
+      <div class="tags" id="op"></div>
+    </div>
+
+    <div class="box"><div id="inputs" style="height:560px;"><p class="has-text-grey">Loading the time series…</p></div></div>
+    <div class="box"><div id="targets" style="height:440px;"></div></div>
+  </div>
+</section>
+
+<!-- ============ DAMAGE ============ -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3">Damage Along the Tower</h2>
+    <p class="subtitle is-6">For the simulation selected above: true damage at the 11 gauges and the damage implied by each model's reconstruction (seed-0 checkpoints, within-tower protocol).</p>
+    <div class="columns">
+      <div class="column is-8"><div class="box"><div id="profile" style="height:470px;"></div></div></div>
+      <div class="column is-4">
+        <div class="box">
+          <label class="label is-small">Models (up to four)</label>
+          <div id="models" class="model-list"></div>
+          <p class="is-size-7 has-text-grey" id="profileNote" style="margin-top:0.8rem;"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ENVELOPE ============ -->
+<section class="section has-background-light">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3">Operating Envelope</h2>
+    <p class="subtitle is-6">Reference damage of all 1,078 operating points of the selected tower, averaged over the six realizations. Ringed cells are the review simulations; click one to open it in the explorer.</p>
+    <div class="columns">
+      <div class="column is-7">
+        <div class="box">
+          <div class="buttons has-addons" id="secSeg" style="margin-bottom:0.5rem;"></div>
+          <div id="heat" style="height:460px;"></div>
+        </div>
+      </div>
+      <div class="column is-5"><div class="box"><div id="life" style="height:510px;"></div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ BENCHMARK ============ -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3">Benchmark</h2>
+    <div class="content has-text-justified">
+      <p>Within tower on the regime-aware partition of FLOATBench (4,740 test simulations per tower), at the declared budget of 50 epochs. Each cell is the mean over the three towers of the per-tower median over three seeds, or seed 0 where only one was run (&dagger;); the small grey number is the lowest tower. Click a column to sort; switch the height to see the ranking change.</p>
+    </div>
+    <div class="box">
+      <div class="buttons has-addons" id="hSeg"></div>
+      <div class="table-container">
+        <table class="table is-fullwidth is-hoverable is-narrow" id="board"><thead></thead><tbody></tbody></table>
+      </div>
+      <p class="is-size-7 has-text-grey">R&sup2; of log<sub>10</sub> damage; &times;2: share within a factor of two; ratio: median reconstructed / true damage; within-corr: correlation among the six realizations of an operating point; MRE: mean relative error. Physics and the one-gain floor are reference rows.</p>
+    </div>
+    <figure class="image" style="margin-top:2rem;"><img src="static/images/results.png" alt="Main results of the paper"></figure>
+  </div>
+</section>
+
+<!-- ============ RESOURCES ============ -->
+<section class="section has-background-light">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3">Resources</h2>
+    <div class="columns is-multiline">
+      <div class="column is-half"><div class="box">
+        <p class="title is-5"><span class="ico" data-i="db"></span> <a data-link="data">FLOATSense dataset</a></p>
+        <p>19,404 simulations on three towers in Parquet: series in 17 shards per tower (one row group per simulation), metadata, sections, reference damage and 66 parked runs. 24.0 GB, CC-BY-4.0. Released on publication.</p>
+      </div></div>
+      <div class="column is-half"><div class="box">
+        <p class="title is-5"><span class="ico" data-i="gh"></span> <a data-link="code">FLOATSense code</a></p>
+        <p>Loader, damage scorer, physics baseline, 20 learned models, evaluation harness and the scripts behind every table and figure. MIT license.</p>
+      </div></div>
+      <div class="column is-half"><div class="box">
+        <p class="title is-5"><span class="ico" data-i="box"></span> <a data-link="subset">Review subset</a></p>
+        <p><code>sim_id = 25 + 294k</code>, k = 0…21, the same 22 simulations on each tower, all in the test split, with the complete tabular files, 14 checkpoints and the paper's per-simulation damage to compare against.</p>
+      </div></div>
+      <div class="column is-half"><div class="box">
+        <p class="title is-5"><span class="ico" data-i="doc"></span> <a href="https://arxiv.org/abs/2605.25717" target="_blank" rel="noopener">FLOATBench</a></p>
+        <p>The simulation campaign FLOATSense builds on: the same simulations, identifiers and regime-aware partition, with 582,120 tabular fatigue labels.</p>
+      </div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CITATION ============ -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <div class="level is-mobile" style="margin-bottom:1rem;">
+      <div class="level-left"><h2 class="title is-3" style="margin-bottom:0;">Citation</h2></div>
+      <div class="level-right"><button id="copy-bibtex" class="button is-rounded is-dark" type="button"><span class="ico" data-i="copy"></span><span>Copy BibTeX</span></button></div>
+    </div>
+    <pre style="white-space:pre-wrap;"><code id="bibtex-content">@inproceedings{anonymous2027floatsense,
+      title={FLOATSense: A Time-Series Dataset and Benchmark for Fatigue Load Reconstruction on Floating Offshore Wind Turbine Towers},
+      author={Anonymous},
+      booktitle={Under review},
+      year={2027},
+}</code></pre>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="content has-text-centered">
+    <p>Page template adapted from the <a href="https://github.com/eliahuhorwitz/Academic-project-page-template" target="_blank" rel="noopener">Academic Project Page Template</a>.</p>
+  </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+<script src="static/js/page.js"></script>
+</body>
+</html>

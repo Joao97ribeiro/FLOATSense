@@ -1,0 +1,37 @@
+/* FLOATSense project page custom styles (on top of Bulma 0.9.4) */
+body { background: #ffffff; color: #4a4a4a; }
+.publication-title { font-weight: 700; line-height: 1.2; }
+.publication-links .button { margin: 0.25rem; }
+.publication-links .button[disabled] { opacity: 0.55; }
+.hero.is-light img { border-radius: 8px; }
+.highlights { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1rem; align-items: stretch; }
+.highlights .box { margin-bottom: 0; }
+.hl { display: flex; flex-direction: column; justify-content: center; padding: 0.9rem 1rem; }
+.hl .title { margin-bottom: 1.25rem !important; }
+@media (max-width: 900px) { .highlights { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 480px) { .highlights { grid-template-columns: 1fr; } }
+.section { padding-left: 1rem; padding-right: 1rem; }
+pre code { font-size: 0.85rem; }
+input.slider { width: 100%; accent-color: #294366; }
+.buttons.has-addons .button.is-selected { background: #294366; border-color: #294366; color: #fff; }
+.model-list { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.model-list label { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.25rem 0.55rem; border: 1px solid #dbdbdb; border-radius: 290486px; font-size: 0.85rem; cursor: pointer; }
+.model-list .sw { width: 10px; height: 10px; border-radius: 50%; display: inline-block; border: 1px solid #dbdbdb; }
+#board td, #board th { font-variant-numeric: tabular-nums; white-space: nowrap; }
+#board th { cursor: pointer; user-select: none; }
+#board th.sorted::after { content: " \2193"; }
+#board th.sorted.asc::after { content: " \2191"; }
+#board td:not(:first-child), #board th:not(:first-child) { text-align: right; }
+#board tr.refrow td { background: #f5f7fa; font-style: italic; }
+#board td small { color: #9aa5b1; }
+#board td.neg { color: #b02c27; }
+#board .bar { display: inline-block; height: 8px; background: #294366; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+#board .fam { color: #9aa5b1; font-size: 0.75rem; margin-left: 0.4rem; }
+.ico { display: inline-flex; width: 1em; height: 1em; vertical-align: -0.125em; margin-right: 0.35rem; }
+.ico svg { width: 100%; height: 100%; fill: currentColor; }
+.button .ico { margin-right: 0.45rem; }
+:focus-visible { outline: 2px solid #294366; outline-offset: 2px; }
+.tag.grp-it { background: #e6ebf2; color: #294366; }
+.tag.grp-ip { background: #e8f5f7; color: #3a7f8c; }
+.tag.grp-ex { background: #f7e3e2; color: #b02c27; }
+.hl .title.c-ref { color: #8f8f8f !important; }
