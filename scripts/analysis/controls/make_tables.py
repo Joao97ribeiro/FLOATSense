@@ -1,7 +1,19 @@
-"""Markdown tables for summary.md from a123_seed_median.csv."""
+"""Markdown tables of the appendix from a123_seed_median.csv.
+
+Reads a123_seed_median.csv (a123_cpu.py) from the controls folder and
+writes tables_a123.md next to it. Paths: see layout.py.
+
+Usage: python scripts/analysis/controls/make_tables.py
+"""
+import os
+import sys
+
 import pandas as pd
 
-d = pd.read_csv("a123_seed_median.csv")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import layout  # noqa: E402  pylint: disable=wrong-import-position
+
+d = pd.read_csv(layout.controls("a123_seed_median.csv"))
 ORDER = ["Oracle, arith. mean", "Oracle LOO, arith.", "Oracle, geo. mean",
          "Oracle LOO, geo.", "Floor", "Physics", "TCN", "Prob-TCN (sample)",
          "Prob-TCN (mean head)", "PatchTST", "Mamba"]
@@ -36,5 +48,6 @@ out.append("#### A2b: amplitude ratio sd(dhat)/sd(d)\n\n"
            + piv("amp_ratio", ".2f", M) + "\n")
 out.append("#### A3: lifetime-weighted damage ratio [95% cluster CI]\n\n"
            + piv("lifetime_ratio", ".2f", M, ci=True) + "\n")
-open("tables_a123.md", "w").write("\n".join(out))
+with open(layout.controls("tables_a123.md"), "w", encoding="utf-8") as f:
+    f.write("\n".join(out))
 print("\n".join(out))

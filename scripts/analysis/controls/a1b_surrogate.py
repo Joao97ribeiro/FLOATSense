@@ -1,13 +1,17 @@
-import os
-"""Analysis 1b: attainable condition-only surrogates (trained on E2 train).
+"""Analysis 1b: attainable condition-only surrogates (trained on the train split).
 
 Inputs (wind_speed, wave_hs, wave_tp) only; target log10 D per simulation
-from data/<tower>/release/damage.csv, E2 train split (1,728 sims). Scored
-on the E2 test split against damage_true_* of the benchmark CSVs, with the
+from the released damage (damage.parquet), train split (1,728 sims). Scored
+on the test split against damage_true_* of the seed-0 TCN run, with the
 same metrics as a123_cpu.py (rho_wc = 0 by construction).
 Models: XGBoost (500 trees, depth 4, lr 0.05) and a GP (RBF-ARD + white
 noise, standardized inputs, fit on op-point means of log10 D).
+Needs xgboost and scikit-learn. Writes a1b_surrogate.csv to the controls
+folder. Paths: see layout.py.
+
+Usage: python scripts/analysis/controls/a1b_surrogate.py
 """
+import os
 import sys
 
 import numpy as np
@@ -16,17 +20,23 @@ import xgboost as xgb
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel
 
-ROOT = os.environ.get("FLOATSENSE_ROOT", ".")
-sys.path.insert(0, ROOT)
-from floatsense.metrics import summarize_damage  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import layout  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense import load_tower  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.data import HEIGHT_TARGETS  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.metrics import summarize_damage  # noqa: E402  pylint: disable=wrong-import-position
 
 X = ["wind_speed", "wave_hs", "wave_tp"]
 rows = []
-for t in ("ref", "opt1", "opt2"):
-    m = pd.read_csv(f"{ROOT}/data/{t}/release/metadata.csv").set_index("sim_id")
-    lab = pd.read_csv(f"{ROOT}/data/{t}/release/damage.csv").set_index("sim_id")
-    tr = pd.read_csv(f"{ROOT}/data/{t}/splits/E2/train.csv").sim_id.values
-    te = pd.read_csv(f"{ROOT}/outputs/heights/{t}/seed0/damage_comparison_tcn_fa.csv").set_index("sim_id")
+for t in layout.TOWERS:
+    release = load_tower(layout.DATA, t)
+    m = release.metadata
+    # damage.parquet columns are the section ids, base to top, in the order
+    # of the 11 gauges.
+    lab = release.damage()
+    lab.columns = [f"D_{stem}" for stem, _, _ in HEIGHT_TARGETS]
+    tr = release.split_ids("train")
+    te = pd.read_csv(layout.damage_csv(t, 0, "tcn")).set_index("sim_id")
     reg = (m.loc[te.index, "wind_group"] + "/" + m.loc[te.index, "wave_group"]).values
     for h in ("tower_bottom", "tower_top"):
         y = np.log10(lab.loc[tr, f"D_{h}"].values)
@@ -55,6 +65,6 @@ for t in ("ref", "opt1", "opt2"):
                              "median_ratio": s["median_damage_ratio"],
                              "rho_wc": 0.0})
 d = pd.DataFrame(rows)
-d.to_csv("a1b_surrogate.csv", index=False)
+d.to_csv(layout.controls("a1b_surrogate.csv"), index=False)
 a = d[d.regime == "all"]
 print(a.round(3).to_string())

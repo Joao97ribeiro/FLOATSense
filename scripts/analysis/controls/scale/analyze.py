@@ -1,10 +1,9 @@
-import os
 """Scale-only cross-tower recalibration of zero-shot predictions.
 
 For source->target, model, seed: s_h = median_i(D_true_i / D_pred_i) over the
 calibration sims (target training sims, re-inferred with the source
-checkpoint by infer_designed.py), per height h. Applied to the STORED
-zero-shot test predictions (outputs/heights/<src>/seed<k>/
+checkpoint by infer_designed.py into <controls>/a4_scale/infer), per height
+h. Applied to the STORED zero-shot test predictions (<runs>/<src>/seed<k>/
 damage_comparison_<m>_fa_zs_<tgt>.csv): D_rec' = s_h * D_rec. Metrics with
 floatsense.metrics.summarize_damage (log10 R^2, fraction in [0.5, 2],
 median ratio). Calibration sets:
@@ -13,21 +12,29 @@ median ratio). Calibration sets:
   des18  all 18 of fewshot/train_designed.csv (the paper's '18 designed')
   oracle s_h = median ratio on the test set itself (upper bound of any
          single-scale correction)
+The paper's fine-tuning numbers (columns paper_FT_*) are read from the LaTeX
+tables curve_top.tex and curve_base.tex of the folder in
+FLOATSENSE_PAPER_TABLES; the columns stay empty when it is not set.
+Writes scale_recal_all.csv, scale_recal_seed0.csv and
+scale_recal_seedmedian.csv to <controls>/a4_scale. Paths: see layout.py.
+
+Usage: python scripts/analysis/controls/scale/analyze.py
 """
+import os
 import re
 import sys
 import numpy as np
 import pandas as pd
-sys.path.insert(0, os.environ.get("FLOATSENSE_ROOT", "."))
-from floatsense.metrics import summarize_damage
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import layout  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.metrics import summarize_damage  # noqa: E402  pylint: disable=wrong-import-position
 
-R = os.path.join(os.environ.get("FLOATSENSE_ROOT", "."), "outputs")
-A = f"{R}/controls/a4_scale"
-H = ["tower_" + h for h in ["bottom"] + [str(i) for i in range(1, 10)] + ["top"]]
-TW = ["ref", "opt1", "opt2"]
+A = layout.controls("a4_scale")
+TW = list(layout.TOWERS)
 
 
 def load(src, tgt, m, seed, tag):
+    """Damage of a source checkpoint re-inferred on target simulations."""
     return pd.read_csv(f"{A}/infer/{src}/seed{seed}/damage_comparison_{m}_fa_{tag}_{tgt}.csv")
 
 
@@ -39,7 +46,7 @@ for seed in (0, 1, 2):
                 continue
             for m in ("tcn", "prob_tcn", "naive"):
                 try:
-                    zs = pd.read_csv(f"{R}/heights/{src}/seed{seed}/damage_comparison_{m}_fa_zs_{tgt}.csv")
+                    zs = pd.read_csv(layout.damage_csv(src, seed, m, f"zs_{tgt}"))
                     cal = {"des5": load(src, tgt, m, seed, "designed").iloc[:5],
                            "des18": load(src, tgt, m, seed, "designed")}
                 except FileNotFoundError:
@@ -53,7 +60,6 @@ for seed in (0, 1, 2):
                     base = dict(seed=seed, src=src, tgt=tgt, model=m, height=h)
                     rows.append({**base, "calib": "none", "scale": 1.0, **summarize_damage(t, r)})
                     scales = {k: float(np.median(c[f"damage_true_{h}"] / c[f"damage_rec_{h}"])) for k, c in cal.items()}
-                    scales["oracle"] = float(np.median(t / r)) ** -1 * 1.0
                     scales["oracle"] = 1.0 / float(np.median(r / t))
                     for k, s in scales.items():
                         rows.append({**base, "calib": k, "scale": s, **summarize_damage(t, s * r)})
@@ -62,9 +68,13 @@ df.to_csv(f"{A}/scale_recal_all.csv", index=False)
 
 # paper fine-tuning numbers (seed 0, draw 0)
 def paper(table):
+    """(pair, model) -> (N = 5, 18 designed) cells of a paper LaTeX table."""
     out, pair = {}, None
     names = {"twref": "ref", "twopta": "opt1", "twoptb": "opt2"}
-    for line in open(f"/tmp/overleaf-floatsense/tables/{table}.tex"):
+    folder = os.environ.get("FLOATSENSE_PAPER_TABLES")
+    if not folder:
+        return out
+    for line in open(os.path.join(folder, f"{table}.tex"), encoding="utf-8"):
         mm = re.search(r"\\(tw\w+)\{\} \$\\to\$ \\(tw\w+)\{\}", line)
         if mm:
             pair = (names[mm.group(1)], names[mm.group(2)])

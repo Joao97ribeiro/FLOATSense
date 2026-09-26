@@ -14,9 +14,11 @@ The dataset has one directory per tower and one shared parked file:
   <dataset_dir>/parked.parquet      the 22 parked runs of every tower
 
 Split names: `train` and `test` (the regime-aware partition, from
-metadata.parquet), `val/train` and `val/val` (model selection) and
-`fewshot/train_<n>_draw<k>` (adaptation sets); the last two are lists of
-sim_id shipped with the code in `splits/`, the same on the three towers.
+metadata.parquet), `val/train` and `val/val` (model selection),
+`fewshot/train_<n>_draw<k>` (random adaptation sets) and
+`fewshot/train_designed` (18 training simulations, one per training wind
+speed at one training sea state); all but the first two are lists of sim_id
+shipped with the code in `splits/`, the same on the three towers.
 """
 
 import glob
