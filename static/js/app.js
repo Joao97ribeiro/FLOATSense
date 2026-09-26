@@ -1,6 +1,6 @@
 // FLOATSense project page: dataset explorer and leaderboard along the height.
 
-const DATA_VERSION = "20260926b";  // bump when static/data changes
+const DATA_VERSION = "20260926c";  // bump when static/data changes
 
 // Paper palette (paper_style.py and fs_common.py).
 const NAVY = "#294366", RED = "#b02c27", REF = "#b8b8b8", REF_DARK = "#8f8f8f", CYAN = "#7cc0cd", SCADA = "#4383ad",
@@ -125,11 +125,15 @@ function simCard() {
   const sid = D.ids[st.sim], op = D.ops[sid];
   const item = (k, v) => `<div><dt>${k}</dt><dd>${v}</dd></div>`;
   $("sim-card").innerHTML = item("sim_id", sid) + item("Tower", TOWER_NAME[TOWERS[st.tower]]) + item("Wind speed [m/s]", op.wind.toFixed(1)) +
-    item("Seed", 1) + item("Wave height Hs [m]", op.hs.toFixed(2)) + item("Wave period Tp [s]", op.tp.toFixed(2)) +
+    item("Realization (seed)", op.seed) + item("Wave height Hs [m]", op.hs.toFixed(2)) + item("Wave period Tp [s]", op.tp.toFixed(2)) +
     item("Wind regime", `<span class="tag ${GROUP_TAG[op.wind_group]}">${op.wind_group}</span>`) +
     item("Wave regime", `<span class="tag ${GROUP_TAG[op.wave_group]}">${op.wave_group}</span>`);
   $("ex-wind-out").textContent = `${op.wind.toFixed(1)} m/s`;
-  $("ex-sim").value = st.sim; $("ex-wind").value = st.sim;
+  $("ex-sim").value = st.sim; $("ex-wind").value = D.winds.indexOf(op.wind);
+  const seeds = D.ids.map((s, k) => [k, D.ops[s]]).filter(([, o]) => o.wind === op.wind).sort((a, b) => a[1].seed - b[1].seed);
+  $("ex-seed").innerHTML = seeds.map(([k, o]) => `<option value="${k}">${o.seed}</option>`).join("");
+  $("ex-seed").value = st.sim; $("ex-seed").disabled = seeds.length < 2;
+  $("ex-seed-note").textContent = seeds.length < 2 ? "only seed 1 at this wind speed" : "all six at this wind speed";
 }
 
 function drawSeries() {
@@ -316,7 +320,8 @@ async function init() {
   time = Float32Array.from({length: D.n}, (_, j) => D.t0 + j * D.dt);
   $("ex-source").innerHTML = `<span class="icon"><i class="fas fa-check-circle"></i></span> ${D.ids.length} simulations per tower, inputs and fore-aft and side-side moments at 5 Hz.`;
 
-  $("ex-sim").innerHTML = D.ids.map((s, k) => { const o = D.ops[s]; return `<option value="${k}">${s} · ${o.wind.toFixed(1)} m/s · Hs ${o.hs.toFixed(2)} m</option>`; }).join("");
+  const simOrder = D.ids.map((s, k) => k).sort((a, b) => D.ops[D.ids[a]].wind - D.ops[D.ids[b]].wind || D.ops[D.ids[a]].seed - D.ops[D.ids[b]].seed);
+  $("ex-sim").innerHTML = simOrder.map(k => { const s = D.ids[k], o = D.ops[s]; return `<option value="${k}">${s} · ${o.wind.toFixed(1)} m/s · seed ${o.seed}</option>`; }).join("");
   $("ex-tower").onchange = e => selectTower(+e.target.value);
   heightChips(); inputChips();
   $("input-chips").onclick = e => {
@@ -342,7 +347,10 @@ async function init() {
   $("tw-presets").onclick = e => { const b = e.target.closest("button"); if (!b) return; const w = +b.dataset.w;
     if (!w) setWindow([400, 1000]); else { const c = (st.xr[0] + st.xr[1]) / 2; let a = Math.max(400, c - w / 2); a = Math.min(a, 1000 - w); setWindow([a, a + w]); } };
   $("ex-sim").onchange = e => selectSim(+e.target.value);
-  $("ex-wind").oninput = e => selectSim(+e.target.value);
+  $("ex-wind").oninput = e => { const w = D.winds[+e.target.value], seed = D.ops[D.ids[st.sim]].seed;
+    const k = D.ids.findIndex(s => D.ops[s].wind === w && D.ops[s].seed === seed);
+    selectSim(k >= 0 ? k : D.ids.findIndex(s => D.ops[s].wind === w && D.ops[s].seed === 1)); };
+  $("ex-seed").onchange = e => selectSim(+e.target.value);
 
 
   const order = ["tcn", "prob_tcn", "transformer", "mamba", "lstm", "s4", "timesnet", "unet", "fno", "itransformer", "fits", "dlinear", "spectral", "naive"].filter(m => D.models.includes(m));
