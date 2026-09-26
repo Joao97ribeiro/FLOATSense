@@ -78,7 +78,9 @@ def describe(path: str) -> dict:
     pair = next((re.match(r"(\w+)_to_(\w+)$", p) for p in parts
                  if re.match(r"\w+_to_\w+$", p)), None)
     tower = next((p for p in parts if p in TOWERS), None)
-    source = pair.group(1) if pair else tower
+    # A zero-shot file inside <src>_to_<tgt> was adapted on <tgt>.
+    source = ((pair.group(2) if target else pair.group(1)) if pair
+              else tower)
     return {"model": model,
             "run": os.path.dirname(os.path.relpath(path, FLAGS.output_root)),
             "direction": direction,
@@ -109,15 +111,24 @@ def score_file(path: str) -> pd.DataFrame:
                                    FLAGS.num_resamples)
         groups = {"all": df.index}
         groups.update(cells.groupby(cells).groups)
-        mre, corr = [], []
+        mre, corr, dropped = [], [], []
         for label in table["group"]:
             subset = df.loc[df.index.intersection(groups[label])]
+            dropped.append(len(subset) - int(
+                ((subset[true_col] > 0) & (subset[rec_col] > 0)).sum()))
             mre.append(mean_relative_error(subset[true_col], subset[rec_col]))
             corr.append(within_condition_correlation(
                 subset[true_col], subset[rec_col],
                 context["clusters"].loc[subset.index].values))
         table["mean_relative_error"] = mre
         table["within_condition_correlation"] = corr
+        # Simulations with a non-positive or missing damage are left out
+        # of every metric, as in the paper; count them.
+        table["num_dropped"] = dropped
+        if dropped[0]:
+            logging.warning("%s, %s: %d simulations without a positive "
+                            "damage left out of the metrics.", path, stem,
+                            dropped[0])
         table["gauge"], table["z_over_h"] = stem, z_over_h
         for key, value in meta.items():
             table[key] = value

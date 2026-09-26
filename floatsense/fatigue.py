@@ -47,6 +47,9 @@ def compute_base_damage(moment_series: np.ndarray,
 
     radius = tower.mean_radius_sections[section]
     thickness = tower.thickness_sections[section]
+    if not (np.isfinite(radius) and np.isfinite(thickness)):
+        raise ValueError(f"Section index {section} (section_id {section + 1}) "
+                         "is not one of the 11 scored sections.")
     inner_radius = radius - thickness
     modulus = (np.pi / 4) * (radius**4 - inner_radius**4) / radius
 

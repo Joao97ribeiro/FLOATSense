@@ -299,7 +299,9 @@ outputs/
 ├── fewshot/<source>_to_<target>/draw<k>/    adaptation runs (same files as within/)
 ├── ablation/<input set>/<tower>/           sensor-ablation runs (same files as within/)
 ├── val_select/<tower>/seed<k>/             model-selection runs scored on val/val
-└── tables/results.csv                 every file x gauge x regime cell: metrics and 95% intervals
+└── tables/results.csv                 every file x gauge x regime cell: metrics, 95% intervals,
+                                       direction and num_dropped (simulations without a positive
+                                       damage, left out of the metrics as in the paper)
 ```
 
 Zero-shot physics runs (`<tower>_zs_<source>`) reuse the calibration of

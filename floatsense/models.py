@@ -1294,6 +1294,11 @@ LENGTH_FIXED_MODELS = ("spectral", "hybrid", "hybrid_tcn", "fits",
                        "itransformer")
 
 
+# Models that read the first input channel as the tower-top acceleration.
+ACCEL_FIRST_MODELS = ("naive", "spectral", "hybrid", "hybrid_tcn", "chronos",
+                      "moment", "moment_ft", "timesfm", "timesfm_ft")
+
+
 def build_model(name: str,
                 num_samples: int,
                 input_channels: int,

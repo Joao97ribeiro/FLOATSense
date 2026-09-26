@@ -184,8 +184,11 @@ def main(_):
                 deterministic=FLAGS.deterministic)
             if FLAGS.run_training:
                 logging.info("Training %s (%s).", model_name, direction)
-                trainer.train(train_ids, source.split_ids(FLAGS.val_split)
-                              if FLAGS.val_split else None)
+                val_ids = (source.split_ids(FLAGS.val_split)
+                           if FLAGS.val_split else None)
+                if val_ids and FLAGS.max_eval_sims:
+                    val_ids = val_ids[:FLAGS.max_eval_sims]
+                trainer.train(train_ids, val_ids)
             else:
                 trainer.load_checkpoint()
             if not FLAGS.run_evaluation:

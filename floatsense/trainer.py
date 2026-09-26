@@ -31,6 +31,7 @@ from .data import SequenceDataset
 from .data import compute_norm_stats
 from .fatigue import compute_base_damage
 from .metrics import summarize_damage
+from .models import ACCEL_FIRST_MODELS
 from .models import LENGTH_FIXED_MODELS
 from .models import build_model
 from .physics import lowpass
@@ -230,6 +231,11 @@ class SequenceModelTrainer:
             target_channel=self.target_channel,
             input_channels=self.input_channels,
             height_targets=self.height_targets)
+        if (self.model_name in ACCEL_FIRST_MODELS and
+                probe.input_channels[0] != probe.accel_channel):
+            raise ValueError(f"{self.model_name} reads the first input channel "
+                             f"as the acceleration: put {probe.accel_channel} "
+                             "first in --input_channels.")
         stat_channels = list(
             dict.fromkeys(
                 [c.split(":")[1] if c.startswith("stat:") else c
@@ -241,6 +247,7 @@ class SequenceModelTrainer:
             init_state = torch.load(self.init_checkpoint,
                                     map_location=self.device,
                                     weights_only=False)
+            self._check_setup(init_state, probe)
             self.norm_stats = init_state["norm_stats"]
         else:
             self.norm_stats = compute_norm_stats(self.release, train_ids,
@@ -404,7 +411,31 @@ class SequenceModelTrainer:
                 "loss_name": self.loss_name,
                 "condition_bound": self.condition_bound,
                 "seed": self.seed,
+                "setup": self._setup(self._make_dataset([], None)),
             }, self.checkpoint_path())
+
+    def _setup(self, probe: SequenceDataset) -> Dict:
+        """Channel setup a checkpoint was trained with."""
+        return {"direction": self.direction,
+                "input_channels": list(probe.input_channels),
+                "condition_channels": list(probe.condition_channels),
+                "target_channel": probe.moment_channel,
+                "height_targets": bool(self.height_targets)}
+
+    def _check_setup(self, checkpoint: Dict, probe: SequenceDataset) -> None:
+        """Refuses a checkpoint trained with other channels (checkpoints
+        written before the setup was stored are not checked)."""
+        saved = checkpoint.get("setup")
+        if saved is None:
+            return
+        current = self._setup(probe)
+        if current["height_targets"]:
+            # The 11-height task samples the target channel per item.
+            saved = {k: v for k, v in saved.items() if k != "target_channel"}
+            current.pop("target_channel")
+        if saved != current:
+            raise ValueError(f"Checkpoint trained with {saved}, "
+                             f"run configured with {current}.")
 
     def load_checkpoint(self) -> None:
         """Loads a previously trained checkpoint."""
@@ -414,6 +445,7 @@ class SequenceModelTrainer:
         self.norm_stats = checkpoint["norm_stats"]
         self._eval_length = checkpoint["eval_length"]
         probe = self._make_dataset([], None)
+        self._check_setup(checkpoint, probe)
         num_samples = checkpoint["crop_length"] or self._eval_length
         self.model = build_model(self.model_name,
                                  num_samples=num_samples,
