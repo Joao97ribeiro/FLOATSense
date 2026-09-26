@@ -21,7 +21,7 @@ const FAMILY_COLOR = {convolutional: NAVY, recurrent: CYAN, attention: TAUPE, "s
 const MODEL_COLOR = {tcn: NAVY, prob_tcn: RED, lstm: CYAN, transformer: TAUPE, s4: SLATE, fits: WINE, timesnet: PINK,
   mamba: CYAN, naive: REF_DARK, physics: "#222222", spectral: CORAL, unet: "#565656", fno: "#6b6b6b",
   itransformer: "#aaaaaa", dlinear: "#d2d2d2", chronos: CORAL, hybrid: CORAL};
-const MODEL_DASH = {mamba: "dash", naive: "dot", hybrid: "dash"};
+const MODEL_DASH = {mamba: "dash", naive: "dot", hybrid: "dash", physics: "dashdot"};
 const MOMENT_SCALE = [[0, NAVY], [0.5, "#f7f7f7"], [1, RED]];
 // Height colors: base RED to top RED_LIGHT, the height gradient of the paper figures.
 function heightColor(k) { const a = [176, 44, 39], b = [240, 179, 176], f = k / 10;
