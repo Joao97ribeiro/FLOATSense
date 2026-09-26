@@ -24,7 +24,9 @@ moment at **eleven heights** as target. A reconstruction is scored by
 the fatigue damage it implies, not by waveform error. For review, a fixed
 subset (47 simulations per tower, one per wind speed plus all six
 realizations of five operating points, the complete tabular files and the
-trained checkpoints) is available through an anonymized link,
+checkpoints of 14 of the 20 learned models: all but the foundation models,
+left out for size, and the two hybrids, which need the physics calibration)
+is available through an anonymized link,
 [https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e](https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e); the complete dataset (24.0 GB) is released on publication.
 This repository contains the benchmark code, the physics baseline, the
 20 learned models, the evaluation harness, and the scripts to reproduce
@@ -235,7 +237,7 @@ python -c "from floatsense import load_tower; \
 
 (Manual alternative: download `FLOATSense-review.zip` from
 [https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e](https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e), unzip it, and
-`mv FLOATSense-review data/FLOATSense`.) The subset also holds the
+`mkdir -p data && mv FLOATSense-review data/FLOATSense`.) The subset also holds the
 trained checkpoints, the reference per-simulation results of the paper,
 `compare.py`, which compares an evaluation run with them, and `rho_wc.py`,
 which computes the within-condition correlation on the five operating
@@ -245,12 +247,16 @@ Check the paper's per-simulation results with the released checkpoints
 (evaluation only, CPU, a few minutes):
 
 ```bash
-mkdir -p outputs/review && cp -r data/FLOATSense/checkpoints/opt2/seed0 outputs/review/opt2
+mkdir -p outputs/review/opt2 && cp data/FLOATSense/checkpoints/opt2/seed0/*.pt outputs/review/opt2/
 python scripts/train/run.py --flagfile=scripts/train/config.cfg \
     --tower=opt2 --test_split=review/test --run_training=False \
     --models=tcn,mamba,naive --output_dir=outputs/review/opt2
 python data/FLOATSense/compare.py outputs/review/opt2 opt2
 python data/FLOATSense/rho_wc.py outputs/review/opt2 opt2
+
+# the metrics table of these runs, with condition-level bootstrap intervals
+python scripts/benchmark/run.py --flagfile=scripts/benchmark/config.cfg \
+    --output_root=outputs/review --test_split=review/test
 ```
 
 The configs expect the dataset at `data/FLOATSense`; change
@@ -433,12 +439,14 @@ import pandas as pd
 from floatsense import cluster_bootstrap, load_tower
 from floatsense.metrics import condition_key
 
-df = pd.read_csv("outputs/within/opt2/seed0/damage_comparison_tcn_fa.csv")  # review subset: outputs/review/opt2/...
+df = pd.read_csv("outputs/within/opt2/seed0/damage_comparison_tcn_fa.csv")
+# with the review subset: pd.read_csv("outputs/review/opt2/damage_comparison_tcn_fa.csv")
 tower = load_tower("data/FLOATSense", "opt2")
 meta = tower.metadata.loc[df.sim_id]
 ci = cluster_bootstrap(df.damage_true_tower_top.values,
                        df.damage_rec_tower_top.values,
                        condition_key(meta).values)
+print(ci)
 ```
 
 ## Reproducibility

@@ -100,8 +100,15 @@ def main(_):
             os.path.join(FLAGS.output_root, FLAGS.source + suffix,
                          f"calibration_{FLAGS.direction}.json"))
     else:
-        calibration = physics.calibrate(
-            FLAGS.direction, release.split_ids(FLAGS.train_split))
+        calibration_ids = release.split_ids(FLAGS.train_split)
+        missing = sorted(set(calibration_ids) - set(release.sim_ids))
+        if missing:
+            raise SystemExit(
+                f"{len(missing)} of the {len(calibration_ids)} simulations of "
+                f"split '{FLAGS.train_split}' are not in {release.tower_dir} "
+                "(the review subset holds only splits/review/test): the physics "
+                "calibration needs the full dataset.")
+        calibration = physics.calibrate(FLAGS.direction, calibration_ids)
     logging.info("%s: %s", FLAGS.direction, calibration)
 
     profile = calibrate_profile(FLAGS.dataset_dir, profile_tower,
