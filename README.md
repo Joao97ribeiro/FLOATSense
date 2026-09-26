@@ -373,9 +373,10 @@ ci = cluster_bootstrap(df.damage_true_tower_top.values,
 - The parked constant C1 is recomputed from `parked.parquet` and
   rounded to 0.1 MN s², as in the paper; the physics baseline reproduces
   the paper to $10^{-7}$.
-- Training on GPU is not bit-for-bit deterministic (cuDNN), so rerunning
-  the same seed does not give the same numbers; the spread of reruns is
-  that of the seeds. TCN on `opt2`, base $R^2$: 0.984, 0.991 and 0.992 in
+- Training on GPU is not bit-for-bit deterministic for every model
+  (cuDNN convolutions): the recurrent and physics-anchored models rerun
+  identically, the convolutional ones may drift, within the spread of
+  the seeds. TCN on `opt2`, base $R^2$: 0.984, 0.991 and 0.992 in
   three reruns of seed 0, 0.987 to 0.992 over the three seeds of the
   paper; top $R^2$: 0.754 to 0.785 in reruns, 0.713 to 0.866 over the
   seeds. Compare a model with the paper through its three-seed median.

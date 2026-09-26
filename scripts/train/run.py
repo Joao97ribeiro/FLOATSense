@@ -11,7 +11,7 @@ Examples:
 
   # ten-shot: start from the opt2 checkpoint, adapt on 10 ref simulations
   python scripts/train/run.py ... --tower=ref --batch_size=4 \
-      --num_epochs=... --train_split=fewshot/train_10_draw0 \
+      --train_split=fewshot/train_10_draw0 \
       --init_checkpoint_dir=outputs/within/opt2/seed0 \
       --output_dir=outputs/fewshot/opt2_to_ref/draw0
 
