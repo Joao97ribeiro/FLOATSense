@@ -116,6 +116,11 @@ class ReleasedTower:
         state["_files"] = {}
         return state
 
+    @property
+    def sim_ids(self) -> List[int]:
+        """Sorted identifiers of the simulations present in the local shards."""
+        return sorted(self._row_groups)
+
     def load(self, sim_id: int) -> np.ndarray:
         """Full (10001, 37) float32 array of one simulation."""
         if int(sim_id) not in self._row_groups:

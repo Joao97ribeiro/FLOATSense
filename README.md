@@ -410,6 +410,7 @@ meta = tower.metadata.loc[df.sim_id]
 ci = cluster_bootstrap(df.damage_true_tower_top.values,
                        df.damage_rec_tower_top.values,
                        condition_key(meta).values)
+print(ci)
 ```
 
 ## Reproducibility
