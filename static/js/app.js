@@ -1,6 +1,6 @@
 // FLOATSense project page: dataset explorer and leaderboard along the height.
 
-const DATA_VERSION = "20260926c";  // bump when static/data changes
+const DATA_VERSION = "20260926d";  // bump when static/data changes
 
 // Paper palette (paper_style.py and fs_common.py).
 const NAVY = "#294366", RED = "#b02c27", REF = "#b8b8b8", REF_DARK = "#8f8f8f", CYAN = "#7cc0cd", SCADA = "#4383ad",
@@ -92,7 +92,7 @@ function loadScript(src) {
 async function loadTowerEmbedded(t) {
   const name = TOWERS[t], per = D.channels.length * D.n, idx = {};
   for (let k = 0; k < B52.length; k++) idx[B52[k]] = k;
-  await Promise.all(D.ids.map((_, i) => loadScript(`static/data/s_${name}_${i}.js`)));
+  await Promise.all(D.ids.map((_, i) => loadScript(`static/data/s_${name}_${i}.js?v=${DATA_VERSION}`)));
   const out = new Int16Array(per * D.ids.length);
   D.ids.forEach((_, i) => {
     const str = window.FS_SER[`${name}/${i}`];
@@ -316,6 +316,7 @@ async function init() {
       const r = document.createRange(); r.selectNodeContents($("bibtex-content")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }); };
   D = window.FS_DATA || await fetch(`static/data/data.json?v=${DATA_VERSION}`).then(r => r.json());
   st.models = st.models.filter(m => D.models.includes(m));
+  Object.values(D.ops).forEach(o => { if (o.seed === undefined) o.seed = 1; });
   S = {}; S[st.tower] = await loadTower(st.tower);
   time = Float32Array.from({length: D.n}, (_, j) => D.t0 + j * D.dt);
   $("ex-source").innerHTML = `<span class="icon"><i class="fas fa-check-circle"></i></span> ${D.ids.length} simulations per tower, inputs and fore-aft and side-side moments at 5 Hz.`;

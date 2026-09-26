@@ -41,6 +41,12 @@ FORBIDDEN = [
 ]
 
 
+def data_version():
+    """DATA_VERSION of app.js, appended to the data URLs so that browsers drop stale copies."""
+    js = (SITE / "static" / "js" / "app.js").read_text()
+    return re.search(r'const DATA_VERSION = "([^"]+)"', js).group(1)
+
+
 def cut(html, start, end):
     """Remove html from marker `start` to the end of marker `end`."""
     i = html.index(start)
@@ -172,7 +178,7 @@ def build_html(html):
                   flags=re.S)
     html = re.sub(
         r'(<script defer src="static/js/app\.js[^"]*"></script>)', lambda m:
-        '<script src="static/data/data.js"></script>\n  ' + m.group(1), html)
+        f'<script src="static/data/data.js?v={data_version()}"></script>\n  ' + m.group(1), html)
     return alternate_backgrounds(html)
 
 
