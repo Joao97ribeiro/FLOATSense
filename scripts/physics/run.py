@@ -15,7 +15,7 @@ Examples:
 
   # ten-shot: constants recalibrated on 10 opt2 simulations
   python scripts/physics/run.py ... --tower=opt2 \
-      --train_split=fewshot/train_10_draw0 --tag=fs10_draw0
+      --train_split=fewshot/train_10_draw0
 """
 
 import json
@@ -34,6 +34,7 @@ from floatsense import load_tower  # noqa: E402  pylint: disable=wrong-import-po
 from floatsense import parked_c_theta  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.heights import calibrate_profile  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.heights import evaluate_heights  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.metrics import summarize_damage  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.release import split_tag  # noqa: E402  pylint: disable=wrong-import-position
 
 FLAGS = flags.FLAGS
@@ -116,10 +117,19 @@ def main(_):
     test_ids = release.split_ids(FLAGS.test_split)
     if FLAGS.max_eval_sims:
         test_ids = test_ids[:FLAGS.max_eval_sims]
-    evaluate_heights(physics, test_ids, calibration, profile["factors"],
-                     FLAGS.direction,
-                     os.path.join(output_dir, "damage_heights.csv"))
-    logging.info("Done: %s", output_dir)
+    scores = evaluate_heights(physics, test_ids, calibration,
+                              profile["factors"], FLAGS.direction,
+                              os.path.join(output_dir, "damage_heights.csv"))
+    for height in ("tower_bottom", "tower_top"):
+        if f"damage_true_{height}" in scores:
+            s = summarize_damage(scores[f"damage_true_{height}"].to_numpy(),
+                                 scores[f"damage_rec_{height}"].to_numpy())
+            logging.info("%s %s: R2 log damage %.3f | median ratio %.3f | "
+                         "within 2 %.3f (%d sims)", FLAGS.tower, height,
+                         s["r2_log_damage"], s["median_damage_ratio"],
+                         s["fraction_within_factor2"], len(scores))
+    logging.info("Done: %s (all heights and metrics: scripts/benchmark/run.py)",
+                 output_dir)
 
 
 if __name__ == "__main__":

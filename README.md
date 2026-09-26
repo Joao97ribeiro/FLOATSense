@@ -159,7 +159,10 @@ with the rest (`pip install --no-deps momentfm==0.1.4`, the last line
 above). TimesFM is not included: `--models=timesfm` and
 `timesfm_ft` need the TimesFM 2.5 PyTorch package installed separately
 from [google-research/timesfm](https://github.com/google-research/timesfm)
-(it provides `timesfm.timesfm_2p5_torch`).
+(it provides `timesfm.timesfm_2p5_torch`). On first use the pretrained
+encoders download their weights from the Hugging Face Hub
+(`amazon/chronos-t5-small`, `AutonLab/MOMENT-1-small`,
+`google/timesfm-2.5-200m-pytorch`), so that run needs internet access.
 
 **Alternative (pip, CPU or existing venv):**
 
@@ -268,7 +271,8 @@ the training read the train split, which the review subset does not ship
 subset)* for what runs on it).
 
 ```bash
-# Physics baseline on one tower (CPU, ~3 min): calibrate on train, score test
+# Physics baseline on one tower (CPU, ~3-4 min): calibrate on train, score test;
+# the log ends with base and top R2, all heights come from scripts/benchmark/run.py
 python scripts/physics/run.py --flagfile=scripts/physics/config.cfg --tower=opt2
 
 # One learned model on one tower, scored zero-shot on the other two (~10–12 min on one GPU)
@@ -310,7 +314,7 @@ pipeline assumes a cluster.
 | CPU | Intel Core i9-14900K (24 cores) | Rainflow counting of the evaluation runs in a process pool. |
 | RAM | 128 GB available | One run reads one simulation at a time from the shards. |
 | Disk | 24.0 GB dataset + a few MB per run | One checkpoint per model, tower and seed. |
-| Wall-clock | 4–9 min per run for the small models (training and scoring), ~10–12 min with zero-shot on two towers | 10–60 min for the pretrained encoders, 142 min for Mamba; physics ~2–3 min per tower on CPU. |
+| Wall-clock | 4–9 min per run for the small models (training and scoring), ~10–12 min with zero-shot on two towers | 10–60 min for the pretrained encoders, 142 min for Mamba; physics ~3–4 min per tower on CPU. |
 
 ### What lands in `outputs/`
 
@@ -380,6 +384,8 @@ python scripts/train/run.py --flagfile=scripts/train/config.cfg --tower=opt2 --m
 `--max_train_sims` / `--max_eval_sims` cap a run for a quick test; they
 take the first simulations by `sim_id`, one realization per operating
 point, so the within-condition correlation of such a run is undefined.
+Write quick tests to a separate `--output_root` (or delete them): the
+benchmark table scores every run it finds under `outputs/`.
 
 Field-style SCADA (the ten-minute statistics a turbine logs) is an
 input set too: `stat:<channel>:<mean|std|min|max>` reads
