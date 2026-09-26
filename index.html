@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="stylesheet" href="static/css/style.css?v=8">
   <script defer src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
-  <script defer src="static/js/app.js?v=26"></script>
+  <script defer src="static/js/app.js?v=27"></script>
 </head>
 <body>
 
@@ -187,7 +187,7 @@
           <tr><td class="grp">×2 · ratio · MRE</td><td>Fraction of simulations within a factor of two of the true damage; median ratio <em>D̂</em>/<em>D</em> (1 = unbiased); mean relative error.</td></tr>
           <tr><td class="grp">Within-condition corr.</td><td>Correlation between true and reconstructed damage across the six realizations of each operating point. A model that only recognizes the condition scores zero.</td></tr>
           <tr><td class="grp">Regimes</td><td>The FLOATBench label of each test simulation on the wind and on the wave axis: <span class="tag tag-it">In-train</span> (IT), <span class="tag tag-ip">Interpolate</span> (IP) or <span class="tag tag-ex">Extrapolate</span> (EX).</td></tr>
-          <tr><td class="grp">Floor · physics</td><td>The floor is one scalar gain from the tower-top acceleration to the moment. The physics baseline is the field method of Pimenta et al. (2024), a six-constant spectral gain calibrated on the parked runs and the training split, extended to every height.</td></tr>
+          <tr><td class="grp">Floor · physics</td><td>The floor is one scalar gain from the tower-top acceleration to the moment. The physics baseline is the field method of <a href="https://doi.org/10.1016/j.renene.2024.119981">Pimenta et al. (2024)</a>, a six-constant spectral gain calibrated on the parked runs and the training split, extended to every height.</td></tr>
         </tbody>
       </table>
     </div>
@@ -346,7 +346,7 @@ damage = tower.damage()          # sim_id x section_id</code></pre>
       </div></div>
     </div>
     <div class="content has-text-justified">
-      <p><strong>Models.</strong> Twenty learned models in eight families (convolutional, recurrent, attention, state-space, spectral, period-folding, pretrained encoders with a trained head and physics-anchored), among them a Prob-TCN with a heteroscedastic head, a condition-dependent spectral gain, and a hybrid that learns a bounded correction of the physics gain. The <strong>floor</strong> is one scalar gain from the tower-top acceleration to the moment. The <strong>physics baseline</strong> is the field method of Pimenta et al. (2024), extended to every height with a height factor.</p>
+      <p><strong>Models.</strong> Twenty learned models in eight families (convolutional, recurrent, attention, state-space, spectral, period-folding, pretrained encoders with a trained head and physics-anchored), among them a Prob-TCN with a heteroscedastic head, a condition-dependent spectral gain, and a hybrid that learns a bounded correction of the physics gain. The <strong>floor</strong> is one scalar gain from the tower-top acceleration to the moment. The <strong>physics baseline</strong> is the field method of <a href="https://doi.org/10.1016/j.renene.2024.119981">Pimenta et al. (2024)</a>, extended to every height with a height factor.</p>
       <p><strong>Training.</strong> One recipe for every model, declared in advance: 50 epochs of Adam at 10<sup>−3</sup>, batch 16, mean squared error on the standardized moment, no weight decay, scheduler or early stopping, the last epoch scored. Seed 0 everywhere, three training seeds for the thirteen models within tower. Longer budgets (150 and 300 epochs) are probes on selected models.</p>
       <p><strong>Metrics.</strong> <em>R</em><sup>2</sup> of log<sub>10</sub> damage (primary), median ratio, MRE, fraction within a factor of two, and within-condition correlation, with 95% bootstrap intervals that resample operating points (<em>B</em> = 1,000). A pairwise difference counts when the paired interval excludes zero on all three towers.</p>
     </div>
@@ -625,7 +625,7 @@ damage = tower.damage()          # sim_id x section_id</code></pre>
   <div class="container is-max-desktop">
     <h2 class="title is-3">Acknowledgements</h2>
     <div class="content has-text-justified">
-      <p>The simulations underlying FLOATSense were produced with <a href="https://github.com/OpenFAST/openfast">OpenFAST</a> on the <a href="https://github.com/IEAWindSystems/IEA-22-280-RWT">IEA-22-280-RWT</a> reference floating wind turbine. The physics baseline follows the load reconstruction method of Pimenta et al. (2024). We thank these communities for keeping the underlying tools open.</p>
+      <p>The simulations underlying FLOATSense were produced with <a href="https://github.com/OpenFAST/openfast">OpenFAST</a> on the <a href="https://github.com/IEAWindSystems/IEA-22-280-RWT">IEA-22-280-RWT</a> reference floating wind turbine. The physics baseline follows the load reconstruction method of <a href="https://doi.org/10.1016/j.renene.2024.119981">Pimenta et al. (2024)</a>. We thank these communities for keeping the underlying tools open.</p>
     </div>
   </div>
 </section>
