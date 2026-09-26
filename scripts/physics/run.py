@@ -34,6 +34,7 @@ from floatsense import load_tower  # noqa: E402  pylint: disable=wrong-import-po
 from floatsense import parked_c_theta  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.heights import calibrate_profile  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.heights import evaluate_heights  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.release import split_tag  # noqa: E402  pylint: disable=wrong-import-position
 
 FLAGS = flags.FLAGS
 
@@ -47,7 +48,9 @@ flags.DEFINE_string("train_split", "train", "Calibration split.")
 flags.DEFINE_string("test_split", "test", "Evaluation split.")
 flags.DEFINE_string("direction", "fa", "Direction ('fa' or 'ss').")
 flags.DEFINE_string("tag", None,
-                    "Output suffix; defaults to none, or zs_<source>.")
+                    "Output suffix; defaults to the calibration split "
+                    "(none for train, fs10_draw0 for fewshot/train_10_draw0, "
+                    "val for val/train).")
 flags.DEFINE_string("output_root", "outputs/physics", "Root of the outputs.")
 flags.DEFINE_string("mass_csv", None,
                     "Tower mass profile; defaults to towers/<tower>_mass.csv.")
@@ -68,8 +71,12 @@ flags.DEFINE_list("sn_slopes", ["3", "5"], "SN curve slopes.")
 
 def main(_):
     """Calibrates (or loads) the gains and scores the 11 gauges."""
-    tag = FLAGS.tag or (f"zs_{FLAGS.source}" if FLAGS.source else "")
-    name = FLAGS.tower + (f"_{tag}" if tag else "")
+    # <tower>[_zs_<source>][_<tag>][_ss]: a run never overwrites another.
+    tag = FLAGS.tag if FLAGS.tag is not None else (
+        "" if FLAGS.source else split_tag(FLAGS.train_split))
+    suffix = "_ss" if FLAGS.direction == "ss" else ""
+    name = (FLAGS.tower + (f"_zs_{FLAGS.source}" if FLAGS.source else "") +
+            (f"_{tag}" if tag else "") + suffix)
     output_dir = os.path.join(FLAGS.output_root, name)
     release = load_tower(FLAGS.dataset_dir, FLAGS.tower)
     physics = PhysicsReconstruction(
@@ -89,7 +96,7 @@ def main(_):
     profile_tower = FLAGS.source or FLAGS.tower
     if FLAGS.source:
         calibration = Calibration.from_json(
-            os.path.join(FLAGS.output_root, FLAGS.source,
+            os.path.join(FLAGS.output_root, FLAGS.source + suffix,
                          f"calibration_{FLAGS.direction}.json"))
     else:
         calibration = physics.calibrate(

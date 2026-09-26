@@ -32,6 +32,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from floatsense import SequenceModelTrainer  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense import load_tower  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.data import HEIGHT_TARGETS  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.models import LENGTH_FIXED_MODELS  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.release import split_tag  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.heights import calibrate_profile  # noqa: E402  pylint: disable=wrong-import-position
 
 FLAGS = flags.FLAGS
@@ -48,10 +51,14 @@ flags.DEFINE_list("eval_towers", [],
 flags.DEFINE_string(
     "output_dir", None, "Output directory; defaults to <output_root>/<tower>/"
     "seed<seed>.")
-flags.DEFINE_string("output_root", "outputs", "Root of the default outputs.")
+flags.DEFINE_string("output_root", "outputs/within",
+                    "Root of the default outputs.")
 flags.DEFINE_list("models", ["tcn"], "Models to train.")
 flags.DEFINE_list("directions", ["fa"], "Directions to process.")
 flags.DEFINE_integer("seed", 0, "Training seed.")
+flags.DEFINE_bool("deterministic", True,
+                  "Deterministic cuDNN/CUDA kernels: reruns of a seed are "
+                  "identical (the paper runs used False).")
 flags.DEFINE_integer("max_train_sims", 0, "If > 0, cap the training sims.")
 flags.DEFINE_integer("max_eval_sims", 0, "If > 0, cap the evaluated sims.")
 
@@ -95,10 +102,6 @@ flags.DEFINE_list("sn_intercepts_log10", ["12.010", "15.350"],
                   "SN curve log10 intercepts.")
 flags.DEFINE_list("sn_slopes", ["3", "5"], "SN curve slopes.")
 
-LENGTH_FIXED_MODELS = ("spectral", "hybrid", "hybrid_tcn", "fits",
-                       "itransformer")
-
-
 def floats(values: List[str]) -> List[float]:
     """Converts a list of strings to floats."""
     return [float(value) for value in values]
@@ -108,8 +111,25 @@ def main(_):
     """Trains and evaluates the requested models and directions."""
     output_dir = FLAGS.output_dir or os.path.join(
         FLAGS.output_root, FLAGS.tower, f"seed{FLAGS.seed}")
+    # The hybrids read the physics calibrated on the same split as the model
+    # (outputs/physics/<tower>[_<split tag>], as scripts/physics/run.py
+    # writes it), so a few-shot hybrid never sees the full training split.
+    tag = split_tag(FLAGS.train_split)
     calibration_dir = FLAGS.calibration_dir or os.path.join(
-        "outputs", "physics", FLAGS.tower)
+        "outputs", "physics", FLAGS.tower + (f"_{tag}" if tag else ""))
+    damage_section = FLAGS.damage_section
+    if FLAGS.height_targets and (FLAGS.target_channel or damage_section):
+        raise ValueError("--target_channel and --damage_section apply to the "
+                         "single-height task: add --height_targets=False.")
+    if FLAGS.target_channel:
+        stems = {f"{stem}_m{d}": index for stem, index, _ in HEIGHT_TARGETS
+                 for d in ("fa", "ss")}
+        if FLAGS.target_channel not in stems:
+            raise ValueError(f"Unknown target channel {FLAGS.target_channel}.")
+        if damage_section and damage_section != stems[FLAGS.target_channel]:
+            raise ValueError("--damage_section does not match the section "
+                             "of --target_channel; leave it unset.")
+        damage_section = stems[FLAGS.target_channel]
     source = load_tower(FLAGS.dataset_dir, FLAGS.tower)
     train_ids = source.split_ids(FLAGS.train_split)
     test_ids = source.split_ids(FLAGS.test_split)
@@ -121,9 +141,10 @@ def main(_):
                  len(train_ids), len(test_ids), output_dir)
 
     hybrid = any(m.startswith("hybrid") for m in FLAGS.models)
-    height_factors = (calibrate_profile(FLAGS.dataset_dir,
-                                        FLAGS.tower)["factors"]
-                      if FLAGS.height_targets and hybrid else None)
+    height_factors = ({d: calibrate_profile(FLAGS.dataset_dir, FLAGS.tower,
+                                            direction=d)["factors"]
+                       for d in FLAGS.directions}
+                      if FLAGS.height_targets and hybrid else {})
     for model_name in FLAGS.models:
         crop_length = (0 if model_name in LENGTH_FIXED_MODELS else
                        FLAGS.crop_length)
@@ -155,11 +176,12 @@ def main(_):
                                   if model_name.startswith("hybrid") else None),
                 condition_bound=FLAGS.condition_bound,
                 target_channel=FLAGS.target_channel,
-                damage_section=FLAGS.damage_section,
+                damage_section=damage_section,
                 input_channels=FLAGS.input_channels,
                 height_targets=FLAGS.height_targets,
-                height_factors=height_factors,
-                seed=FLAGS.seed)
+                height_factors=height_factors.get(direction),
+                seed=FLAGS.seed,
+                deterministic=FLAGS.deterministic)
             if FLAGS.run_training:
                 logging.info("Training %s (%s).", model_name, direction)
                 trainer.train(train_ids, source.split_ids(FLAGS.val_split)

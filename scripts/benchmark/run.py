@@ -63,19 +63,25 @@ def describe(path: str) -> dict:
     if name == "damage_heights.csv":
         run = parts[-2]
         tower = run.split("_")[0]
-        zero_shot = re.search(r"_zs_(\w+)$", run)
+        zero_shot = re.search(r"_zs_(ref|opt1|opt2)", run)
         return {"model": "physics", "run": os.path.dirname(
             os.path.relpath(path, FLAGS.output_root)),
+                "direction": "ss" if run.endswith("_ss") else "fa",
                 "source": zero_shot.group(1) if zero_shot else tower,
                 "target": tower}
     stem = name[len("damage_comparison_"):-len(".csv")]
-    model, target = re.match(r"(.+?)_fa(?:_zs_(\w+))?$", stem).groups()
+    match = re.match(r"(.+?)_(fa|ss)(?:_zs_(\w+))?$", stem)
+    if not match:
+        return {"model": stem, "run": "", "direction": "", "source": None,
+                "target": None}
+    model, direction, target = match.groups()
     pair = next((re.match(r"(\w+)_to_(\w+)$", p) for p in parts
                  if re.match(r"\w+_to_\w+$", p)), None)
     tower = next((p for p in parts if p in TOWERS), None)
     source = pair.group(1) if pair else tower
     return {"model": model,
             "run": os.path.dirname(os.path.relpath(path, FLAGS.output_root)),
+            "direction": direction,
             "source": source,
             "target": target or (pair.group(2) if pair else tower)}
 
@@ -88,8 +94,8 @@ def score_file(path: str) -> pd.DataFrame:
     """Scores one CSV at every gauge (runs in a worker)."""
     meta = describe(path)
     if meta["target"] not in _CONTEXTS:
-        logging.warning("Skipping %s: no tower (ref, opt1, opt2) in its path.",
-                        path)
+        logging.warning("Skipping %s: no tower (ref, opt1, opt2) in its path "
+                        "or an unknown file name.", path)
         return pd.DataFrame()
     context = _CONTEXTS[meta["target"]]
     df = pd.read_csv(path).set_index("sim_id")
@@ -130,8 +136,13 @@ def main(_):
     logging.info("%d damage CSVs under %s", len(paths), FLAGS.output_root)
     with multiprocessing.Pool(FLAGS.num_workers, _init, (contexts,)) as pool:
         tables = pool.map(score_file, paths)
-    results = pd.concat([t for t in tables if len(t)], ignore_index=True)
-    first = ["run", "model", "source", "target", "gauge", "z_over_h", "group"]
+    tables = [t for t in tables if len(t)]
+    if not tables:
+        logging.error("Nothing to score under %s.", FLAGS.output_root)
+        return
+    results = pd.concat(tables, ignore_index=True)
+    first = ["run", "model", "direction", "source", "target", "gauge",
+             "z_over_h", "group"]
     results = results[first + [c for c in results.columns if c not in first]]
     os.makedirs(os.path.dirname(FLAGS.results_csv) or ".", exist_ok=True)
     results.to_csv(FLAGS.results_csv, index=False)

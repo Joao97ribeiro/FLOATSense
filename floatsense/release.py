@@ -154,6 +154,18 @@ class ReleasedTower:
                             values="damage")
 
 
+def split_tag(name: str) -> str:
+    """Output tag of a calibration split: '' for train, 'val' for val/train,
+    'fs<n>_draw<k>' for fewshot/train_<n>_draw<k>, else the name with '_'."""
+    if name == "train":
+        return ""
+    if name == "val/train":
+        return "val"
+    if name.startswith("fewshot/train_"):
+        return "fs" + name[len("fewshot/train_"):]
+    return name.replace("/", "_")
+
+
 def load_tower(dataset_dir: str, name: str) -> ReleasedTower:
     """Opens <dataset_dir>/<name>."""
     return ReleasedTower(os.path.join(dataset_dir, name))

@@ -1288,6 +1288,12 @@ class UNetModel(nn.Module):
         return self.output_proj(hidden)[..., :length]
 
 
+# Models whose parameters depend on the series length: they train and are
+# scored on the full window instead of random crops.
+LENGTH_FIXED_MODELS = ("spectral", "hybrid", "hybrid_tcn", "fits",
+                       "itransformer")
+
+
 def build_model(name: str,
                 num_samples: int,
                 input_channels: int,
@@ -1309,7 +1315,8 @@ def build_model(name: str,
     if name == "naive":
         return NaiveGainModel(input_channels=input_channels)
     if name == "hybrid_tcn":
-        return HybridTCNModel(input_channels=input_channels)
+        return HybridTCNModel(input_channels=input_channels,
+                              bound=condition_bound)
     if name == "s4":
         return S4Model(input_channels=input_channels)
     if name == "mamba":
@@ -1325,8 +1332,6 @@ def build_model(name: str,
                                  input_channels=input_channels)
     if name == "fno":
         return FNOModel(input_channels=input_channels)
-    if name == "chronos_ft":
-        return ChronosEncoderModel(input_channels=input_channels, finetune=True)
     if name == "moment_ft":
         return MomentModel(input_channels=input_channels, finetune=True)
     if name == "timesfm":

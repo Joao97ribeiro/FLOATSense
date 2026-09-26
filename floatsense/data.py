@@ -141,6 +141,7 @@ class SequenceDataset(Dataset):
         if not self.norm_stats or channel not in self.norm_stats:
             return values
         mean, std = self.norm_stats[channel]
+        std = std or 1.0
         if channel == self.moment_channel:
             return values / std
         return (values - mean) / std
@@ -198,7 +199,7 @@ class SequenceDataset(Dataset):
         if self.norm_stats:
             condition = np.array([
                 (value - self.norm_stats[channel][0]) /
-                self.norm_stats[channel][1]
+                (self.norm_stats[channel][1] or 1.0)
                 for channel, value in zip(self.condition_channels, condition)
             ])
 

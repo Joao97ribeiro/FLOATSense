@@ -258,8 +258,15 @@ $10^{-3}$, batch 16, mean squared error on the standardized moment,
 4,096-sample crops (full window for the length-fixed models), no weight
 decay, scheduler or early stopping, last epoch scored. Exceptions:
 Mamba uses `--learning_rate=3e-4`; Prob-TCN trains on the Gaussian
-likelihood. The hybrid models read the physics calibration of their
-tower (`outputs/physics/<tower>`), so run the physics first.
+likelihood. The hybrid models read the physics calibrated on the same
+split (`outputs/physics/<tower>` for `train`, `<tower>_fs10_draw0` for
+`fewshot/train_10_draw0`), so run the physics on that split first.
+
+Training is deterministic by default (`--deterministic=True`): a rerun
+of a seed on the same GPU type gives identical numbers. It makes cuDNN
+training about three times slower (TCN: ~7 instead of ~2.5 min of
+training); `--deterministic=False` is faster and is how the paper runs
+were trained (see [Reproducibility](#reproducibility)).
 
 ### Hardware & runtime
 
@@ -315,10 +322,14 @@ python scripts/train/run.py --flagfile=scripts/train/config.cfg \
     --init_checkpoint_dir=outputs/within/opt2/seed0 \
     --output_dir=outputs/fewshot/opt2_to_ref/draw0
 
-# Physics zero-shot (constants and height profile of opt2 on ref) and ten-shot
-python scripts/physics/run.py --flagfile=scripts/physics/config.cfg --tower=ref --source=opt2
+# Physics ten-shot (constants recalibrated on 10 ref simulations; the paper's
+# cross-tower physics) -> outputs/physics/ref_fs10_draw0
 python scripts/physics/run.py --flagfile=scripts/physics/config.cfg --tower=ref \
-    --train_split=fewshot/train_10_draw0 --tag=fs10_draw0
+    --train_split=fewshot/train_10_draw0
+
+# Physics zero-shot, all constants (C1 included) and height profile of opt2
+# applied to ref -> outputs/physics/ref_zs_opt2 (a diagnostic, not in the paper)
+python scripts/physics/run.py --flagfile=scripts/physics/config.cfg --tower=ref --source=opt2
 
 # Sensor ablation: both accelerometer axes and SCADA
 python scripts/train/run.py --flagfile=scripts/train/config.cfg --tower=opt2 --models=tcn \
@@ -373,14 +384,18 @@ ci = cluster_bootstrap(df.damage_true_tower_top.values,
 - The parked constant C1 is recomputed from `parked.parquet` and
   rounded to 0.1 MN s², as in the paper; the physics baseline reproduces
   the paper to $10^{-7}$.
-- Training on GPU may not be bit-for-bit deterministic (cuDNN
-  convolutions): in our reruns LSTM, PatchTST and the hybrid repeated
-  exactly, while TCN and Prob-TCN drifted within the spread of the seeds
+- The paper runs were trained with `--deterministic=False`, where cuDNN
+  convolutions are not bit-for-bit repeatable: in our reruns LSTM,
+  PatchTST and the hybrid repeated the paper exactly, while TCN and
+  Prob-TCN drifted within the spread of the seeds
   (Prob-TCN top $R^2$ on `opt1`: 0.80 and 0.84 in two reruns of seed 0,
   0.85 to 0.87 over the paper seeds). TCN on `opt2`, base $R^2$: 0.984, 0.991 and 0.992 in
   three reruns of seed 0, 0.987 to 0.992 over the three seeds of the
   paper; top $R^2$: 0.754 to 0.785 in reruns, 0.713 to 0.866 over the
   seeds. Compare a model with the paper through its three-seed median.
+  With the default `--deterministic=True`, two runs of a seed are
+  identical to each other (TCN on `opt2`: zero difference over the 4,740
+  test simulations), though not to the paper's convolutional runs.
 
 ## Headline findings
 

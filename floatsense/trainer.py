@@ -15,6 +15,9 @@ columns as the physics baseline.
 import json
 import multiprocessing
 import os
+
+# cuBLAS needs this before its first call to run deterministically.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -28,6 +31,7 @@ from .data import SequenceDataset
 from .data import compute_norm_stats
 from .fatigue import compute_base_damage
 from .metrics import summarize_damage
+from .models import LENGTH_FIXED_MODELS
 from .models import build_model
 from .physics import lowpass
 from .release import ReleasedTower
@@ -78,6 +82,7 @@ class SequenceModelTrainer:
                  height_targets: bool = False,
                  height_factors: Optional[List[float]] = None,
                  seed: int = 0,
+                 deterministic: bool = True,
                  device: Optional[str] = None):
         """Initializes the trainer.
 
@@ -119,6 +124,9 @@ class SequenceModelTrainer:
               ablations).
             seed (int): Seed of the weight initialization, the random crops
               and the batch order.
+            deterministic (bool): Use deterministic cuDNN/CUDA kernels, so
+              that a rerun of the same seed on the same GPU type is
+              identical (the paper runs used False).
             device (str, optional): Torch device (default: cuda if available).
         """
         self.release = release
@@ -130,8 +138,7 @@ class SequenceModelTrainer:
         self.max_time = max_time
         self.lowpass_hz = lowpass_hz
         self.crop_length = (crop_length
-                            if model_name not in ("spectral", "hybrid",
-                                                  "hybrid_tcn") else None)
+                            if model_name not in LENGTH_FIXED_MODELS else None)
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self.num_epochs = num_epochs
@@ -153,6 +160,7 @@ class SequenceModelTrainer:
         self.height_targets = height_targets
         self.height_factors = height_factors
         self.seed = seed
+        self.deterministic = deterministic
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.model = None
         self.norm_stats = None
@@ -204,6 +212,12 @@ class SequenceModelTrainer:
             dict: Per-epoch mean training loss under 'train_loss' and, with
             `val_ids`, the validation loss under 'val_loss' (epoch, value).
         """
+        if self.deterministic:
+            # Same seed, same GPU type -> same weights: deterministic cuDNN
+            # and CUDA kernels (ops without one only warn).
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+            torch.use_deterministic_algorithms(True, warn_only=True)
         torch.manual_seed(self.seed)
         np.random.seed(self.seed)
         probe = SequenceDataset(
@@ -235,11 +249,12 @@ class SequenceModelTrainer:
         self._eval_length = probe[0]["inputs"].shape[-1]
 
         dataset = self._make_dataset(train_ids, self.crop_length)
+        # Full batches only, unless the split is smaller than one batch.
         loader = DataLoader(dataset,
                             batch_size=self.batch_size,
                             shuffle=True,
                             num_workers=self.num_workers,
-                            drop_last=True)
+                            drop_last=len(dataset) > self.batch_size)
 
         num_samples = self.crop_length or self._eval_length
         self.model = build_model(self.model_name,
@@ -259,6 +274,9 @@ class SequenceModelTrainer:
                                        self.device)
         freq_weights = freqs**self.damage_freq_exponent
 
+        if self.early_stopping_patience and not val_ids:
+            raise ValueError("early_stopping_patience needs a validation "
+                             "split (val_split).")
         history = {"train_loss": []}
         val_loader = None
         if val_ids:
@@ -439,6 +457,9 @@ class SequenceModelTrainer:
         """
         release = release or self.release
         tower = release.geometry
+        # Fixed noise for the variance head: the same checkpoint scores the
+        # same, whatever ran before.
+        torch.manual_seed(self.seed)
         dataset = self._make_dataset(eval_ids, None, release)
         sections = (list(range(len(HEIGHT_TARGETS)))
                     if self.height_targets else [None])

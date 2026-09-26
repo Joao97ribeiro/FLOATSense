@@ -152,7 +152,9 @@ def summarize_by_group(df: pd.DataFrame,
     labels = {"all": df.index}
     if groups is not None:
         for label, ids in groups.groupby(groups).groups.items():
-            labels[str(label)] = df.index.intersection(ids)
+            members = df.index.intersection(ids)
+            if len(members):
+                labels[str(label)] = members
     for label, ids in labels.items():
         subset = df.loc[ids]
         row = {
