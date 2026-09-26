@@ -76,18 +76,20 @@ function drawSeries() {
     {text: "<b>Context (not inputs)</b>", xref: "paper", yref: "paper", x: 0, y: 2 * h + gap, xanchor: "left", yanchor: "bottom", showarrow: false, font: {size: 11, color: CYAN}}];
   Plotly.react("plot-inputs", tr, lay, CFG);
 
-  const mom = D.channels.slice(8), g = st.gauge;
+  const mom = D.channels.slice(8), nh = mom.length;
+  const shade = k => { const a = [176, 44, 39], b = [240, 179, 176], f = k / (nh - 1);
+    return `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * f)).join(",")})`; };  // base RED to top RED_LIGHT, as in the paper
   const T = L({margin: {l: 80, r: 20, t: 24, b: 50}, showlegend: true,
-    legend: {orientation: "h", x: 1, xanchor: "right", y: 0.37, yanchor: "bottom", font: {size: 11}, bgcolor: "rgba(255,255,255,0.7)"}});
+    legend: {orientation: "h", x: 1, xanchor: "right", y: 0.37, yanchor: "bottom", font: {size: 10}, bgcolor: "rgba(255,255,255,0.7)"}});
   T.yaxis = AX({domain: [0.45, 1], title: {text: "Gauge height [m]", font: {size: 10}}});
   T.yaxis2 = AX({domain: [0, 0.37], title: {text: "M<sub>FA</sub> [MN m]", font: {size: 10}}});
   T.xaxis = AX({anchor: "y2", title: {text: "Time [s]"}, range: st.xr || [400, 1000]});
   T.annotations = [{text: "<b>Target: fore-aft moment along the tower</b>", xref: "paper", yref: "paper", x: 0, y: 1, xanchor: "left", yanchor: "bottom", showarrow: false, font: {size: 11, color: RED}}];
   const t2 = [{type: "heatmap", x: time, y: D.heights, z: mom.map(c => Array.from(x[c])), xaxis: "x", yaxis: "y", colorscale: MOMENT_SCALE, zmid: 0, showlegend: false,
       colorbar: {title: {text: "MN m", side: "right", font: {size: 10}}, thickness: 10, len: 0.55, y: 0.725, tickfont: {size: 9}},
-      hovertemplate: "%{x:.1f} s · %{y:.1f} m<br>%{z:.1f} MN m<extra></extra>"},
-    {x: time, y: x[mom[0]], type: "scattergl", mode: "lines", line: {width: 1, color: INK}, xaxis: "x", yaxis: "y2", name: "Base", hovertemplate: "Base %{y:.1f}<extra></extra>"}];
-  if (g !== 0) t2.push({x: time, y: x[mom[g]], type: "scattergl", mode: "lines", line: {width: 1, color: RED}, xaxis: "x", yaxis: "y2", name: GAUGE[g], hovertemplate: `${GAUGE[g]} %{y:.1f}<extra></extra>`});
+      hovertemplate: "%{x:.1f} s · %{y:.1f} m<br>%{z:.1f} MN m<extra></extra>"}];
+  mom.forEach((c, k) => t2.push({x: time, y: x[c], type: "scattergl", mode: "lines", line: {width: 1, color: shade(k)}, xaxis: "x", yaxis: "y2",
+    name: GAUGE[k], showlegend: k === 0 || k === nh - 1, hovertemplate: `${GAUGE[k]} %{y:.1f}<extra></extra>`}));
   Plotly.react("plot-targets", t2, T, CFG);
 }
 
@@ -250,12 +252,9 @@ async function init() {
   $("ex-source").innerHTML = `<span class="icon"><i class="fas fa-check-circle"></i></span> Loaded ${D.ids.length * 3} simulations (${D.ids.length} per tower), 19 channels at 5 Hz.`;
 
   $("ex-sim").innerHTML = D.ids.map((s, k) => { const o = D.ops[s]; return `<option value="${k}">${s} · ${o.wind.toFixed(1)} m/s · Hs ${o.hs.toFixed(2)} m</option>`; }).join("");
-  $("ex-gauge").innerHTML = GAUGE.map((g, k) => `<option value="${k}">${g} (z/H ${D.zh[k].toFixed(2)})</option>`).join("");
-  $("ex-gauge").value = st.gauge;
   $("ex-tower").onchange = e => selectTower(+e.target.value);
   $("ex-sim").onchange = e => selectSim(+e.target.value);
   $("ex-wind").oninput = e => selectSim(+e.target.value);
-  $("ex-gauge").onchange = e => { st.gauge = +e.target.value; drawSeries(); };
   $("env-sec").onclick = e => { const btn = e.target.closest("button"); if (!btn) return; st.sec = btn.dataset.sec;
     $("env-sec").querySelectorAll("button").forEach(x => { const on = x.dataset.sec === st.sec; x.classList.toggle("is-dark", on); x.classList.toggle("is-selected", on); }); drawEnvelope(); };
 

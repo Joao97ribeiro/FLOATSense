@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="stylesheet" href="static/css/style.css?v=4">
   <script defer src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
-  <script defer src="static/js/app.js?v=4"></script>
+  <script defer src="static/js/app.js?v=5"></script>
 </head>
 <body>
 
@@ -197,12 +197,12 @@
 <section class="section has-background-light" id="explorer">
   <div class="container is-max-desktop">
     <h2 class="title is-3">Dataset Explorer</h2>
-    <p class="subtitle is-6">One simulation per wind speed on each tower (the middle level of the wave grid, first realization): 66 simulations, the same <code>sim_id</code> on the three towers, all in the test split. The model inputs on top, the fore-aft moment along the tower below; the scored window at 5 Hz. Drag to zoom, both plots follow.</p>
+    <p class="subtitle is-6">One simulation per wind speed on each tower (the middle level of the wave grid, first realization): 66 simulations, the same <code>sim_id</code> on the three towers, all in the test split. The model inputs on top, the fore-aft moment at the 11 heights below (base dark red, top light); the scored window at 5 Hz. Drag to zoom, both plots follow.</p>
     <p class="is-size-7 has-text-grey" id="ex-source" style="margin-top:-0.75rem;margin-bottom:1rem;"><span class="icon"><i class="fas fa-spinner fa-spin"></i></span> Loading the time series…</p>
 
     <div class="box">
       <div class="columns is-multiline is-vcentered">
-        <div class="column is-3">
+        <div class="column is-4">
           <label class="label is-small" for="ex-tower">Tower</label>
           <div class="select is-fullwidth is-small">
             <select id="ex-tower">
@@ -212,17 +212,13 @@
             </select>
           </div>
         </div>
-        <div class="column is-3">
+        <div class="column is-4">
           <label class="label is-small" for="ex-sim">Simulation</label>
           <div class="select is-fullwidth is-small"><select id="ex-sim"></select></div>
         </div>
-        <div class="column is-3">
+        <div class="column is-4">
           <label class="label is-small" for="ex-wind">Wind speed <output id="ex-wind-out"></output></label>
           <input type="range" id="ex-wind" class="slider" min="0" max="21" step="1" value="11">
-        </div>
-        <div class="column is-3">
-          <label class="label is-small" for="ex-gauge">Moment line</label>
-          <div class="select is-fullwidth is-small"><select id="ex-gauge"></select></div>
         </div>
       </div>
       <dl class="sim-card" id="sim-card"></dl>
