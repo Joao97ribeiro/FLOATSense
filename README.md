@@ -4,12 +4,6 @@
 
 # FLOATSense: A Time-Series Dataset and Benchmark for Fatigue Load Reconstruction on Floating Offshore Wind Turbine Towers
 <p align="center">
-  <a href="https://huggingface.co/datasets/DeCoDELab/FLOATSense">
-    <img src="https://img.shields.io/badge/dataset-DeCoDELab%2FFLOATSense-ffcc00.svg?logo=huggingface&logoColor=white">
-  </a>
-  <a href="https://github.com/Joao97ribeiro/FLOATBench">
-    <img src="https://img.shields.io/badge/builds%20on-FLOATBench-2c5282.svg">
-  </a>
   <a href="https://opensource.org/licenses/MIT">
     <img src="https://img.shields.io/badge/code--license-MIT-blue.svg">
   </a>
@@ -23,14 +17,15 @@
 **FLOATSense** is a public dataset and benchmark for fatigue load
 reconstruction on floating offshore wind turbine (FOWT) towers. It
 releases **717,948 time series at 10 Hz** from the **19,404 OpenFAST
-simulations** of [FLOATBench](https://github.com/Joao97ribeiro/FLOATBench)
+simulations** of FLOATBench (cited in the paper)
 on three 22 MW tower geometries: 37 channels per simulation, with the
 accelerometer and SCADA signals as inputs and the fore-aft bending
 moment at **eleven heights** as target. A reconstruction is scored by
-the fatigue damage it implies, not by waveform error. The dataset is
-hosted on Hugging Face at
-[`DeCoDELab/FLOATSense`](https://huggingface.co/datasets/DeCoDELab/FLOATSense);
-this repository contains the benchmark code, the physics baseline, the
+the fatigue damage it implies, not by waveform error. For review, a fixed
+subset (22 simulations per tower, the complete tabular files and the
+trained checkpoints) is available through an anonymized link,
+[https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e](https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e); the complete dataset (24.0 GB) is released on publication.
+This repository contains the benchmark code, the physics baseline, the
 20 learned models, the evaluation harness, and the scripts to reproduce
 the paper results.
 
@@ -125,6 +120,8 @@ three benchmark stages have their own `run.py` and a `--flagfile`
 add it to the Python path; for the Python snippets below, run them from
 the root or `export PYTHONPATH=$PWD`):
 
+- [`scripts/download/`](./scripts/download) — download the review subset
+  into `data/FLOATSense` from its anonymized link, with a checksum check.
 - [`scripts/physics/`](./scripts/physics) — calibrate the physics
   baseline on a tower (C1 from the parked runs, the other five constants
   from the training split) and score it at the 11 gauges; zero-shot with
@@ -148,8 +145,7 @@ the root or `export PYTHONPATH=$PWD`):
 **Recommended (conda, GPU):**
 
 ```bash
-git clone https://github.com/Joao97ribeiro/FLOATSense
-cd FLOATSense
+# download this anonymized repository and enter it
 conda env create -f environment.yml
 conda activate floatsense
 pip install --no-deps momentfm==0.1.4   # MOMENT, only for --models=moment*
@@ -167,8 +163,7 @@ from [google-research/timesfm](https://github.com/google-research/timesfm)
 **Alternative (pip, CPU or existing venv):**
 
 ```bash
-git clone https://github.com/Joao97ribeiro/FLOATSense
-cd FLOATSense
+# download this anonymized repository and enter it
 pip install torch  # torch==2.7.1 for the paper setting
 pip install -r requirements.txt
 pip install --no-deps momentfm==0.1.4   # MOMENT, only for --models=moment*
@@ -177,8 +172,8 @@ pip install --no-deps momentfm==0.1.4   # MOMENT, only for --models=moment*
 ## Dataset
 
 The released Parquet files, schema, channel conventions and per-tower
-layout are documented in the dataset README on Hugging Face:
-[`DeCoDELab/FLOATSense`](https://huggingface.co/datasets/DeCoDELab/FLOATSense).
+layout are documented in the paper and below; the review subset ships
+with its own README.
 
 The three towers are:
 
@@ -187,7 +182,7 @@ The three towers are:
 - `opt2` — final iterate ($D \approx 0.9$, targeting $D \le 0.9$)
 
 The `opt1` and `opt2` geometries were produced by
-[**FLOAT**](https://github.com/Joao97ribeiro/FLOAT), the fatigue-aware
+**FLOAT** (cited in the paper), the fatigue-aware
 tower design-optimization framework that the `ref` tower is redesigned with.
 
 <p align="center">
@@ -217,16 +212,25 @@ rows on `sim_id` (and `section_id`). The 11 gauges are FLOATBench
 sections 1, 3, 6, ..., 27, 30; each is scored with the mean outer radius
 and wall thickness of that section.
 
-### Download
+### Download (review subset)
+
+One command downloads the review subset from its anonymized link, checks
+its SHA-256 and unpacks it into `data/FLOATSense` (release layout, 22
+simulations per tower: `sim_id = 25 + 294 k`, k = 0..21):
 
 ```bash
-# Option A: download with the HF CLI (one-time)
-hf download DeCoDELab/FLOATSense --repo-type=dataset --local-dir=data/FLOATSense
+python scripts/download/run.py --flagfile=scripts/download/config.cfg
 
-# Option B: read one simulation from Python
+# read one simulation from Python
 python -c "from floatsense import load_tower; \
-  t = load_tower('data/FLOATSense', 'opt2'); print(t.load(1).shape, t.channels[:4])"
+  t = load_tower('data/FLOATSense', 'opt2'); print(t.load(25).shape, t.channels[:4])"
 ```
+
+(Manual alternative: download `FLOATSense-review.zip` from
+[https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e](https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e), unzip it, and
+`mv FLOATSense-review data/FLOATSense`.) The subset also holds the
+trained checkpoints, the reference per-simulation results of the paper
+and `compare.py`, which compares an evaluation run with them.
 
 The configs expect the dataset at `data/FLOATSense`; change
 `--dataset_dir` otherwise.
@@ -468,25 +472,6 @@ budget**, while platform motions add little beyond it.
 Code released under the [MIT License](LICENSE.txt). Dataset on
 Hugging Face is released under
 [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/).
-
-
-## Citation
-
-If you use **FLOATSense** in your work, please cite the paper (reference
-to be added on publication) and FLOATBench, whose simulation campaign it
-builds on:
-
-> *FLOATBench: A Dataset and Benchmark for Floating Offshore Wind
-> Turbine Tower Fatigue.*
-> João Alves Ribeiro, Bruno Alves Ribeiro, Francisco Pimenta,
-> Sérgio M. O. Tavares, Faez Ahmed. arXiv:2605.25717, 2026.
-> https://arxiv.org/abs/2605.25717
-
-
-## Maintenance & Support
-
-For issues, questions, or feature requests related to FLOATSense:
-[FLOATSense Issues](https://github.com/Joao97ribeiro/FLOATSense/issues).
 
 
 ## Acknowledgements
