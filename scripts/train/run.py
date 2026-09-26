@@ -169,6 +169,14 @@ def main(_):
     test_ids = source.split_ids(FLAGS.test_split)
     if FLAGS.max_train_sims:
         train_ids = train_ids[:FLAGS.max_train_sims]
+    if FLAGS.run_training:
+        missing = sorted(set(train_ids) - set(source.sim_ids))
+        if missing:
+            raise SystemExit(
+                f"{len(missing)} of the {len(train_ids)} simulations of split "
+                f"'{FLAGS.train_split}' are not in {source.tower_dir} (the review "
+                "subset holds only splits/review/test): training needs the full "
+                "dataset; use --run_training=False to evaluate released checkpoints.")
     if FLAGS.max_eval_sims:
         test_ids = test_ids[:FLAGS.max_eval_sims]
     logging.info("Tower %s | train %s | test %d | out %s", FLAGS.tower,
