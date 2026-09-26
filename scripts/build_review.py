@@ -26,7 +26,7 @@ OUT = SITE / "review"
 B52 = "0123456789bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ"
 # Id of the anonymous.4open.science copy of branch `review` (e.g.
 # "FLOATSense-ABCD"); empty until the code is anonymized.
-CODE_ID = ""
+CODE_ID = "FLOATSense-FEB2"
 CODE_URL = f"https://anonymous.4open.science/r/{CODE_ID}/" if CODE_ID else ""
 CODE_ZIP = (f"https://anonymous.4open.science/api/repo/{CODE_ID}/zip"
             if CODE_ID else "")

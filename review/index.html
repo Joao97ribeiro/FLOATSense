@@ -26,6 +26,9 @@
         FLOATSense: A Time-Series Dataset and Benchmark for Fatigue Load Reconstruction on Floating Offshore Wind Turbine Towers
       </h1>
       <div class="publication-links" style="margin-top:1.5rem;">
+        <a href="https://anonymous.4open.science/r/FLOATSense-FEB2/" class="button is-rounded is-dark">
+          <span class="icon"><i class="fas fa-code"></i></span><span>Code</span>
+        </a>
         <a href="https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e" class="button is-rounded is-dark">
           <span class="icon"><i class="fas fa-database"></i></span><span>Data</span>
         </a>
@@ -540,8 +543,8 @@ damage = tower.damage()          # sim_id x section_id</code></pre>
     <div class="columns">
       <div class="column is-half">
         <div class="box">
-          <p class="title is-5"><i class="fas fa-code"></i> &nbsp;Code (anonymized link in the paper)</p>
-          <p>Data loaders, physics baseline, the 20 learned models, the evaluation harness and the scripts of every experiment of the paper.</p>
+          <p class="title is-5"><i class="fas fa-code"></i> &nbsp;<a href="https://anonymous.4open.science/r/FLOATSense-FEB2/">Code (anonymized)</a></p>
+          <p>Data loaders, physics baseline, the 20 learned models, the evaluation harness and the scripts of every experiment of the paper. <a href="https://anonymous.4open.science/api/repo/FLOATSense-FEB2/zip">Download it as a zip</a>.</p>
         </div>
       </div>
       <div class="column is-half">
@@ -552,7 +555,8 @@ damage = tower.damage()          # sim_id x section_id</code></pre>
       </div>
     </div>
 <pre><code># 1. code
-# download the code from its anonymized link and enter it
+curl -L -o code.zip "https://anonymous.4open.science/api/repo/FLOATSense-FEB2/zip"
+unzip code.zip -d FLOATSense &amp;&amp; cd FLOATSense
 conda env create -f environment.yml &amp;&amp; conda activate floatsense
 
 # 2. data: download the review subset into data/FLOATSense
