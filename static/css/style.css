@@ -188,5 +188,7 @@ table.lb td small { color: #9aa5b1; }
 #load pre { overflow-x: auto; }
 img { max-width: 100%; }
 .chip-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.5rem; margin-bottom: 0.45rem; }
+button.chip-group { background: none; border: 0; padding: 0; text-align: left; cursor: pointer; font-family: inherit; }
+button.chip-group:hover { color: var(--navy); text-decoration: underline; }
 .chip-group { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-3); width: 9.5rem; flex: 0 0 auto; }
 @media (max-width: 640px) { .chip-group { width: 100%; } }

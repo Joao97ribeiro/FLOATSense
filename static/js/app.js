@@ -42,7 +42,9 @@ const INPUT_GROUPS = [["Accelerations", ["tower_top_afa_mod", "tower_top_afa", "
   ["Platform and wave", ["plat_surge", "plat_sway", "plat_heave", "plat_roll", "plat_pitch", "plat_yaw", "wave_elev"]]];
 function inputChips() {
   const byKey = Object.fromEntries(INPUTS.map(r => [r[0], r]));
-  $("input-chips").innerHTML = INPUT_GROUPS.map(([g, cs]) => `<div class="chip-row"><span class="chip-group">${g}</span>` +
+  $("input-chips").innerHTML = `<div class="chip-row"><span class="chip-group">Presets</span>` +
+    [["task", "Task inputs"], ["all", "All"], ["none", "None"]].map(([k, l]) => `<button type="button" class="button is-small is-rounded ${k === "task" ? "is-dark" : ""}" data-preset="${k}">${l}</button>`).join("") + "</div>" +
+    INPUT_GROUPS.map(([g, cs], gi) => `<div class="chip-row"><button type="button" class="chip-group" data-group="${gi}" title="Show or hide the whole group">${g}</button>` +
     cs.map(c => { const [, , col, label] = byKey[c];
       return `<button type="button" class="chip" data-c="${c}" aria-pressed="${st.inputs.includes(c)}"><span class="dot" style="background:${col}"></span>${label}</button>`; }).join("") + "</div>").join("");
 }
@@ -101,6 +103,10 @@ function simCard() {
 function drawSeries() {
   const x = series(st.tower, st.sim);
   const rows = INPUTS.filter(r => st.inputs.includes(r[0]));
+  if (!rows.length) { Plotly.purge("plot-inputs"); $("plot-inputs")._fsBound = false; $("plot-inputs").style.height = "60px";
+    $("plot-inputs").innerHTML = '<p class="how">No signal selected: pick one above or press Task inputs.</p>'; }
+  else {
+  if (!$("plot-inputs").classList.contains("js-plotly-plot")) $("plot-inputs").innerHTML = "";
   const n = rows.length, gap = n > 1 ? 0.2 / n : 0, h = (1 - gap * (n - 1)) / n, lay = L({margin: {l: 80, r: 20, t: 16, b: 50}});
   $("plot-inputs").style.height = `${Math.max(260, 90 * n + 90)}px`;
   const tr = rows.map(([c, name, col], k) => ({x: time, y: x[c], type: "scattergl", mode: "lines", line: {width: 1, color: col},
@@ -108,6 +114,8 @@ function drawSeries() {
   rows.forEach(([, name], k) => { lay[`yaxis${k ? k + 1 : ""}`] = AX({domain: [1 - (k + 1) * h - k * gap, 1 - k * h - k * gap], title: {text: name, font: {size: 10}}, nticks: 3}); });
   lay.xaxis = AX({anchor: `y${n}`, title: {text: "Time [s]"}, range: st.xr});
   Plotly.react("plot-inputs", tr, lay, CFG);
+  if (!$("plot-inputs")._fsBound) { syncZoom("plot-inputs"); $("plot-inputs")._fsBound = true; }
+  }
 
   const H = ["tower_bottom", "tower_1", "tower_2", "tower_3", "tower_4", "tower_5", "tower_6", "tower_7", "tower_8", "tower_9", "tower_top"];
   const T = L({margin: {l: 80, r: 20, t: 24, b: 50}, showlegend: true,
@@ -270,8 +278,17 @@ async function init() {
   $("ex-sim").innerHTML = D.ids.map((s, k) => { const o = D.ops[s]; return `<option value="${k}">${s} · ${o.wind.toFixed(1)} m/s · Hs ${o.hs.toFixed(2)} m</option>`; }).join("");
   $("ex-tower").onchange = e => selectTower(+e.target.value);
   heightChips(); inputChips();
-  $("input-chips").onclick = e => { const b = e.target.closest(".chip"); if (!b) return; const c = b.dataset.c, i = st.inputs.indexOf(c);
-    if (i >= 0) { if (st.inputs.length > 1) st.inputs.splice(i, 1); } else st.inputs.push(c);
+  $("input-chips").onclick = e => {
+    const TASK = ["tower_top_afa_mod", "wind_speed", "rotor_speed", "blade_pitch"];
+    const p = e.target.closest("[data-preset]"), g = e.target.closest("[data-group]"), b = e.target.closest(".chip");
+    if (p) st.inputs = p.dataset.preset === "task" ? TASK.slice() : p.dataset.preset === "all" ? INPUTS.map(r => r[0]) : [];
+    else if (g) { const cs = INPUT_GROUPS[+g.dataset.group][1], on = cs.every(c => st.inputs.includes(c));
+      st.inputs = on ? st.inputs.filter(c => !cs.includes(c)) : [...new Set([...st.inputs, ...cs])];
+    }
+    else if (b) { const c = b.dataset.c, i = st.inputs.indexOf(c);
+      if (i >= 0) st.inputs.splice(i, 1); else st.inputs.push(c); }
+    else return;
+    st.inputs = INPUTS.map(r => r[0]).filter(c => st.inputs.includes(c));
     inputChips(); drawSeries(); };
   $("tw-apply").onclick = () => setWindow([$("tw-from").value, $("tw-to").value]);
   ["tw-from", "tw-to"].forEach(id => $(id).addEventListener("keydown", e => { if (e.key === "Enter") setWindow([$("tw-from").value, $("tw-to").value]); }));
@@ -280,8 +297,17 @@ async function init() {
   $("height-chips").onclick = e => { const b = e.target.closest(".chip"); if (!b) return; const k = +b.dataset.k, i = st.heights.indexOf(k);
     if (i >= 0) { if (st.heights.length > 1) st.heights.splice(i, 1); } else st.heights.push(k);
     heightChips(); inputChips();
-  $("input-chips").onclick = e => { const b = e.target.closest(".chip"); if (!b) return; const c = b.dataset.c, i = st.inputs.indexOf(c);
-    if (i >= 0) { if (st.inputs.length > 1) st.inputs.splice(i, 1); } else st.inputs.push(c);
+  $("input-chips").onclick = e => {
+    const TASK = ["tower_top_afa_mod", "wind_speed", "rotor_speed", "blade_pitch"];
+    const p = e.target.closest("[data-preset]"), g = e.target.closest("[data-group]"), b = e.target.closest(".chip");
+    if (p) st.inputs = p.dataset.preset === "task" ? TASK.slice() : p.dataset.preset === "all" ? INPUTS.map(r => r[0]) : [];
+    else if (g) { const cs = INPUT_GROUPS[+g.dataset.group][1], on = cs.every(c => st.inputs.includes(c));
+      st.inputs = on ? st.inputs.filter(c => !cs.includes(c)) : [...new Set([...st.inputs, ...cs])];
+    }
+    else if (b) { const c = b.dataset.c, i = st.inputs.indexOf(c);
+      if (i >= 0) st.inputs.splice(i, 1); else st.inputs.push(c); }
+    else return;
+    st.inputs = INPUTS.map(r => r[0]).filter(c => st.inputs.includes(c));
     inputChips(); drawSeries(); };
   $("tw-apply").onclick = () => setWindow([$("tw-from").value, $("tw-to").value]);
   ["tw-from", "tw-to"].forEach(id => $(id).addEventListener("keydown", e => { if (e.key === "Enter") setWindow([$("tw-from").value, $("tw-to").value]); }));
@@ -297,7 +323,7 @@ async function init() {
     if (k >= 0) st.models.splice(k, 1); else st.models.push(m); drawProfile(); };
 
   simCard(); drawSeries(); drawProfile(); regimeGrid();
-  syncZoom("plot-inputs"); syncZoom("plot-targets");
+  syncZoom("plot-targets");
 
   towerOptions(); families();
   $("lb-protocol").onchange = e => { st.proto = e.target.value; if (!D.lb[st.proto][st.sel]) st.sel = "tcn"; towerOptions(); drawBoard(); };
