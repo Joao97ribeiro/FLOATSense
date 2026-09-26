@@ -104,20 +104,21 @@ def start_section():
       <div class="column is-half">
         <div class="box">
           <p class="title is-5"><i class="fas fa-database"></i> &nbsp;<a href="{DATA_URL}">Review subset (anonymized)</a></p>
-          <p>22 simulations per tower in the release format, the complete tabular files, the trained checkpoints and the reference per-simulation results (355 MB). <a href="{DATA_ZIP}">Direct download</a>. The complete dataset (24.0 GB) is released on publication.</p>
+          <p>47 simulations per tower in the release format (one per wind speed, and all six realizations of five operating points), the complete tabular files, the trained checkpoints and the reference per-simulation results (448 MB). <a href="{DATA_ZIP}">Direct download</a>. The complete dataset (24.0 GB) is released on publication.</p>
         </div>
       </div>
     </div>
 <pre><code>{code_steps}# 2. data: download the review subset into data/FLOATSense
 python scripts/download/run.py --flagfile=scripts/download/config.cfg
 
-# 3. run the released checkpoints on the subset (CPU, seconds) and
+# 3. run the released checkpoints on the subset (CPU, a few minutes) and
 #    compare with the paper's per-simulation results
 mkdir -p outputs/review &amp;&amp; cp -r data/FLOATSense/checkpoints/opt2/seed0 outputs/review/opt2
 python scripts/train/run.py --flagfile=scripts/train/config.cfg \\
     --tower=opt2 --test_split=review/test --run_training=False \\
     --models=tcn,mamba,naive --output_dir=outputs/review/opt2
-python data/FLOATSense/compare.py outputs/review/opt2 opt2</code></pre>
+python data/FLOATSense/compare.py outputs/review/opt2 opt2
+python data/FLOATSense/rho_wc.py outputs/review/opt2 opt2</code></pre>
   </div>
 </section>
 
