@@ -1,6 +1,6 @@
 // FLOATSense project page: dataset explorer and leaderboard along the height.
 
-const DATA_VERSION = "20260926a";  // bump when static/data changes
+const DATA_VERSION = "20260926b";  // bump when static/data changes
 
 // Paper palette (paper_style.py and fs_common.py).
 const NAVY = "#294366", RED = "#b02c27", REF = "#b8b8b8", REF_DARK = "#8f8f8f", CYAN = "#7cc0cd", SCADA = "#4383ad",
@@ -78,7 +78,7 @@ const $ = id => document.getElementById(id);
 const L = o => Object.assign({}, LAYOUT, o);
 
 let D, S, time;
-const st = {tower: 2, sim: 11, heights: [0, 5, 10], inputs: ["tower_top_afa_mod", "wind_speed", "rotor_speed", "blade_pitch", "plat_pitch", "wave_elev"], xr: [400, 1000], models: ["tcn", "prob_tcn", "transformer", "physics", "naive"],
+const st = {tower: 2, sim: 11, heights: [0, 5, 10], inputs: ["tower_top_afa_mod", "wind_speed", "rotor_speed", "blade_pitch", "plat_pitch", "wave_elev"], xr: [400, 1000], models: ["tcn", "prob_tcn", "transformer", "naive"],
   proto: "within", lbTower: "mean", metric: "r2", height: 10, search: "", fams: new Set(), sel: "tcn"};
 
 // ---------- explorer ----------
@@ -325,7 +325,7 @@ async function init() {
   $("ex-wind").oninput = e => selectSim(+e.target.value);
 
 
-  const order = ["tcn", "prob_tcn", "transformer", "mamba", "lstm", "s4", "timesnet", "unet", "fno", "itransformer", "fits", "dlinear", "spectral", "physics", "naive"].filter(m => D.models.includes(m));
+  const order = ["tcn", "prob_tcn", "transformer", "mamba", "lstm", "s4", "timesnet", "unet", "fno", "itransformer", "fits", "dlinear", "spectral", "naive"].filter(m => D.models.includes(m));
   $("models").innerHTML = order.map(m => `<label data-m="${m}"><input type="checkbox" id="m-${m}"><span class="sw"></span>${NAMES[m]}</label>`).join("");
   $("models").onchange = e => { const m = e.target.closest("label").dataset.m, k = st.models.indexOf(m);
     if (k >= 0) st.models.splice(k, 1); else st.models.push(m); drawProfile(); };

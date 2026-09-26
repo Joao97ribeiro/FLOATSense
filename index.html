@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="stylesheet" href="static/css/style.css?v=8">
   <script defer src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
-  <script defer src="static/js/app.js?v=24"></script>
+  <script defer src="static/js/app.js?v=25"></script>
 </head>
 <body>
 
@@ -265,7 +265,7 @@
       <div class="column is-7">
         <h3 class="title is-5">Damage along the tower</h3>
         <div id="plot-profile" class="plot plot-tall"></div>
-        <p class="how">True damage of the selected simulation (thick black) and the damage implied by each reconstruction: the learned models (seed-0 checkpoints of the within-tower protocol) and the physics baseline (near-black, dash-dot), whose truth window differs slightly (true damage within 2.4%). Dotted: the one-gain floor.</p>
+        <p class="how">True damage of the selected simulation (black) and the damage implied by each model's reconstruction, seed-0 checkpoints of the within-tower protocol. Dotted: the one-gain floor.</p>
       </div>
       <div class="column is-5">
         <label class="label is-small">Models</label>
