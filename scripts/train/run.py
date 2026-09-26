@@ -42,6 +42,9 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("dataset_dir", None,
                     "Released FLOATSense dataset, one folder per tower.")
 flags.DEFINE_string("tower", "opt2", "Training tower (ref, opt1 or opt2).")
+flags.DEFINE_enum("damage_radius", "gauge", ["gauge", "section"],
+                  "Radius of the damage: at the gauge height (default) or "
+                  "the mean of the nearest FLOATBench section (release v1.0).")
 flags.DEFINE_string("train_split", "train",
                     "Training split: train, val/train or fewshot/<name>.")
 flags.DEFINE_string("test_split", "test", "Evaluation split: test or val/val.")
@@ -164,7 +167,7 @@ def main(_):
     if (hybrids and not FLAGS.height_targets and damage_section):
         raise ValueError("The hybrid models anchor to the physics at the "
                          "requested height only in the 11-height task.")
-    source = load_tower(FLAGS.dataset_dir, FLAGS.tower)
+    source = load_tower(FLAGS.dataset_dir, FLAGS.tower, FLAGS.damage_radius)
     train_ids = source.split_ids(FLAGS.train_split)
     test_ids = source.split_ids(FLAGS.test_split)
     if FLAGS.max_train_sims:
@@ -238,7 +241,7 @@ def main(_):
                 continue
             logging.info("Summary: %s", trainer.evaluate(test_ids))
             for target in FLAGS.eval_towers:
-                release = load_tower(FLAGS.dataset_dir, target)
+                release = load_tower(FLAGS.dataset_dir, target, FLAGS.damage_radius)
                 target_ids = release.split_ids(FLAGS.test_split)
                 if FLAGS.max_eval_sims:
                     target_ids = target_ids[:FLAGS.max_eval_sims]

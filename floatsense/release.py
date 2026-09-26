@@ -10,7 +10,9 @@ The dataset has one directory per tower and one shared parked file:
   <dataset_dir>/<tower>/metadata.parquet  operating point, split, regime
                                     labels and lifetime weight
   <dataset_dir>/<tower>/sections.parquet  the 11 scored FLOATBench sections
-  <dataset_dir>/<tower>/damage.parquet  reference damage (sim_id, section_id)
+  <dataset_dir>/<tower>/damage.parquet  reference damage (sim_id, section_id;
+                                    damage = section radius, damage_gauge =
+                                    radius at the gauge, from v1.1)
   <dataset_dir>/parked.parquet      the 22 parked runs of every tower
 
 Split names: `train` and `test` (the regime-aware partition, from
@@ -20,6 +22,7 @@ sim_id shipped with the code in `splits/`, the same on the three towers.
 """
 
 import glob
+import json
 import os
 from typing import Dict, List, Optional, Tuple
 
@@ -32,32 +35,102 @@ TOWER_HEIGHT = 149.386
 NUM_SECTIONS = 30
 SPLITS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)),
                           "splits")
+TOWERS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                          "towers")
+RADIUS_RULES = ("gauge", "section")
+
+
+def _ordered(values: dict) -> np.ndarray:
+    """Values of a d0.., h0.. or t1.. dict in index order."""
+    return np.array([
+        values[key] for key in sorted(values, key=lambda k: int(k[1:]))
+    ], dtype=float)
+
+
+def gauge_properties(tower: str,
+                     gauge_heights: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Outer radius and wall thickness of a tower at the gauge heights.
+
+    The radius is interpolated linearly between the section transitions
+    (the tower tapers linearly within a section); the thickness is that of
+    the section that contains the gauge.
+
+    Args:
+        tower (str): Tower name (ref, opt1 or opt2), read from
+          towers/<tower>_geometry.json.
+        gauge_heights (np.ndarray): Gauge heights above the tower base [m].
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: Radius [m] and thickness [m].
+    """
+    with open(os.path.join(TOWERS_DIR, f"{tower}_geometry.json"),
+              encoding="utf-8") as file:
+        geometry = json.load(file)
+    z = _ordered(geometry["z_transitions (m)"])
+    radius = _ordered(geometry["diameter_transitions (m)"]) / 2
+    thickness = _ordered(geometry["thickness_sections (m)"])
+    heights = np.asarray(gauge_heights, dtype=float) + z[0]
+    section = np.clip(np.searchsorted(z, heights, side="right") - 1, 0,
+                      len(thickness) - 1)
+    return np.interp(heights, z, radius), thickness[section]
 
 
 class TowerSections:
-    """Mean outer radius and wall thickness of the FLOATBench sections.
+    """Radius and wall thickness used for the damage at the scored sections.
 
     Arrays are indexed by the zero-based FLOATBench section (section_id - 1);
     only the scored sections are filled, the others are NaN.
 
+    Two rules set the radius and thickness of a scored section:
+      * 'gauge' (default): the outer radius at the gauge height and the
+        thickness of the section that contains the gauge, so that the
+        stress is taken where the moment is recorded.
+      * 'section': the mean outer radius and thickness of the nearest
+        FLOATBench section (release v1.0). At the top of the redesigns this
+        radius is 2.5 to 4% larger than at the gauge and lowers the top
+        damage by 20 to 35%; it reproduces the v1.0 numbers.
+
     Attributes:
-        mean_radius_sections (np.ndarray): Mean outer radius [m].
-        thickness_sections (np.ndarray): Wall thickness [m].
+        mean_radius_sections (np.ndarray): Radius used for the damage [m].
+        thickness_sections (np.ndarray): Thickness used for the damage [m].
         height (float): Tower height [m].
+        radius_rule (str): 'gauge' or 'section'.
     """
 
-    def __init__(self, sections: pd.DataFrame):
+    def __init__(self,
+                 sections: pd.DataFrame,
+                 radius_rule: str = "gauge",
+                 tower: Optional[str] = None):
         """Initializes the geometry from a sections.parquet table.
 
         Args:
-            sections (pd.DataFrame): Rows with section_id, section_radius_m
-              and section_thickness_m.
+            sections (pd.DataFrame): Rows with section_id, section_radius_m,
+              section_thickness_m and gauge_height_m.
+            radius_rule (str): 'gauge' or 'section'.
+            tower (str, optional): Tower name, needed by the 'gauge' rule
+              when sections has no gauge_radius_m column.
         """
+        if radius_rule not in RADIUS_RULES:
+            raise ValueError(f"radius_rule must be one of {RADIUS_RULES}, "
+                             f"got '{radius_rule}'.")
+        self.radius_rule = radius_rule
         self.mean_radius_sections = np.full(NUM_SECTIONS, np.nan)
         self.thickness_sections = np.full(NUM_SECTIONS, np.nan)
         index = sections["section_id"].to_numpy(int) - 1
-        self.mean_radius_sections[index] = sections["section_radius_m"]
-        self.thickness_sections[index] = sections["section_thickness_m"]
+        if radius_rule == "section":
+            radius = sections["section_radius_m"].to_numpy(float)
+            thickness = sections["section_thickness_m"].to_numpy(float)
+        elif "gauge_radius_m" in sections:
+            radius = sections["gauge_radius_m"].to_numpy(float)
+            thickness = sections["gauge_thickness_m"].to_numpy(float)
+        else:
+            if tower is None:
+                raise ValueError("The 'gauge' rule needs the tower name when "
+                                 "sections.parquet has no gauge_radius_m.")
+            radius, thickness = gauge_properties(
+                tower, sections["gauge_height_m"].to_numpy(float))
+        self.mean_radius_sections[index] = radius
+        self.thickness_sections[index] = thickness
         self.height = TOWER_HEIGHT
 
 
@@ -74,11 +147,13 @@ class ReleasedTower:
         geometry (TowerSections): Section properties for the damage.
     """
 
-    def __init__(self, tower_dir: str):
+    def __init__(self, tower_dir: str, radius_rule: str = "gauge"):
         """Reads the metadata and indexes the series shards.
 
         Args:
             tower_dir (str): <dataset_dir>/<tower>.
+            radius_rule (str): Radius of the damage, 'gauge' or 'section'
+              (see TowerSections).
         """
         self.tower_dir = tower_dir
         self.name = os.path.basename(os.path.normpath(tower_dir))
@@ -87,7 +162,7 @@ class ReleasedTower:
             os.path.join(tower_dir, "metadata.parquet")).set_index("sim_id")
         self.sections = pd.read_parquet(
             os.path.join(tower_dir, "sections.parquet"))
-        self.geometry = TowerSections(self.sections)
+        self.geometry = TowerSections(self.sections, radius_rule, self.name)
         self._shards = sorted(
             glob.glob(os.path.join(tower_dir, "series-*.parquet")))
         if not self._shards:
@@ -159,10 +234,19 @@ class ReleasedTower:
         return meta["wind_group"] + "/" + meta["wave_group"]
 
     def damage(self) -> pd.DataFrame:
-        """damage.parquet as a (sim_id x section_id) table."""
+        """damage.parquet as a (sim_id x section_id) table, with the radius
+        rule of this tower ('damage_gauge' for 'gauge', 'damage' for
+        'section')."""
         damage = pd.read_parquet(os.path.join(self.tower_dir, "damage.parquet"))
+        column = "damage_gauge" if self.geometry.radius_rule == "gauge" else (
+            "damage")
+        if column not in damage:
+            raise KeyError(f"{column} is not in damage.parquet (release v1.0 "
+                           "has the 'section' rule only); rebuild it with "
+                           "scripts/data/build_labels.py or use "
+                           "--damage_radius=section.")
         return damage.pivot(index="sim_id", columns="section_id",
-                            values="damage")
+                            values=column)
 
 
 def split_tag(name: str) -> str:
@@ -177,9 +261,11 @@ def split_tag(name: str) -> str:
     return name.replace("/", "_")
 
 
-def load_tower(dataset_dir: str, name: str) -> ReleasedTower:
-    """Opens <dataset_dir>/<name>."""
-    return ReleasedTower(os.path.join(dataset_dir, name))
+def load_tower(dataset_dir: str,
+               name: str,
+               radius_rule: str = "gauge") -> ReleasedTower:
+    """Opens <dataset_dir>/<name> with the given damage radius rule."""
+    return ReleasedTower(os.path.join(dataset_dir, name), radius_rule)
 
 
 def load_parked(dataset_dir: str, tower: str) -> Dict[str, np.ndarray]:

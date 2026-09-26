@@ -42,6 +42,9 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("dataset_dir", None,
                     "Released FLOATSense dataset, one folder per tower.")
 flags.DEFINE_string("tower", "opt2", "Tower scored (ref, opt1 or opt2).")
+flags.DEFINE_enum("damage_radius", "gauge", ["gauge", "section"],
+                  "Radius of the damage: at the gauge height (default) or "
+                  "the mean of the nearest FLOATBench section (release v1.0).")
 flags.DEFINE_string("source", None,
                     "Zero-shot: apply the constants and the height profile "
                     "of this tower instead of calibrating on --tower.")
@@ -79,7 +82,7 @@ def main(_):
     name = (FLAGS.tower + (f"_zs_{FLAGS.source}" if FLAGS.source else "") +
             (f"_{tag}" if tag else "") + suffix)
     output_dir = os.path.join(FLAGS.output_root, name)
-    release = load_tower(FLAGS.dataset_dir, FLAGS.tower)
+    release = load_tower(FLAGS.dataset_dir, FLAGS.tower, FLAGS.damage_radius)
     physics = PhysicsReconstruction(
         release=release,
         output_dir=output_dir,

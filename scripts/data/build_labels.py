@@ -9,14 +9,19 @@ train/test files give the split), and writes, next to the series
                     wind_seed_id, split, wind_group, wave_group, damage_weight
   sections.parquet  the 11 scored FLOATBench sections: section_id,
                     section_height_m, section_radius_m, section_thickness_m
-                    (as in FLOATBench), channel, gauge_height_m, z_over_h
-  damage.parquet    sim_id, section_id, damage (11 rows per simulation)
+                    (as in FLOATBench), channel, gauge_height_m, z_over_h,
+                    gauge_radius_m, gauge_thickness_m (at the gauge height)
+  damage.parquet    sim_id, section_id, damage, damage_gauge (11 rows per
+                    simulation)
 
 The damage is computed as in the evaluation: the fore-aft moment of each
 gauge is cut to the scored window (400-1000 s, an even 6,000 samples as in
 the evaluation), its mean removed,
-low-passed at 3 Hz, rainflow-counted and passed through the S-N curve with
-the mean outer radius and wall thickness of the nearest FLOATBench section.
+low-passed at 3 Hz, rainflow-counted and passed through the S-N curve.
+`damage` uses the mean outer radius and wall thickness of the nearest
+FLOATBench section (release v1.0); `damage_gauge` uses the outer radius at
+the gauge height and the thickness of the section that contains it
+(release v1.1, the default of the benchmark; see floatsense.release).
 
 Usage: python scripts/data/build_labels.py --dataset_dir=data/FLOATSense \
            --floatbench_dir=data/FLOATBench --towers=ref,opt1,opt2
@@ -38,6 +43,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from floatsense.data import HEIGHT_TARGETS  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.fatigue import compute_base_damage  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.physics import lowpass  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.release import gauge_properties  # noqa: E402  pylint: disable=wrong-import-position
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("dataset_dir", None, "Released dataset, one folder per tower.")
@@ -73,11 +79,12 @@ def build_metadata(floatbench: pd.DataFrame) -> pd.DataFrame:
         drop=True)
 
 
-def build_sections(floatbench: pd.DataFrame) -> pd.DataFrame:
+def build_sections(floatbench: pd.DataFrame, tower: str) -> pd.DataFrame:
     """Geometry of the 11 scored FLOATBench sections and their gauges.
 
     Args:
         floatbench (pd.DataFrame): FLOATBench rows of the tower.
+        tower (str): Tower name, for towers/<tower>_geometry.json.
 
     Returns:
         pd.DataFrame: One row per scored section, base to top.
@@ -90,15 +97,23 @@ def build_sections(floatbench: pd.DataFrame) -> pd.DataFrame:
         row.update({"channel": name, "gauge_height_m": z_over_h * HEIGHT,
                     "z_over_h": z_over_h})
         rows.append(row)
-    return pd.DataFrame(rows)
+    sections = pd.DataFrame(rows)
+    radius, thickness = gauge_properties(tower,
+                                         sections["gauge_height_m"].to_numpy())
+    sections["gauge_radius_m"] = radius
+    sections["gauge_thickness_m"] = thickness
+    return sections
 
 
 def _shard_damage(args):
     """Damage at the 11 sections of every simulation of one shard."""
     path, sections = args
-    geometry = types.SimpleNamespace(
-        mean_radius_sections=sections["section_radius_m"].to_numpy(),
-        thickness_sections=sections["section_thickness_m"].to_numpy())
+    geometries = {
+        rule: types.SimpleNamespace(
+            mean_radius_sections=sections[f"{prefix}_radius_m"].to_numpy(),
+            thickness_sections=sections[f"{prefix}_thickness_m"].to_numpy())
+        for rule, prefix in (("section", "section"), ("gauge", "gauge"))
+    }
     # The evaluation keeps an even number of samples of the inclusive
     # 400-1000 s window (floatsense.data), i.e. 400.0 to 999.9 s.
     start = int(round(MIN_TIME * FS))
@@ -113,9 +128,12 @@ def _shard_damage(args):
                 zip(sections["section_id"], sections["channel"])):
             moment = table[f"{channel}_mfa"].to_numpy(float)[start:stop]
             moment = lowpass(moment - moment.mean(), FS, LOWPASS_HZ)
-            damage = compute_base_damage(moment, geometry, SN_INTERCEPTS,
-                                         SN_SLOPES, section=position)
-            rows.append((sim_id, int(section_id), damage))
+            damage = [
+                compute_base_damage(moment, geometries[rule], SN_INTERCEPTS,
+                                    SN_SLOPES, section=position)
+                for rule in ("section", "gauge")
+            ]
+            rows.append((sim_id, int(section_id), *damage))
     return rows
 
 
@@ -127,13 +145,15 @@ def build_damage(tower_dir: str, sections: pd.DataFrame) -> pd.DataFrame:
         sections (pd.DataFrame): Output of build_sections.
 
     Returns:
-        pd.DataFrame: sim_id, section_id, damage, sorted by both.
+        pd.DataFrame: sim_id, section_id, damage, damage_gauge, sorted by
+          sim_id and section_id.
     """
     shards = sorted(glob.glob(os.path.join(tower_dir, "series-*.parquet")))
     with multiprocessing.Pool(FLAGS.workers) as pool:
         parts = pool.map(_shard_damage, [(s, sections) for s in shards])
     damage = pd.DataFrame([r for part in parts for r in part],
-                          columns=["sim_id", "section_id", "damage"])
+                          columns=["sim_id", "section_id", "damage",
+                                   "damage_gauge"])
     return damage.sort_values(["sim_id", "section_id"]).reset_index(drop=True)
 
 
@@ -147,7 +167,7 @@ def main(_) -> None:
             for split in ("train", "test")
         ])
         metadata = build_metadata(floatbench)
-        sections = build_sections(floatbench)
+        sections = build_sections(floatbench, tower)
         damage = build_damage(tower_dir, sections)
         metadata.to_parquet(os.path.join(tower_dir, "metadata.parquet"),
                             index=False)

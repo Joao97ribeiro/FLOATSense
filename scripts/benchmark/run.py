@@ -37,6 +37,9 @@ from floatsense.metrics import within_condition_correlation  # noqa: E402  pylin
 FLAGS = flags.FLAGS
 flags.DEFINE_string("dataset_dir", None, "Released FLOATSense dataset.")
 flags.DEFINE_string("output_root", "outputs", "Root of the run outputs.")
+flags.DEFINE_enum("damage_radius", "gauge", ["gauge", "section"],
+                  "Radius of the damage: at the gauge height (default) or "
+                  "the mean of the nearest FLOATBench section (release v1.0).")
 flags.DEFINE_string("results_csv", None,
                     "Where the table goes (default: <output_root>/tables/results.csv).")
 flags.DEFINE_string("test_split", "test", "Split providing the regime cells.")
@@ -51,7 +54,7 @@ _CONTEXTS = {}
 def tower_context(tower: str) -> dict:
     """Regime cells of the test split and operating conditions of every
     simulation (so runs scored on other splits, e.g. val/val, work too)."""
-    release = load_tower(FLAGS.dataset_dir, tower)
+    release = load_tower(FLAGS.dataset_dir, tower, FLAGS.damage_radius)
     return {"cells": release.regime_cells(FLAGS.test_split),
             "clusters": condition_key(release.metadata)}
 

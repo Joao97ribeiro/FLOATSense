@@ -207,8 +207,9 @@ FLOATSense/                          24.0 GB
 │   │                                 wave_hs_id, wave_hs, wave_tp_id, wave_tp, wind_seed_id,
 │   │                                 split, wind_group, wave_group, damage_weight
 │   ├── sections.parquet              section_id, section_height_m, section_radius_m, section_thickness_m,
-│   │                                 channel, gauge_height_m, z_over_h (the 11 scored sections)
-│   └── damage.parquet                sim_id, section_id, damage (reference fore-aft damage)
+│   │                                 channel, gauge_height_m, z_over_h, gauge_radius_m,
+│   │                                 gauge_thickness_m (the 11 scored sections)
+│   └── damage.parquet                sim_id, section_id, damage, damage_gauge (reference fore-aft damage)
 ├── opt1/                             same files
 ├── opt2/                             same files
 ├── parked.parquet                    the 22 parked runs (waves only) of each tower
@@ -218,8 +219,21 @@ FLOATSense/                          24.0 GB
 
 Column names and order follow FLOATBench, so a run joins its FLOATBench
 rows on `sim_id` (and `section_id`). The 11 gauges are FLOATBench
-sections 1, 3, 6, ..., 27, 30; each is scored with the mean outer radius
-and wall thickness of that section.
+sections 1, 3, 6, ..., 27, 30.
+
+**Radius of the damage.** By default (`--damage_radius=gauge`) the stress
+at a gauge uses the outer radius at the gauge height and the wall
+thickness of the section that contains it, read from
+`towers/<tower>_geometry.json`, so the stress is taken where the moment is
+recorded. Release v1.0 used the mean outer radius and thickness of the
+nearest FLOATBench section (`--damage_radius=section`, column `damage`):
+at the top of the redesigns that radius is 2.5 to 4% larger than at the
+gauge, so the v1.0 top damage is about 27% (`opt1`) and 19% (`opt2`) low;
+elsewhere the two rules differ by at most 7%. The rule scales the true and
+the reconstructed damage alike, so the benchmark metrics change by at most
+0.005; the absolute damage (lifetime profile) changes. The 30-section
+FLOATBench labels are unaffected: there the moment is interpolated to the
+mid-height of each section, where its mean radius applies.
 
 ### Download
 
