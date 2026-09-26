@@ -23,9 +23,10 @@ accelerometer and SCADA signals as inputs and the fore-aft bending
 moment at **eleven heights** as target. A reconstruction is scored by
 the fatigue damage it implies, not by waveform error. For review, a fixed
 subset (47 simulations per tower, one per wind speed plus all six
-realizations of five operating points, the complete tabular files and the
-checkpoints of 14 of the 20 learned models: all but the foundation models,
-left out for size, and the two hybrids, which need the physics calibration)
+realizations of five operating points, the complete label files (metadata,
+sections, damage, parked runs) and 14 checkpoints: 13 of the 20 learned
+models, all but the foundation models, left out for size, and the two
+hybrids, which need the physics calibration, plus the one-gain floor)
 is available through an anonymized link,
 [https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e](https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e); the complete dataset (24.0 GB) is released on publication.
 This repository contains the benchmark code, the physics baseline, the
@@ -254,6 +255,8 @@ python scripts/train/run.py --flagfile=scripts/train/config.cfg \
     --models=tcn,mamba,naive --output_dir=outputs/review/opt2
 python data/FLOATSense/compare.py outputs/review/opt2 opt2
 python data/FLOATSense/rho_wc.py outputs/review/opt2 opt2
+# all 14 checkpoints: --models=dlinear,fits,fno,itransformer,lstm,mamba,naive,prob_tcn,s4,spectral,tcn,timesnet,transformer,unet
+# (about 10-16 min per tower on CPU; the attention and state-space models dominate)
 
 # the metrics table of these runs, with condition-level bootstrap intervals
 python scripts/benchmark/run.py --flagfile=scripts/benchmark/config.cfg \
@@ -443,8 +446,8 @@ import pandas as pd
 from floatsense import cluster_bootstrap, load_tower
 from floatsense.metrics import condition_key
 
-df = pd.read_csv("outputs/within/opt2/seed0/damage_comparison_tcn_fa.csv")
-# with the review subset: pd.read_csv("outputs/review/opt2/damage_comparison_tcn_fa.csv")
+df = pd.read_csv("outputs/review/opt2/damage_comparison_tcn_fa.csv")  # review subset
+# full dataset: pd.read_csv("outputs/within/opt2/seed0/damage_comparison_tcn_fa.csv")
 tower = load_tower("data/FLOATSense", "opt2")
 meta = tower.metadata.loc[df.sim_id]
 ci = cluster_bootstrap(df.damage_true_tower_top.values,
