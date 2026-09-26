@@ -368,7 +368,8 @@ ci = cluster_bootstrap(df.damage_true_tower_top.values,
   models, and matches it to $10^{-6}$. The physics baseline scores its
   own truth on the inclusive 400–1,000 s window (6,001 samples), as in
   the paper; the two true damages differ by a median of $2 \times 10^{-4}$
-  (a few percent on some low-damage simulations).
+  (99th percentile about 1%, up to about 10% on a few low-damage
+  simulations).
 - The parked constant C1 is recomputed from `parked.parquet` and
   rounded to 0.1 MN s², as in the paper; the physics baseline reproduces
   the paper to $10^{-7}$.
