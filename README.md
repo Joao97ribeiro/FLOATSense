@@ -63,7 +63,8 @@ accelerometer axis improves the top at every budget.
   channels at 10 Hz over 1,000 s: tower-top accelerations, SCADA,
   platform motions, wave elevation, and fore-aft and side-side bending
   moments at 11 heights. Plus 22 parked runs per tower and per-window
-  channel statistics. Every file is keyed by the FLOATBench `sim_id`.
+  channel statistics. Every file is keyed by the FLOATBench `sim_id`
+  (the parked runs by tower and run name).
 - **Task.** From the gravity-corrected fore-aft tower-top acceleration,
   rotor speed, blade pitch, hub wind speed and a height $z/H$,
   reconstruct the fore-aft moment at that height over 400 to 1,000 s.
@@ -259,7 +260,8 @@ python scripts/benchmark/run.py --flagfile=scripts/benchmark/config.cfg \
     --output_root=outputs/review --test_split=review/test
 ```
 
-The configs expect the dataset at `data/FLOATSense`; change
+The configs expect the dataset at `data/FLOATSense` (for a copy elsewhere:
+`mkdir -p data && ln -s <path>/FLOATSense data/FLOATSense`); change
 `--dataset_dir` otherwise.
 
 **Lifetime weights.** `damage_weight` is the expected number of 600 s
@@ -336,7 +338,7 @@ outputs/
 │   ├── history_<model>_fa.json        training loss per epoch
 │   ├── damage_comparison_<model>_fa.csv          true and reconstructed damage (and variance ratio) at the 11 gauges
 │   ├── damage_comparison_<model>_fa_zs_<t>.csv   the same, zero-shot on tower <t>
-│   └── summary_<model>_fa[_zs_<t>].json          R², median ratio and within-2 at the base (tower_bottom)
+│   └── summary_<model>_fa[_zs_<t>].json          R², median ratio and within-2 at the base (tower_bottom; at the target height with --height_targets=False)
 ├── fewshot/<source>_to_<target>/draw<k>/seed<s>/   adaptation runs (same files as within/)
 ├── ablation/<input set>/<tower>/seed<k>/           sensor-ablation runs (same files as within/)
 ├── val_select/<tower>/seed<k>/             model-selection runs scored on val/val
@@ -364,7 +366,7 @@ done
 python scripts/train/run.py --flagfile=scripts/train/config.cfg \
     --tower=ref --models=tcn --batch_size=4 \
     --train_split=fewshot/train_10_draw0 \
-    --init_checkpoint_dir=outputs/within/opt2/seed0 \
+    --init_checkpoint_dir=outputs/within/opt2/seed0 \   # the opt2 run of the Quickstart
     --output_dir=outputs/fewshot/opt2_to_ref/draw0/seed0
 
 # Physics ten-shot (constants recalibrated on 10 ref simulations; the paper's
@@ -388,10 +390,12 @@ python scripts/train/run.py --flagfile=scripts/train/config.cfg --tower=opt2 --m
 ```
 
 `--max_train_sims` / `--max_eval_sims` cap a run for a quick test; they
-take the first simulations by `sim_id`, one realization per operating
+take the first simulations by `sim_id`, which for small caps (below 17
+training and 50 test simulations) are one realization per operating
 point, so the within-condition correlation of such a run is undefined.
 Write quick tests to a separate `--output_root` (or delete them): the
-benchmark table scores every run it finds under `outputs/`.
+benchmark table scores every run it finds under its `--output_root` and
+writes `<output_root>/tables/results.csv`.
 
 Field-style SCADA (the ten-minute statistics a turbine logs) is an
 input set too: `stat:<channel>:<mean|std|min|max>` reads
@@ -417,7 +421,7 @@ runs never overwrite each other and the benchmark tells them apart.
 | + platform motions | `--input_channels=tower_top_afa_mod,$SCADA,plat_surge,plat_sway,plat_heave,plat_roll,plat_pitch,plat_yaw` | `--output_root=outputs/ablation/platform` |
 | + generator power | `--input_channels=tower_top_afa_mod,$SCADA,electrical_power` (two axes: add `tower_top_ass_mod` after the first) | `--output_root=outputs/ablation/power` |
 | Field SCADA | `--input_channels=tower_top_afa_mod,stat:rotor_speed:mean,stat:rotor_speed:std,stat:blade_pitch:mean,stat:blade_pitch:std,stat:wind_speed:mean,stat:wind_speed:std` | `--output_root=outputs/ablation/fieldscada` |
-| Model selection | `--train_split=val/train --test_split=val/val` (hybrids: physics run first with `--train_split=val/train`) | `--output_root=outputs/val_select` |
+| Model selection | `--train_split=val/train --test_split=val/val` (hybrids: physics run first with `--train_split=val/train`; that physics run is scored on the test split, only its calibration is used) | `--output_root=outputs/val_select` |
 | Top only (diagnostic; not for the hybrids) | `--height_targets=False --target_channel=tower_top_mfa` | `--output_root=outputs/toponly` |
 | Damage-aware loss (diagnostic) | `--loss=damage --damage_loss_weight=1.0` | `--output_root=outputs/damageloss` |
 
