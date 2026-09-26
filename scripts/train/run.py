@@ -125,6 +125,25 @@ def main(_):
             "outputs", "physics", FLAGS.tower + (f"_{tag}" if tag else "") +
             ("_ss" if direction == "ss" else ""))
 
+    for model_name in FLAGS.models:
+        for direction in FLAGS.directions:
+            if FLAGS.init_checkpoint_dir:
+                path = os.path.join(FLAGS.init_checkpoint_dir,
+                                    f"{model_name}_{direction}.pt")
+                if not os.path.exists(path):
+                    raise SystemExit(
+                        f"--init_checkpoint_dir: {path} not found. Train the "
+                        "source model first (e.g. the within-tower run of the "
+                        "source tower) or point the flag to its folder.")
+            if model_name.startswith("hybrid"):
+                path = os.path.join(calibration_dir(direction),
+                                    f"calibration_{direction}.json")
+                if not os.path.exists(path):
+                    raise SystemExit(
+                        f"{model_name} needs the physics calibration {path}: run "
+                        "scripts/physics/run.py on the same tower and "
+                        "--train_split first, or pass --calibration_dir.")
+
     damage_section = FLAGS.damage_section
     if FLAGS.height_targets and (FLAGS.target_channel or damage_section):
         raise ValueError("--target_channel and --damage_section apply to the "

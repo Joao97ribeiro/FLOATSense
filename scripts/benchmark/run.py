@@ -37,8 +37,8 @@ from floatsense.metrics import within_condition_correlation  # noqa: E402  pylin
 FLAGS = flags.FLAGS
 flags.DEFINE_string("dataset_dir", None, "Released FLOATSense dataset.")
 flags.DEFINE_string("output_root", "outputs", "Root of the run outputs.")
-flags.DEFINE_string("results_csv", "outputs/tables/results.csv",
-                    "Where the table goes.")
+flags.DEFINE_string("results_csv", None,
+                    "Where the table goes (default: <output_root>/tables/results.csv).")
 flags.DEFINE_string("test_split", "test", "Split providing the regime cells.")
 flags.DEFINE_integer("num_resamples", 1000, "Bootstrap resamples (0 = none).")
 flags.DEFINE_integer("num_workers", 16, "Parallel scoring processes.")
@@ -155,9 +155,11 @@ def main(_):
     first = ["run", "model", "direction", "source", "target", "gauge",
              "z_over_h", "group"]
     results = results[first + [c for c in results.columns if c not in first]]
-    os.makedirs(os.path.dirname(FLAGS.results_csv) or ".", exist_ok=True)
-    results.to_csv(FLAGS.results_csv, index=False)
-    logging.info("%d rows -> %s", len(results), FLAGS.results_csv)
+    results_csv = FLAGS.results_csv or os.path.join(FLAGS.output_root, "tables",
+                                                   "results.csv")
+    os.makedirs(os.path.dirname(results_csv) or ".", exist_ok=True)
+    results.to_csv(results_csv, index=False)
+    logging.info("%d rows -> %s", len(results), results_csv)
 
 
 if __name__ == "__main__":
