@@ -7,13 +7,12 @@
   <meta name="description" content="FLOATSense: a time-series dataset and damage-scored benchmark for reconstructing the tower bending moment of 22 MW floating offshore wind turbines from a tower-top accelerometer and SCADA.">
   <meta property="og:title" content="FLOATSense: A Time-Series Dataset and Benchmark for Fatigue Load Reconstruction on Floating Offshore Wind Turbine Towers">
   <meta property="og:description" content="718 k time series at 10 Hz, the fore-aft moment at 11 heights scored by fatigue damage, and a leaderboard of 20 learned models and a physics baseline.">
-  <meta property="og:image" content="static/images/overview.png">
-  <link rel="icon" type="image/png" href="static/images/logo.png">
-  <script>/* anon-redirect */ if (/(^|\.)4open\.science$/.test(location.hostname)) location.replace("review/index.html");</script>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <link rel="icon" type="image/png" href="static/images/logo.png">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="stylesheet" href="static/css/style.css?v=8">
   <script defer src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+  <script src="static/data/data.js"></script>
   <script defer src="static/js/app.js?v=26"></script>
 </head>
 <body>
@@ -26,33 +25,12 @@
       <h1 class="title is-2 publication-title" style="margin-bottom:1.5rem;">
         FLOATSense: A Time-Series Dataset and Benchmark for Fatigue Load Reconstruction on Floating Offshore Wind Turbine Towers
       </h1>
-      <div class="is-size-5 publication-authors">
-        <span class="author-block"><a href="mailto:jpar@mit.edu">João Alves Ribeiro</a><sup>1</sup>,</span>
-        <span class="author-block">Bruno Alves Ribeiro<sup>2,3</sup>,</span>
-        <span class="author-block">Francisco Pimenta<sup>4</sup>,</span>
-        <span class="author-block">Sérgio M. O. Tavares<sup>5</sup>,</span>
-        <span class="author-block"><a href="mailto:faez@mit.edu">Faez Ahmed</a><sup>1</sup></span>
-      </div>
-      <div class="is-size-6 publication-affiliations" style="margin-top:0.4rem;">
-        <span><sup>1</sup>MIT</span> &nbsp;
-        <span><sup>2</sup>TU Delft</span> &nbsp;
-        <span><sup>3</sup>Brown University</span> &nbsp;
-        <span><sup>4</sup>University of Porto</span> &nbsp;
-        <span><sup>5</sup>University of Aveiro</span>
-      </div>
-
       <div class="publication-links" style="margin-top:1.5rem;">
-        <a class="button is-rounded is-dark coming" title="Coming soon">
-          <span class="icon"><i class="fas fa-file-pdf"></i></span><span>Paper</span>
+        <a href="https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e" class="button is-rounded is-dark">
+          <span class="icon"><i class="fas fa-database"></i></span><span>Data</span>
         </a>
-        <a class="button is-rounded is-dark coming" title="Coming soon">
-          <span class="icon"><i class="fas fa-archive"></i></span><span>arXiv</span>
-        </a>
-        <a href="https://github.com/Joao97ribeiro/FLOATSense" class="button is-rounded is-dark">
-          <span class="icon"><i class="fab fa-github"></i></span><span>Code</span>
-        </a>
-        <a class="button is-rounded is-dark coming" title="Coming soon on Hugging Face">
-          <span class="icon"><i class="fas fa-database"></i></span><span>Dataset</span>
+        <a href="#start" class="button is-rounded is-dark">
+          <span class="icon"><i class="fas fa-download"></i></span><span>Get started</span>
         </a>
         <a href="#leaderboard" class="button is-rounded is-dark">
           <span class="icon"><i class="fas fa-trophy"></i></span><span>Leaderboard</span>
@@ -65,15 +43,6 @@
 <!-- ============ PAPER HIGHLIGHTS ============ -->
 <section class="section">
   <div class="container is-max-desktop">
-    <div class="has-text-centered" style="margin:0 0 1.5rem;padding:0.85rem 0;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;">
-      <i class="fas fa-layer-group" style="color:#c05621;margin-right:0.6rem;"></i>
-      <span style="text-transform:uppercase;letter-spacing:0.1em;color:#c05621;font-size:0.75rem;font-weight:700;">Builds on FLOATBench</span>
-      &nbsp;&nbsp;
-      <span style="color:#2d3748;">the same 19,404 simulations, <code>sim_id</code> and regime-aware partition, now as time series</span>
-      <span style="color:#cbd5e0;margin:0 0.5rem;">·</span>
-      <a href="https://joao97ribeiro.github.io/FLOATBench/" style="color:#718096;font-size:0.85rem;white-space:nowrap;">FLOATBench page →</a>
-    </div>
-
     <p class="has-text-centered" style="font-size:1.25rem;font-style:italic;color:#2d3748;margin-bottom:2rem;font-weight:500;">
       Does the model that wins at one sensor reconstruct the fatigue load along the whole tower?
     </p>
@@ -124,8 +93,8 @@
   <div class="container is-max-desktop">
     <h2 class="title is-3">Dataset</h2>
     <div class="content has-text-justified">
-      <p><strong>Operating envelope and simulation setup.</strong> The campaign of <a href="https://joao97ribeiro.github.io/FLOATBench/">FLOATBench</a> comprises 22 wind speeds and, at each, a 7 × 7 grid of 49 sea states in significant wave height <em>H<sub>s</sub></em> and peak period <em>T<sub>p</sub></em>, for 1,078 operating points. The IEA 22 MW turbine on a three-column semi-submersible is simulated with OpenFAST under IEC 61400-3-2 DLC 1.2, with aligned wind and waves. Each operating point has six realizations per tower, differing in the turbulence seed. A further 22 parked runs per tower, rotor parked and waves only, one at the median sea state of each wind speed, calibrate the physics baseline. Each run lasts 1,000 s at 10 Hz; evaluation uses the 400–1,000 s post-transient window (the scored window).</p>
-      <p><strong>Tower geometries.</strong> The campaign is repeated on three towers of equal height sharing platform, controller and mooring, for 19,404 simulations: the IEA 22 MW baseline <span class="tw-ref">REF</span> and the fatigue-aware redesigns <span class="tw-opt1">OPT1</span> and <span class="tw-opt2">OPT2</span> produced by <a href="https://joao97ribeiro.github.io/FLOAT/">FLOAT</a>. <span class="tw-ref">REF</span> is the flexible outlier (first fore-aft frequency 0.34 Hz against 0.57 and 0.54 Hz) and carries about 40 times the base lifetime damage of the two redesigns, so cross-tower shift comes at two levels.</p>
+      <p><strong>Operating envelope and simulation setup.</strong> The campaign of FLOATBench (cited in the paper) comprises 22 wind speeds and, at each, a 7 × 7 grid of 49 sea states in significant wave height <em>H<sub>s</sub></em> and peak period <em>T<sub>p</sub></em>, for 1,078 operating points. The IEA 22 MW turbine on a three-column semi-submersible is simulated with OpenFAST under IEC 61400-3-2 DLC 1.2, with aligned wind and waves. Each operating point has six realizations per tower, differing in the turbulence seed. A further 22 parked runs per tower, rotor parked and waves only, one at the median sea state of each wind speed, calibrate the physics baseline. Each run lasts 1,000 s at 10 Hz; evaluation uses the 400–1,000 s post-transient window (the scored window).</p>
+      <p><strong>Tower geometries.</strong> The campaign is repeated on three towers of equal height sharing platform, controller and mooring, for 19,404 simulations: the IEA 22 MW baseline <span class="tw-ref">REF</span> and the fatigue-aware redesigns <span class="tw-opt1">OPT1</span> and <span class="tw-opt2">OPT2</span> produced by FLOAT (cited in the paper). <span class="tw-ref">REF</span> is the flexible outlier (first fore-aft frequency 0.34 Hz against 0.57 and 0.54 Hz) and carries about 40 times the base lifetime damage of the two redesigns, so cross-tower shift comes at two levels.</p>
       <p><strong>Channels.</strong> Each simulation is an array of 10,001 samples by 37 channels: tower-top accelerations, raw and gravity-corrected (×4), SCADA signals (×4), platform motions (×6), wave elevation (×1), and fore-aft and side-side moments at 11 heights (×22).</p>
       <p><strong>Damage scoring.</strong> True and reconstructed moments are low-passed at 3 Hz and pass through the damage model that generated the FLOATBench labels: rainflow counting, the DNV-RP-C203 S–N curve and Miner's rule, with the radius and wall thickness of the section. The simulation campaign required about 19,400 CPU-hours across the three towers.</p>
     </div>
@@ -561,8 +530,34 @@ damage = tower.damage()          # sim_id x section_id</code></pre>
   </div>
 </section>
 
+<!-- ============ GET STARTED ============ -->
+<section class="section has-background-light" id="start">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3">Get Started</h2>
+    <div class="columns">
+      <div class="column is-half">
+        <div class="box">
+          <p class="title is-5"><i class="fas fa-code"></i> &nbsp;Code (anonymized link in the paper)</p>
+          <p>Data loaders, physics baseline, the 20 learned models, the evaluation harness and the scripts of every experiment of the paper.</p>
+        </div>
+      </div>
+      <div class="column is-half">
+        <div class="box">
+          <p class="title is-5"><i class="fas fa-database"></i> &nbsp;<a href="https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e">Review subset (anonymized)</a></p>
+          <p>22 simulations per tower in the release format, the complete tabular files, the trained checkpoints and the reference per-simulation results (355 MB). <a href="https://osf.io/download/6ab737febca12c92231409b9/?view_only=73f55c8d86214fe1b943ede5260ddf4e">Direct download</a>. The complete dataset (24.0 GB) is released on publication.</p>
+        </div>
+      </div>
+    </div>
+<pre><code># from the root of the code: download the review subset into data/FLOATSense
+python scripts/download/run.py --flagfile=scripts/download/config.cfg
+
+# read one simulation
+python -c "from floatsense import load_tower; t = load_tower('data/FLOATSense', 'opt2'); print(t.load(25).shape)"</code></pre>
+  </div>
+</section>
+
 <!-- ============ SCOPE ============ -->
-<section class="section has-background-light">
+<section class="section">
   <div class="container is-max-desktop">
     <h2 class="title is-3">Scope and Future Work</h2>
     <div class="content has-text-justified">
@@ -574,54 +569,10 @@ damage = tower.damage()          # sim_id x section_id</code></pre>
   </div>
 </section>
 
-<!-- ============ RESOURCES ============ -->
-<section class="section">
-  <div class="container is-max-desktop">
-    <h2 class="title is-3">Resources</h2>
-    <div class="columns is-multiline">
-      <div class="column is-half"><div class="box">
-        <p class="title is-5"><i class="fab fa-github"></i> &nbsp;<a href="https://github.com/Joao97ribeiro/FLOATSense">FLOATSense (code)</a></p>
-        <p>Loader, damage scorer, physics baseline, the 20 learned models, evaluation harness and the scripts behind every table and figure, driven by <code>--flagfile</code> configs. MIT license.</p>
-      </div></div>
-      <div class="column is-half"><div class="box">
-        <p class="title is-5"><i class="fas fa-database"></i> &nbsp;FLOATSense (dataset)</p>
-        <p>The 19,404 simulations of the three towers in Parquet, with metadata, sections, reference damage and the 66 parked runs. 24.0 GB, CC-BY-4.0. Coming soon on Hugging Face.</p>
-      </div></div>
-      <div class="column is-half"><div class="box">
-        <p class="title is-5"><i class="fas fa-layer-group"></i> &nbsp;<a href="https://joao97ribeiro.github.io/FLOATBench/">FLOATBench</a></p>
-        <p>The simulation campaign FLOATSense builds on: the same simulations, identifiers and regime-aware partition, with 582,120 tabular fatigue labels and their benchmark.</p>
-      </div></div>
-      <div class="column is-half"><div class="box">
-        <p class="title is-5"><i class="fas fa-drafting-compass"></i> &nbsp;<a href="https://joao97ribeiro.github.io/FLOAT/">FLOAT (design framework)</a></p>
-        <p>The fatigue-aware tower design framework that produced the OPT1 and OPT2 geometries; the towers are released as <a href="https://github.com/Joao97ribeiro/FLOAT-22-280-RWT-Semi">OpenFAST models</a>.</p>
-      </div></div>
-    </div>
-  </div>
-</section>
 
-<!-- ============ CITATION ============ -->
-<section class="section has-background-light">
-  <div class="container is-max-desktop">
-    <div class="level is-mobile" style="margin-bottom:1rem;">
-      <div class="level-left"><h2 class="title is-3" style="margin-bottom:0;">Citation</h2></div>
-      <div class="level-right">
-        <button id="copy-bibtex" class="button is-rounded is-dark" type="button" title="Copy BibTeX to clipboard">
-          <span class="icon"><i class="fas fa-copy"></i></span><span>Copy BibTeX</span>
-        </button>
-      </div>
-    </div>
-    <div class="bibtex-block">
-      <pre style="white-space:pre-wrap;"><code id="bibtex-content">@misc{ribeiro2026floatsense,
-      title={FLOATSense: A Time-Series Dataset and Benchmark for Fatigue Load Reconstruction on Floating Offshore Wind Turbine Towers},
-      author={João Alves Ribeiro and Bruno Alves Ribeiro and Francisco Pimenta and Sérgio M. O. Tavares and Faez Ahmed},
-      year={2026},
-}</code></pre>
-    </div>
-  </div>
-</section>
 
 <!-- ============ ACKNOWLEDGEMENTS ============ -->
-<section class="section">
+<section class="section has-background-light">
   <div class="container is-max-desktop">
     <h2 class="title is-3">Acknowledgements</h2>
     <div class="content has-text-justified">
@@ -632,7 +583,7 @@ damage = tower.damage()          # sim_id x section_id</code></pre>
 
 <footer class="footer">
   <div class="content has-text-centered">
-    <p>Page template adapted from the <a href="https://github.com/eliahuhorwitz/Academic-project-page-template">Academic Project Page Template</a>. Source on <a href="https://github.com/Joao97ribeiro/FLOATSense/tree/gh-pages">GitHub</a>.</p>
+    <p>Anonymized project page for review. Page template adapted from the Academic Project Page Template.</p>
   </div>
 </footer>
 
