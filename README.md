@@ -232,6 +232,17 @@ python -c "from floatsense import load_tower; \
 trained checkpoints, the reference per-simulation results of the paper
 and `compare.py`, which compares an evaluation run with them.
 
+Check the paper's per-simulation results with the released checkpoints
+(evaluation only, CPU, seconds):
+
+```bash
+mkdir -p outputs/review && cp -r data/FLOATSense/checkpoints/opt2/seed0 outputs/review/opt2
+python scripts/train/run.py --flagfile=scripts/train/config.cfg \
+    --tower=opt2 --test_split=review/test --run_training=False \
+    --models=tcn,mamba,naive --output_dir=outputs/review/opt2
+python data/FLOATSense/compare.py outputs/review/opt2 opt2
+```
+
 The configs expect the dataset at `data/FLOATSense`; change
 `--dataset_dir` otherwise.
 
