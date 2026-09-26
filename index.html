@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="stylesheet" href="static/css/style.css?v=4">
   <script defer src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
-  <script defer src="static/js/app.js?v=7"></script>
+  <script defer src="static/js/app.js?v=9"></script>
 </head>
 <body>
 
@@ -197,7 +197,7 @@
 <section class="section has-background-light" id="explorer">
   <div class="container is-max-desktop">
     <h2 class="title is-3">Dataset Explorer</h2>
-    <p class="subtitle is-6">One simulation per wind speed on each tower (the middle level of the wave grid, first realization): 66 simulations, the same <code>sim_id</code> on the three towers, all in the test split. The model inputs on top, the fore-aft moment at the 11 heights below (base dark red, top light); the scored window at 5 Hz. Drag to zoom, both plots follow.</p>
+    <p class="subtitle is-6">One simulation per wind speed on each tower (the middle level of the wave grid, first realization): 66 simulations, the same <code>sim_id</code> on the three towers, all in the test split. The model inputs on top; below, the fore-aft and side-side moments at the heights you pick (base dark red, top light). The scored window at 5 Hz. Pick the time window, the signals and the heights to show.</p>
     <p class="is-size-7 has-text-grey" id="ex-source" style="margin-top:-0.75rem;margin-bottom:1rem;"><span class="icon"><i class="fas fa-spinner fa-spin"></i></span> Loading the time series…</p>
 
     <div class="box">
@@ -224,8 +224,38 @@
       <dl class="sim-card" id="sim-card"></dl>
     </div>
 
-    <div class="box"><div id="plot-inputs" class="plot" style="height:560px;"></div></div>
-    <div class="box"><div id="plot-targets" class="plot" style="height:440px;"></div></div>
+    <div class="box">
+      <div class="columns is-multiline is-vcentered" style="margin-bottom:0;">
+        <div class="column is-narrow">
+          <label class="label is-small">Time window [s]</label>
+          <div class="field has-addons" style="margin-bottom:0;">
+            <p class="control"><input class="input is-small" type="number" id="tw-from" min="400" max="1000" step="1" value="400" style="width:6rem;" aria-label="Window start"></p>
+            <p class="control"><input class="input is-small" type="number" id="tw-to" min="400" max="1000" step="1" value="1000" style="width:6rem;" aria-label="Window end"></p>
+            <p class="control"><button type="button" class="button is-small is-dark" id="tw-apply">Apply</button></p>
+          </div>
+        </div>
+        <div class="column is-narrow">
+          <label class="label is-small">Window length</label>
+          <div class="buttons has-addons" id="tw-presets" style="margin-bottom:0;">
+            <button type="button" class="button is-small" data-w="0">Full (600 s)</button>
+            <button type="button" class="button is-small" data-w="200">200 s</button>
+            <button type="button" class="button is-small" data-w="60">60 s</button>
+            <button type="button" class="button is-small" data-w="10">10 s</button>
+          </div>
+        </div>
+      </div>
+      <p class="how" style="margin-top:0;">Applies to both plots below; zooming in either plot also moves it.</p>
+    </div>
+    <div class="box">
+      <label class="label is-small">Signals</label>
+      <div class="chips" id="input-chips" role="group" aria-label="Signals to show" style="margin-top:0;margin-bottom:0.5rem;"></div>
+      <div id="plot-inputs" class="plot" style="height:560px;"></div>
+    </div>
+    <div class="box">
+      <label class="label is-small">Heights</label>
+      <div class="chips" id="height-chips" role="group" aria-label="Heights to show" style="margin-top:0;margin-bottom:0.5rem;"></div>
+      <div id="plot-targets" class="plot" style="height:520px;"></div>
+    </div>
 
     <div class="columns" style="margin-top:0.5rem;">
       <div class="column is-7">

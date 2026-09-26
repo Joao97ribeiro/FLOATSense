@@ -23,6 +23,24 @@ const MODEL_COLOR = {tcn: NAVY, prob_tcn: RED, lstm: CYAN, transformer: TAUPE, s
   itransformer: "#aaaaaa", dlinear: "#d2d2d2", chronos: CORAL, hybrid: CORAL};
 const MODEL_DASH = {mamba: "dash", naive: "dot", hybrid: "dash"};
 const MOMENT_SCALE = [[0, NAVY], [0.5, "#f7f7f7"], [1, RED]];
+// Height colors: base RED to top RED_LIGHT, the height gradient of the paper figures.
+function heightColor(k) { const a = [176, 44, 39], b = [240, 179, 176], f = k / 10;
+  return `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * f)).join(",")})`; }
+function heightChips() {
+  $("height-chips").innerHTML = GAUGE.map((g, k) => `<button type="button" class="chip" data-k="${k}" aria-pressed="${st.heights.includes(k)}"><span class="dot" style="background:${heightColor(k)}"></span>${g}</button>`).join("");
+}
+const INPUTS = [["tower_top_afa_mod", "Accel. [m/s²]", NAVY, "Accelerometer (input)"], ["wind_speed", "Wind [m/s]", SCADA, "Wind speed (input)"],
+  ["rotor_speed", "Rotor [rpm]", SCADA, "Rotor speed (input)"], ["blade_pitch", "Pitch [deg]", SCADA, "Blade pitch (input)"],
+  ["wave_elev", "Wave [m]", CYAN, "Wave elevation"], ["plat_pitch", "Platform pitch [deg]", CYAN, "Platform pitch"]];
+function inputChips() {
+  $("input-chips").innerHTML = INPUTS.map(([c, , col, label]) => `<button type="button" class="chip" data-c="${c}" aria-pressed="${st.inputs.includes(c)}"><span class="dot" style="background:${col}"></span>${label}</button>`).join("");
+}
+function setWindow(r) {
+  let [a, b] = r.map(Number); if (!(a < b)) return;
+  a = Math.max(400, a); b = Math.min(1000, b); st.xr = [a, b];
+  $("tw-from").value = Math.round(a); $("tw-to").value = Math.round(b);
+  Plotly.relayout("plot-inputs", {"xaxis.range": st.xr}); Plotly.relayout("plot-targets", {"xaxis.range": st.xr});
+}
 const GAUGE = ["Base", "Gauge 1", "Gauge 2", "Gauge 3", "Gauge 4", "Gauge 5", "Gauge 6", "Gauge 7", "Gauge 8", "Gauge 9", "Top"];
 const GROUP_TAG = {"In-train": "tag-it", "Interpolate": "tag-ip", "Extrapolate": "tag-ex"};
 const MET = [["r2", "R²"], ["within2", "×2"], ["median_ratio", "Ratio"], ["within_corr", "Within-corr"], ["mre", "MRE"]];
@@ -35,16 +53,24 @@ const $ = id => document.getElementById(id);
 const L = o => Object.assign({}, LAYOUT, o);
 
 let D, S, time;
-const st = {tower: 2, sim: 11, gauge: 10, sec: "top", xr: null, models: ["tcn", "prob_tcn", "transformer", "naive"],
+const st = {tower: 2, sim: 11, heights: [0, 5, 10], inputs: ["tower_top_afa_mod", "wind_speed", "rotor_speed", "blade_pitch", "wave_elev", "plat_pitch"], xr: [400, 1000], models: ["tcn", "prob_tcn", "transformer", "naive"],
   proto: "within", lbTower: "mean", metric: "r2", height: 10, search: "", fams: new Set(), sel: "tcn"};
 
 // ---------- explorer ----------
+const CACHE = {};
+async function loadTower(t) {
+  if (!CACHE[t]) CACHE[t] = fetch(`static/data/series_${TOWERS[t]}.txt`).then(r => r.text()).then(txt => {
+    const bin = atob(txt.trim()), u = new Uint8Array(bin.length);
+    for (let j = 0; j < bin.length; j++) u[j] = bin.charCodeAt(j);
+    return new Int16Array(u.buffer); });
+  return CACHE[t];
+}
 function series(t, i) {
-  const n = D.n, nc = D.channels.length, [lo, sc] = D.scales[`${TOWERS[t]}/${D.ids[i]}`];
-  const block = (t * D.ids.length + i) * nc * n, out = {};
+  const n = D.n, nc = D.channels.length, [lo, sc] = D.scales[`${TOWERS[t]}/${D.ids[i]}`], A = S[t];
+  const block = i * nc * n, out = {};
   D.channels.forEach((c, k) => {
     const a = new Float32Array(n), off = block + k * n;
-    for (let j = 0; j < n; j++) a[j] = (S[off + j] + 32500) * sc[k] + lo[k];
+    for (let j = 0; j < n; j++) a[j] = (A[off + j] + 32500) * sc[k] + lo[k];
     out[c] = a;
   });
   return out;
@@ -63,43 +89,42 @@ function simCard() {
 
 function drawSeries() {
   const x = series(st.tower, st.sim);
-  const rows = [["tower_top_afa_mod", "Accel. [m/s²]", NAVY], ["wind_speed", "Wind [m/s]", SCADA], ["rotor_speed", "Rotor [rpm]", SCADA],
-    ["blade_pitch", "Pitch [deg]", SCADA], ["wave_elev", "Wave [m]", CYAN], ["plat_pitch", "Platform pitch [deg]", CYAN]];
-  const n = rows.length, gap = 0.035, h = (1 - gap * (n - 1)) / n, lay = L({margin: {l: 80, r: 20, t: 24, b: 50}});
+  const rows = INPUTS.filter(r => st.inputs.includes(r[0]));
+  const n = rows.length, gap = n > 1 ? 0.05 : 0, h = (1 - gap * (n - 1)) / n, lay = L({margin: {l: 80, r: 20, t: 24, b: 50}});
   const tr = rows.map(([c, name, col], k) => ({x: time, y: x[c], type: "scattergl", mode: "lines", line: {width: 1, color: col},
     xaxis: "x", yaxis: `y${k ? k + 1 : ""}`, hovertemplate: `%{x:.1f} s<br>${name} %{y:.3f}<extra></extra>`}));
   rows.forEach(([, name], k) => { lay[`yaxis${k ? k + 1 : ""}`] = AX({domain: [1 - (k + 1) * h - k * gap, 1 - k * h - k * gap], title: {text: name, font: {size: 10}}, nticks: 3}); });
-  lay.xaxis = AX({anchor: `y${n}`, title: {text: "Time [s]"}, range: st.xr || [400, 1000]});
-  lay.annotations = [
-    {text: "<b>Model inputs</b>", xref: "paper", yref: "paper", x: 0, y: 1, xanchor: "left", yanchor: "bottom", showarrow: false, font: {size: 11, color: NAVY}},
-    {text: "<b>Context (not inputs)</b>", xref: "paper", yref: "paper", x: 0, y: 2 * h + gap, xanchor: "left", yanchor: "bottom", showarrow: false, font: {size: 11, color: CYAN}}];
+  lay.xaxis = AX({anchor: `y${n}`, title: {text: "Time [s]"}, range: st.xr});
   Plotly.react("plot-inputs", tr, lay, CFG);
 
-  const mom = D.channels.slice(8), nh = mom.length;
-  const shade = k => { const a = [176, 44, 39], b = [240, 179, 176], f = k / (nh - 1);
-    return `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * f)).join(",")})`; };  // base RED to top RED_LIGHT, as in the paper
+  const H = ["tower_bottom", "tower_1", "tower_2", "tower_3", "tower_4", "tower_5", "tower_6", "tower_7", "tower_8", "tower_9", "tower_top"];
   const T = L({margin: {l: 80, r: 20, t: 24, b: 50}, showlegend: true,
-    legend: {orientation: "h", x: 1, xanchor: "right", y: 0.37, yanchor: "bottom", font: {size: 10}, bgcolor: "rgba(255,255,255,0.7)"}});
-  T.yaxis = AX({domain: [0.45, 1], title: {text: "Gauge height [m]", font: {size: 10}}});
-  T.yaxis2 = AX({domain: [0, 0.37], title: {text: "M<sub>FA</sub> [MN m]", font: {size: 10}}});
-  T.xaxis = AX({anchor: "y2", title: {text: "Time [s]"}, range: st.xr || [400, 1000]});
-  T.annotations = [{text: "<b>Target: fore-aft moment along the tower</b>", xref: "paper", yref: "paper", x: 0, y: 1, xanchor: "left", yanchor: "bottom", showarrow: false, font: {size: 11, color: RED}}];
-  const t2 = [{type: "heatmap", x: time, y: D.heights, z: mom.map(c => Array.from(x[c])), xaxis: "x", yaxis: "y", colorscale: MOMENT_SCALE, zmid: 0, showlegend: false,
-      colorbar: {title: {text: "MN m", side: "right", font: {size: 10}}, thickness: 10, len: 0.55, y: 0.725, tickfont: {size: 9}},
-      hovertemplate: "%{x:.1f} s · %{y:.1f} m<br>%{z:.1f} MN m<extra></extra>"}];
-  mom.forEach((c, k) => t2.push({x: time, y: x[c], type: "scattergl", mode: "lines", line: {width: 1, color: shade(k)}, xaxis: "x", yaxis: "y2",
-    name: GAUGE[k], showlegend: k === 0 || k === nh - 1, hovertemplate: `${GAUGE[k]} %{y:.1f}<extra></extra>`}));
+    legend: {orientation: "h", x: 0, y: 1.08, yanchor: "bottom", font: {size: 10}}});
+  T.yaxis = AX({domain: [0.54, 1], title: {text: "Fore-aft M<sub>FA</sub> [MN m]", font: {size: 10}}});
+  T.yaxis2 = AX({domain: [0, 0.46], title: {text: "Side-side M<sub>SS</sub> [MN m]", font: {size: 10}}});
+  T.xaxis = AX({anchor: "y2", title: {text: "Time [s]"}, range: st.xr});
+  T.annotations = [
+    {text: "<b>Target: fore-aft moment (scored)</b>", xref: "paper", yref: "paper", x: 1, y: 1, xanchor: "right", yanchor: "bottom", showarrow: false, font: {size: 11, color: RED}},
+    {text: "<b>Side-side moment (released, not scored)</b>", xref: "paper", yref: "paper", x: 1, y: 0.46, xanchor: "right", yanchor: "bottom", showarrow: false, font: {size: 11, color: RED}}];
+  const t2 = [];
+  st.heights.slice().sort((a, b) => a - b).forEach(k => {
+    const col = heightColor(k);
+    t2.push({x: time, y: x[`${H[k]}_mfa`], type: "scattergl", mode: "lines", line: {width: 1, color: col}, xaxis: "x", yaxis: "y", name: GAUGE[k], legendgroup: `h${k}`,
+      hovertemplate: `${GAUGE[k]} FA %{y:.1f}<extra></extra>`});
+    t2.push({x: time, y: x[`${H[k]}_mss`], type: "scattergl", mode: "lines", line: {width: 1, color: col}, xaxis: "x", yaxis: "y2", name: GAUGE[k], legendgroup: `h${k}`, showlegend: false,
+      hovertemplate: `${GAUGE[k]} SS %{y:.1f}<extra></extra>`});
+  });
   Plotly.react("plot-targets", t2, T, CFG);
 }
 
-function syncZoom(src, dst) {
+function syncZoom(src) {
   $(src).on("plotly_relayout", ev => {
     let r = null;
     if (ev["xaxis.range[0]"] !== undefined) r = [ev["xaxis.range[0]"], ev["xaxis.range[1]"]];
     else if (ev["xaxis.range"]) r = ev["xaxis.range"];
     else if (ev["xaxis.autorange"]) r = [400, 1000];
-    if (!r || (st.xr && r[0] === st.xr[0] && r[1] === st.xr[1])) return;
-    st.xr = r; Plotly.relayout(dst, {"xaxis.range": r});
+    if (!r || (Math.abs(r[0] - st.xr[0]) < 1e-6 && Math.abs(r[1] - st.xr[1]) < 1e-6)) return;
+    setWindow(r);
   });
 }
 
@@ -124,7 +149,7 @@ function drawProfile() {
 }
 
 function selectSim(i) { st.sim = i; simCard(); drawSeries(); drawProfile(); }
-function selectTower(t) { st.tower = t; $("ex-tower").value = t; simCard(); drawSeries(); drawProfile(); }
+async function selectTower(t) { st.tower = t; $("ex-tower").value = t; S[t] = await loadTower(t); simCard(); drawSeries(); drawProfile(); }
 
 // ---------- regime grid ----------
 function regimeGrid() {
@@ -225,16 +250,31 @@ async function init() {
   $("copy-bibtex").onclick = () => { const txt = $("bibtex-content").textContent;
     (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).catch(() => {
       const r = document.createRange(); r.selectNodeContents($("bibtex-content")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }); };
-  const [d, b] = await Promise.all([
-    fetch("static/data/data.json").then(r => r.json()),
-    fetch("static/data/series.txt").then(r => r.text()).then(t => { const bin = atob(t.trim()), u = new Uint8Array(bin.length);
-      for (let j = 0; j < bin.length; j++) u[j] = bin.charCodeAt(j); return u.buffer; })]);
-  D = d; S = new Int16Array(b);
+  D = await fetch("static/data/data.json").then(r => r.json());
+  S = {}; S[st.tower] = await loadTower(st.tower);
   time = Float32Array.from({length: D.n}, (_, j) => D.t0 + j * D.dt);
-  $("ex-source").innerHTML = `<span class="icon"><i class="fas fa-check-circle"></i></span> Loaded ${D.ids.length * 3} simulations (${D.ids.length} per tower), 19 channels at 5 Hz.`;
+  $("ex-source").innerHTML = `<span class="icon"><i class="fas fa-check-circle"></i></span> ${D.ids.length} simulations per tower, inputs and fore-aft and side-side moments at 5 Hz.`;
 
   $("ex-sim").innerHTML = D.ids.map((s, k) => { const o = D.ops[s]; return `<option value="${k}">${s} · ${o.wind.toFixed(1)} m/s · Hs ${o.hs.toFixed(2)} m</option>`; }).join("");
   $("ex-tower").onchange = e => selectTower(+e.target.value);
+  heightChips(); inputChips();
+  $("input-chips").onclick = e => { const b = e.target.closest(".chip"); if (!b) return; const c = b.dataset.c, i = st.inputs.indexOf(c);
+    if (i >= 0) { if (st.inputs.length > 1) st.inputs.splice(i, 1); } else st.inputs.push(c);
+    inputChips(); drawSeries(); };
+  $("tw-apply").onclick = () => setWindow([$("tw-from").value, $("tw-to").value]);
+  ["tw-from", "tw-to"].forEach(id => $(id).addEventListener("keydown", e => { if (e.key === "Enter") setWindow([$("tw-from").value, $("tw-to").value]); }));
+  $("tw-presets").onclick = e => { const b = e.target.closest("button"); if (!b) return; const w = +b.dataset.w;
+    if (!w) setWindow([400, 1000]); else { const c = (st.xr[0] + st.xr[1]) / 2; let a = Math.max(400, c - w / 2); a = Math.min(a, 1000 - w); setWindow([a, a + w]); } };
+  $("height-chips").onclick = e => { const b = e.target.closest(".chip"); if (!b) return; const k = +b.dataset.k, i = st.heights.indexOf(k);
+    if (i >= 0) { if (st.heights.length > 1) st.heights.splice(i, 1); } else st.heights.push(k);
+    heightChips(); inputChips();
+  $("input-chips").onclick = e => { const b = e.target.closest(".chip"); if (!b) return; const c = b.dataset.c, i = st.inputs.indexOf(c);
+    if (i >= 0) { if (st.inputs.length > 1) st.inputs.splice(i, 1); } else st.inputs.push(c);
+    inputChips(); drawSeries(); };
+  $("tw-apply").onclick = () => setWindow([$("tw-from").value, $("tw-to").value]);
+  ["tw-from", "tw-to"].forEach(id => $(id).addEventListener("keydown", e => { if (e.key === "Enter") setWindow([$("tw-from").value, $("tw-to").value]); }));
+  $("tw-presets").onclick = e => { const b = e.target.closest("button"); if (!b) return; const w = +b.dataset.w;
+    if (!w) setWindow([400, 1000]); else { const c = (st.xr[0] + st.xr[1]) / 2; let a = Math.max(400, c - w / 2); a = Math.min(a, 1000 - w); setWindow([a, a + w]); } }; drawSeries(); };
   $("ex-sim").onchange = e => selectSim(+e.target.value);
   $("ex-wind").oninput = e => selectSim(+e.target.value);
 
@@ -245,7 +285,7 @@ async function init() {
     if (k >= 0) st.models.splice(k, 1); else st.models.push(m); drawProfile(); };
 
   simCard(); drawSeries(); drawProfile(); regimeGrid();
-  syncZoom("plot-inputs", "plot-targets"); syncZoom("plot-targets", "plot-inputs");
+  syncZoom("plot-inputs"); syncZoom("plot-targets");
 
   towerOptions(); families();
   $("lb-protocol").onchange = e => { st.proto = e.target.value; if (!D.lb[st.proto][st.sel]) st.sel = "tcn"; towerOptions(); drawBoard(); };
