@@ -29,9 +29,14 @@ function heightColor(k) { const a = [176, 44, 39], b = [240, 179, 176], f = k / 
 function heightChips() {
   $("height-chips").innerHTML = GAUGE.map((g, k) => `<button type="button" class="chip" data-k="${k}" aria-pressed="${st.heights.includes(k)}"><span class="dot" style="background:${heightColor(k)}"></span>${g}</button>`).join("");
 }
-const INPUTS = [["tower_top_afa_mod", "Accel. [m/s²]", NAVY, "Accelerometer (input)"], ["wind_speed", "Wind [m/s]", SCADA, "Wind speed (input)"],
-  ["rotor_speed", "Rotor [rpm]", SCADA, "Rotor speed (input)"], ["blade_pitch", "Pitch [deg]", SCADA, "Blade pitch (input)"],
-  ["wave_elev", "Wave [m]", CYAN, "Wave elevation"], ["plat_pitch", "Platform pitch [deg]", CYAN, "Platform pitch"]];
+const INPUTS = [
+  ["tower_top_afa_mod", "FA accel. corr. [m/s²]", NAVY, "FA accel., corrected (input)"], ["tower_top_afa", "FA accel. [m/s²]", NAVY, "FA accel., raw"],
+  ["tower_top_ass_mod", "SS accel. corr. [m/s²]", "#5b7fa6", "SS accel., corrected"], ["tower_top_ass", "SS accel. [m/s²]", "#5b7fa6", "SS accel., raw"],
+  ["wind_speed", "Wind [m/s]", SCADA, "Wind speed (input)"], ["rotor_speed", "Rotor [rpm]", SCADA, "Rotor speed (input)"],
+  ["blade_pitch", "Pitch [deg]", SCADA, "Blade pitch (input)"], ["electrical_power", "Power [kW]", SCADA, "Generator power"],
+  ["plat_surge", "Surge [m]", CYAN, "Platform surge"], ["plat_sway", "Sway [m]", CYAN, "Platform sway"], ["plat_heave", "Heave [m]", CYAN, "Platform heave"],
+  ["plat_roll", "Roll [deg]", CYAN, "Platform roll"], ["plat_pitch", "Platform pitch [deg]", CYAN, "Platform pitch"], ["plat_yaw", "Yaw [deg]", CYAN, "Platform yaw"],
+  ["wave_elev", "Wave [m]", CYAN, "Wave elevation"]];
 function inputChips() {
   $("input-chips").innerHTML = INPUTS.map(([c, , col, label]) => `<button type="button" class="chip" data-c="${c}" aria-pressed="${st.inputs.includes(c)}"><span class="dot" style="background:${col}"></span>${label}</button>`).join("");
 }
@@ -53,7 +58,7 @@ const $ = id => document.getElementById(id);
 const L = o => Object.assign({}, LAYOUT, o);
 
 let D, S, time;
-const st = {tower: 2, sim: 11, heights: [0, 5, 10], inputs: ["tower_top_afa_mod", "wind_speed", "rotor_speed", "blade_pitch", "wave_elev", "plat_pitch"], xr: [400, 1000], models: ["tcn", "prob_tcn", "transformer", "naive"],
+const st = {tower: 2, sim: 11, heights: [0, 5, 10], inputs: ["tower_top_afa_mod", "wind_speed", "rotor_speed", "blade_pitch", "plat_pitch", "wave_elev"], xr: [400, 1000], models: ["tcn", "prob_tcn", "transformer", "naive"],
   proto: "within", lbTower: "mean", metric: "r2", height: 10, search: "", fams: new Set(), sel: "tcn"};
 
 // ---------- explorer ----------
@@ -90,7 +95,8 @@ function simCard() {
 function drawSeries() {
   const x = series(st.tower, st.sim);
   const rows = INPUTS.filter(r => st.inputs.includes(r[0]));
-  const n = rows.length, gap = n > 1 ? 0.05 : 0, h = (1 - gap * (n - 1)) / n, lay = L({margin: {l: 80, r: 20, t: 24, b: 50}});
+  const n = rows.length, gap = n > 1 ? 0.2 / n : 0, h = (1 - gap * (n - 1)) / n, lay = L({margin: {l: 80, r: 20, t: 16, b: 50}});
+  $("plot-inputs").style.height = `${Math.max(260, 90 * n + 90)}px`;
   const tr = rows.map(([c, name, col], k) => ({x: time, y: x[c], type: "scattergl", mode: "lines", line: {width: 1, color: col},
     xaxis: "x", yaxis: `y${k ? k + 1 : ""}`, hovertemplate: `%{x:.1f} s<br>${name} %{y:.3f}<extra></extra>`}));
   rows.forEach(([, name], k) => { lay[`yaxis${k ? k + 1 : ""}`] = AX({domain: [1 - (k + 1) * h - k * gap, 1 - k * h - k * gap], title: {text: name, font: {size: 10}}, nticks: 3}); });
