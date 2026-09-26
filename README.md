@@ -22,7 +22,8 @@ on three 22 MW tower geometries: 37 channels per simulation, with the
 accelerometer and SCADA signals as inputs and the fore-aft bending
 moment at **eleven heights** as target. A reconstruction is scored by
 the fatigue damage it implies, not by waveform error. For review, a fixed
-subset (22 simulations per tower, the complete tabular files and the
+subset (47 simulations per tower, one per wind speed plus all six
+realizations of five operating points, the complete tabular files and the
 trained checkpoints) is available through an anonymized link,
 [https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e](https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e); the complete dataset (24.0 GB) is released on publication.
 This repository contains the benchmark code, the physics baseline, the
@@ -215,8 +216,10 @@ and wall thickness of that section.
 ### Download (review subset)
 
 One command downloads the review subset from its anonymized link, checks
-its SHA-256 and unpacks it into `data/FLOATSense` (release layout, 22
-simulations per tower: `sim_id = 25 + 294 k`, k = 0..21):
+its SHA-256 and unpacks it into `data/FLOATSense` (release layout, 47
+simulations per tower: one per wind speed, `sim_id = 25 + 294 k`,
+k = 0..21, and the realizations 2 to 6 of the operating points at 5.5,
+10.5, 14.5, 21.5 and 24.5 m/s; `conditions.csv` lists them):
 
 ```bash
 python scripts/download/run.py --flagfile=scripts/download/config.cfg
@@ -229,11 +232,13 @@ python -c "from floatsense import load_tower; \
 (Manual alternative: download `FLOATSense-review.zip` from
 [https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e](https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e), unzip it, and
 `mv FLOATSense-review data/FLOATSense`.) The subset also holds the
-trained checkpoints, the reference per-simulation results of the paper
-and `compare.py`, which compares an evaluation run with them.
+trained checkpoints, the reference per-simulation results of the paper,
+`compare.py`, which compares an evaluation run with them, and `rho_wc.py`,
+which computes the within-condition correlation on the five operating
+points with six realizations.
 
 Check the paper's per-simulation results with the released checkpoints
-(evaluation only, CPU, seconds):
+(evaluation only, CPU, a few minutes):
 
 ```bash
 mkdir -p outputs/review && cp -r data/FLOATSense/checkpoints/opt2/seed0 outputs/review/opt2
@@ -241,6 +246,7 @@ python scripts/train/run.py --flagfile=scripts/train/config.cfg \
     --tower=opt2 --test_split=review/test --run_training=False \
     --models=tcn,mamba,naive --output_dir=outputs/review/opt2
 python data/FLOATSense/compare.py outputs/review/opt2 opt2
+python data/FLOATSense/rho_wc.py outputs/review/opt2 opt2
 ```
 
 The configs expect the dataset at `data/FLOATSense`; change

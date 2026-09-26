@@ -2,8 +2,9 @@
 
 Fetches the subset archive, checks its SHA-256 and unpacks it to
 ``data/FLOATSense/`` in the release layout: ``{ref,opt1,opt2}/`` with the
-series of 22 simulations per tower and the complete tabular files,
-``parked.parquet``, ``checkpoints/``, ``reference/`` and ``compare.py``.
+series of 47 simulations per tower and the complete tabular files,
+``parked.parquet``, ``checkpoints/``, ``reference/``, ``compare.py``,
+``rho_wc.py`` and ``conditions.csv``.
 Standard library only, apart from absl for the flags.
 
 Run::
@@ -78,7 +79,7 @@ def main(_):
         return
     with tempfile.TemporaryDirectory() as tmp:
         archive = pathlib.Path(tmp) / "FLOATSense-review.zip"
-        logging.info("Downloading the review subset (355 MB) ...")
+        logging.info("Downloading the review subset (448 MB) ...")
         sha = _download(FLAGS.url, archive)
         if FLAGS.sha256 and sha != FLAGS.sha256:
             raise SystemExit(f"Checksum mismatch: {sha} "
