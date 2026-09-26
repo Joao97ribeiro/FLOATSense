@@ -152,11 +152,14 @@ git clone https://github.com/Joao97ribeiro/FLOATSense
 cd FLOATSense
 conda env create -f environment.yml
 conda activate floatsense
+pip install --no-deps momentfm==0.1.4   # MOMENT, only for --models=moment*
 ```
 
 This installs Python 3.11, PyTorch 2.7.1 with CUDA 12.8, and the
 dependencies of `requirements.txt`, including the pretrained encoders
-Chronos and MOMENT. TimesFM is not included: `--models=timesfm` and
+Chronos. MOMENT is installed without its dependencies, whose pins clash
+with the rest (`pip install --no-deps momentfm==0.1.4`, the last line
+above). TimesFM is not included: `--models=timesfm` and
 `timesfm_ft` need the TimesFM 2.5 PyTorch package installed separately
 from [google-research/timesfm](https://github.com/google-research/timesfm)
 (it provides `timesfm.timesfm_2p5_torch`).
@@ -168,6 +171,7 @@ git clone https://github.com/Joao97ribeiro/FLOATSense
 cd FLOATSense
 pip install torch  # torch==2.7.1 for the paper setting
 pip install -r requirements.txt
+pip install --no-deps momentfm==0.1.4   # MOMENT, only for --models=moment*
 ```
 
 ## Dataset
@@ -296,8 +300,8 @@ outputs/
 │   ├── damage_comparison_<model>_fa.csv          true and reconstructed damage (and variance ratio) at the 11 gauges
 │   ├── damage_comparison_<model>_fa_zs_<t>.csv   the same, zero-shot on tower <t>
 │   └── summary_<model>_fa[_zs_<t>].json          R², median ratio and within-2 at the base (tower_bottom)
-├── fewshot/<source>_to_<target>/draw<k>/    adaptation runs (same files as within/)
-├── ablation/<input set>/<tower>/           sensor-ablation runs (same files as within/)
+├── fewshot/<source>_to_<target>/draw<k>/seed<s>/   adaptation runs (same files as within/)
+├── ablation/<input set>/<tower>/seed<k>/           sensor-ablation runs (same files as within/)
 ├── val_select/<tower>/seed<k>/             model-selection runs scored on val/val
 └── tables/results.csv                 every file x gauge x regime cell: metrics, 95% intervals,
                                        direction and num_dropped (simulations without a positive
@@ -322,7 +326,7 @@ python scripts/train/run.py --flagfile=scripts/train/config.cfg \
     --tower=ref --models=tcn --batch_size=4 \
     --train_split=fewshot/train_10_draw0 \
     --init_checkpoint_dir=outputs/within/opt2/seed0 \
-    --output_dir=outputs/fewshot/opt2_to_ref/draw0
+    --output_dir=outputs/fewshot/opt2_to_ref/draw0/seed0
 
 # Physics ten-shot (constants recalibrated on 10 ref simulations; the paper's
 # cross-tower physics) -> outputs/physics/ref_fs10_draw0
@@ -336,7 +340,7 @@ python scripts/physics/run.py --flagfile=scripts/physics/config.cfg --tower=ref 
 # Sensor ablation: both accelerometer axes and SCADA
 python scripts/train/run.py --flagfile=scripts/train/config.cfg --tower=opt2 --models=tcn \
     --input_channels=tower_top_afa_mod,tower_top_ass_mod,rotor_speed,blade_pitch,wind_speed \
-    --output_dir=outputs/ablation/twoaxis/opt2
+    --output_root=outputs/ablation/twoaxis
 
 # Model selection on the held-out validation split (scored on val/val, which
 # has no regime cells: the benchmark reports it under the 'all' group only)
@@ -356,23 +360,25 @@ input set too: `stat:<channel>:<mean|std|min|max>` reads
 
 All runs add `--flagfile=scripts/train/config.cfg --tower=<tower> --models=<model> --seed=<k>`
 (seeds 0, 1, 2) to the flags below; Mamba always adds `--learning_rate=3e-4`.
-`$SCADA` is `rotor_speed,blade_pitch,wind_speed`.
+`$SCADA` is `rotor_speed,blade_pitch,wind_speed`. Each experiment writes
+to its own folder, `<output root>/<tower>/seed<k>` (the last column), so
+runs never overwrite each other and the benchmark tells them apart.
 
-| Experiment | Extra flags |
-| --- | --- |
-| Within tower (+ zero-shot) | `--eval_towers=<the other two>` |
-| Longer budgets | `--num_epochs=150` or `--num_epochs=300` |
-| Ten-shot | `--train_split=fewshot/train_10_draw<k> --batch_size=4 --init_checkpoint_dir=outputs/within/<source>/seed0` |
-| Few-shot budget curve (5 to 100 simulations: 50 to 1,250 steps) | as ten-shot with `--train_split=fewshot/train_<n>_draw0`, n = 5, 10, 25, 50, 100 |
-| Accelerometer alone | `--input_channels=tower_top_afa_mod` |
-| SCADA alone | `--input_channels=$SCADA` |
-| Two accelerometer axes | `--input_channels=tower_top_afa_mod,tower_top_ass_mod,$SCADA` |
-| + platform motions | `--input_channels=tower_top_afa_mod,$SCADA,plat_surge,plat_sway,plat_heave,plat_roll,plat_pitch,plat_yaw` |
-| + generator power | `--input_channels=tower_top_afa_mod,$SCADA,electrical_power` (two axes: add `tower_top_ass_mod` after the first) |
-| Field SCADA | `--input_channels=tower_top_afa_mod,stat:rotor_speed:mean,stat:rotor_speed:std,stat:blade_pitch:mean,stat:blade_pitch:std,stat:wind_speed:mean,stat:wind_speed:std` |
-| Model selection | `--train_split=val/train --test_split=val/val` (hybrids: physics run first with `--train_split=val/train`) |
-| Top only (diagnostic) | `--height_targets=False --target_channel=tower_top_mfa` |
-| Damage-aware loss (diagnostic) | `--loss=damage --damage_loss_weight=1.0` |
+| Experiment | Extra flags | Output |
+| --- | --- | --- |
+| Within tower (+ zero-shot) | `--eval_towers=<the other two>` | default `outputs/within` |
+| Longer budgets | `--num_epochs=150` (or 300) | `--output_root=outputs/epochs150` |
+| Ten-shot | `--train_split=fewshot/train_10_draw<k> --batch_size=4 --init_checkpoint_dir=outputs/within/<source>/seed0` | `--output_dir=outputs/fewshot/<source>_to_<tower>/draw<k>/seed<s>` |
+| Few-shot budget curve (5 to 100 simulations: 50 to 1,250 steps) | as ten-shot with `--train_split=fewshot/train_<n>_draw0`, n = 5, 10, 25, 50, 100 | `--output_dir=outputs/budget/<source>_to_<tower>/<n>/seed<s>` |
+| Accelerometer alone | `--input_channels=tower_top_afa_mod` | `--output_root=outputs/ablation/accel` |
+| SCADA alone | `--input_channels=$SCADA` | `--output_root=outputs/ablation/scada` |
+| Two accelerometer axes | `--input_channels=tower_top_afa_mod,tower_top_ass_mod,$SCADA` | `--output_root=outputs/ablation/twoaxis` |
+| + platform motions | `--input_channels=tower_top_afa_mod,$SCADA,plat_surge,plat_sway,plat_heave,plat_roll,plat_pitch,plat_yaw` | `--output_root=outputs/ablation/platform` |
+| + generator power | `--input_channels=tower_top_afa_mod,$SCADA,electrical_power` (two axes: add `tower_top_ass_mod` after the first) | `--output_root=outputs/ablation/power` |
+| Field SCADA | `--input_channels=tower_top_afa_mod,stat:rotor_speed:mean,stat:rotor_speed:std,stat:blade_pitch:mean,stat:blade_pitch:std,stat:wind_speed:mean,stat:wind_speed:std` | `--output_root=outputs/ablation/fieldscada` |
+| Model selection | `--train_split=val/train --test_split=val/val` (hybrids: physics run first with `--train_split=val/train`) | `--output_root=outputs/val_select` |
+| Top only (diagnostic; not for the hybrids) | `--height_targets=False --target_channel=tower_top_mfa` | `--output_root=outputs/toponly` |
+| Damage-aware loss (diagnostic) | `--loss=damage --damage_loss_weight=1.0` | `--output_root=outputs/damageloss` |
 
 The hybrid models need the physics of the same split first
 (`scripts/physics/run.py --tower=<tower> --train_split=<split>`); the

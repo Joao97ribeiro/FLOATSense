@@ -12,8 +12,8 @@ rainflow==3.2.0
 scipy==1.16.3
 tqdm==4.67.1
 
-# Pretrained encoders (Chronos, MOMENT, TimesFM); only needed for those models.
+# Pretrained encoders; only needed for those models.
+# MOMENT: pip install --no-deps momentfm==0.1.4 (its own pins clash with these).
 # TimesFM 2.5 is installed from https://github.com/google-research/timesfm
 chronos-forecasting==2.2.2
-momentfm==0.1.4
 transformers==4.57.6

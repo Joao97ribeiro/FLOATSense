@@ -379,6 +379,11 @@ class PhysicsReconstruction:
         } for sim_id in tqdm(sim_ids, desc=f"Calibrating {direction}")]
         estimates_df = pd.DataFrame(rows)
         median = estimates_df.drop(columns="sim_id").median()
+        if median.isna().any():
+            raise ValueError(
+                f"No simulation of the calibration split gives "
+                f"{list(median.index[median.isna()])} (e.g. none operates): "
+                "use a larger split.")
         calibration = Calibration(c_theta=self.parked_c_theta[direction],
                                   c_m_l=float(median["c_m_l"]),
                                   c_omega_l=float(median["c_omega_l"]),

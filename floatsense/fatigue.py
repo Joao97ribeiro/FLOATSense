@@ -53,7 +53,11 @@ def compute_base_damage(moment_series: np.ndarray,
     inner_radius = radius - thickness
     modulus = (np.pi / 4) * (radius**4 - inner_radius**4) / radius
 
-    cycles = rainflow.extract_cycles(np.asarray(moment_series, dtype=float))
+    # Zero-range cycles add no damage; dropping them avoids log10(0).
+    cycles = [cycle for cycle in rainflow.extract_cycles(
+        np.asarray(moment_series, dtype=float)) if cycle[0] > 0]
+    if not cycles:
+        return 0.0
     cycle_counts, moment_ranges = zip(
         *[(cycle[2], cycle[0]) for cycle in cycles])
     cycle_counts = np.array(cycle_counts)

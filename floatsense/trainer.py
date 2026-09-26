@@ -512,7 +512,9 @@ class SequenceModelTrainer:
                         dataset.denormalize_target(item["target"][0].numpy()),
                         dataset.sampling_frequency, self.lowpass_hz)
                     if section is None:
-                        stem, damage_section = self.direction, self.damage_section
+                        # Single height: columns named by the gauge.
+                        stem = dataset.moment_channel.rsplit("_m", 1)[0]
+                        damage_section = self.damage_section
                     else:
                         stem, damage_section = HEIGHT_TARGETS[section][:2]
                     row[f"var_ratio_{stem}"] = float(
@@ -538,7 +540,8 @@ class SequenceModelTrainer:
                                f"damage_comparison_{stem}.csv"),
                   index=False)
 
-        key = "tower_bottom" if self.height_targets else self.direction
+        key = ("tower_bottom" if self.height_targets else
+               dataset.moment_channel.rsplit("_m", 1)[0])
         scores = summarize_damage(df[f"damage_true_{key}"].values,
                                   df[f"damage_rec_{key}"].values)
         summary = {

@@ -84,7 +84,9 @@ flags.DEFINE_string("init_checkpoint_dir", None,
 flags.DEFINE_string(
     "calibration_dir", None,
     "Directory with the physics calibration_<direction>.json "
-    "(hybrid models); defaults to outputs/physics/<tower>.")
+    "(hybrid models); defaults to outputs/physics/<tower>[_<split tag>]"
+    "[_ss], where scripts/physics/run.py writes the calibration of the "
+    "same split and direction.")
 flags.DEFINE_float("condition_bound", 0.5,
                    "Tanh bound of the hybrid correction (0 disables it).")
 flags.DEFINE_string("target_channel", None,
@@ -115,8 +117,14 @@ def main(_):
     # (outputs/physics/<tower>[_<split tag>], as scripts/physics/run.py
     # writes it), so a few-shot hybrid never sees the full training split.
     tag = split_tag(FLAGS.train_split)
-    calibration_dir = FLAGS.calibration_dir or os.path.join(
-        "outputs", "physics", FLAGS.tower + (f"_{tag}" if tag else ""))
+
+    def calibration_dir(direction: str) -> str:
+        if FLAGS.calibration_dir:
+            return FLAGS.calibration_dir
+        return os.path.join(
+            "outputs", "physics", FLAGS.tower + (f"_{tag}" if tag else "") +
+            ("_ss" if direction == "ss" else ""))
+
     damage_section = FLAGS.damage_section
     if FLAGS.height_targets and (FLAGS.target_channel or damage_section):
         raise ValueError("--target_channel and --damage_section apply to the "
@@ -130,6 +138,13 @@ def main(_):
             raise ValueError("--damage_section does not match the section "
                              "of --target_channel; leave it unset.")
         damage_section = stems[FLAGS.target_channel]
+    elif damage_section:
+        raise ValueError("Without --target_channel the target is the base "
+                         "moment: --damage_section must stay 0.")
+    hybrids = [m for m in FLAGS.models if m.startswith("hybrid")]
+    if (hybrids and not FLAGS.height_targets and damage_section):
+        raise ValueError("The hybrid models anchor to the physics at the "
+                         "requested height only in the 11-height task.")
     source = load_tower(FLAGS.dataset_dir, FLAGS.tower)
     train_ids = source.split_ids(FLAGS.train_split)
     test_ids = source.split_ids(FLAGS.test_split)
@@ -171,7 +186,7 @@ def main(_):
                 init_checkpoint=(os.path.join(FLAGS.init_checkpoint_dir,
                                               f"{model_name}_{direction}.pt")
                                  if FLAGS.init_checkpoint_dir else None),
-                calibration_path=(os.path.join(calibration_dir,
+                calibration_path=(os.path.join(calibration_dir(direction),
                                                f"calibration_{direction}.json")
                                   if model_name.startswith("hybrid") else None),
                 condition_bound=FLAGS.condition_bound,
