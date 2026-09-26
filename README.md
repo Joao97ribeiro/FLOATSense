@@ -350,6 +350,32 @@ Field-style SCADA (the ten-minute statistics a turbine logs) is an
 input set too: `stat:<channel>:<mean|std|min|max>` reads
 `series_stats.parquet` and feeds the value as a constant channel.
 
+### Flags of every experiment in the paper
+
+All runs add `--flagfile=scripts/train/config.cfg --tower=<tower> --models=<model> --seed=<k>`
+(seeds 0, 1, 2) to the flags below; Mamba always adds `--learning_rate=3e-4`.
+`$SCADA` is `rotor_speed,blade_pitch,wind_speed`.
+
+| Experiment | Extra flags |
+| --- | --- |
+| Within tower (+ zero-shot) | `--eval_towers=<the other two>` |
+| Longer budgets | `--num_epochs=150` or `--num_epochs=300` |
+| Ten-shot | `--train_split=fewshot/train_10_draw<k> --batch_size=4 --init_checkpoint_dir=outputs/within/<source>/seed0` |
+| Few-shot budget curve (5 to 100 simulations: 50 to 1,250 steps) | as ten-shot with `--train_split=fewshot/train_<n>_draw0`, n = 5, 10, 25, 50, 100 |
+| Accelerometer alone | `--input_channels=tower_top_afa_mod` |
+| SCADA alone | `--input_channels=$SCADA` |
+| Two accelerometer axes | `--input_channels=tower_top_afa_mod,tower_top_ass_mod,$SCADA` |
+| + platform motions | `--input_channels=tower_top_afa_mod,$SCADA,plat_surge,plat_sway,plat_heave,plat_roll,plat_pitch,plat_yaw` |
+| + generator power | `--input_channels=tower_top_afa_mod,$SCADA,electrical_power` (two axes: add `tower_top_ass_mod` after the first) |
+| Field SCADA | `--input_channels=tower_top_afa_mod,stat:rotor_speed:mean,stat:rotor_speed:std,stat:blade_pitch:mean,stat:blade_pitch:std,stat:wind_speed:mean,stat:wind_speed:std` |
+| Model selection | `--train_split=val/train --test_split=val/val` (hybrids: physics run first with `--train_split=val/train`) |
+| Top only (diagnostic) | `--height_targets=False --target_channel=tower_top_mfa` |
+| Damage-aware loss (diagnostic) | `--loss=damage --damage_loss_weight=1.0` |
+
+The hybrid models need the physics of the same split first
+(`scripts/physics/run.py --tower=<tower> --train_split=<split>`); the
+paper runs were trained with `--deterministic=False`.
+
 ### Bootstrap confidence intervals
 
 The confidence intervals are percentile-bootstrap intervals
