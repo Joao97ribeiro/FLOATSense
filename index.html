@@ -3,73 +3,104 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FLOATSense</title>
-  <meta name="description" content="FLOATSense: a time-series dataset and benchmark for fatigue load reconstruction on floating offshore wind turbine towers.">
-  <meta property="og:title" content="FLOATSense">
+  <title>FLOATSense: A Time-Series Dataset and Benchmark for Fatigue Load Reconstruction on Floating Offshore Wind Turbine Towers</title>
+  <meta name="description" content="FLOATSense: a time-series dataset and damage-scored benchmark for reconstructing the tower bending moment of 22 MW floating offshore wind turbines from a tower-top accelerometer and SCADA.">
+  <meta property="og:title" content="FLOATSense: A Time-Series Dataset and Benchmark for Fatigue Load Reconstruction on Floating Offshore Wind Turbine Towers">
+  <meta property="og:description" content="718 k time series at 10 Hz, the fore-aft moment at 11 heights scored by fatigue damage, and a leaderboard of 20 learned models and a physics baseline.">
   <meta property="og:image" content="static/images/overview.png">
   <link rel="icon" type="image/png" href="static/images/logo.png">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
-  <link rel="stylesheet" href="static/css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="static/css/style.css?v=3">
+  <script defer src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+  <script defer src="static/js/app.js?v=3"></script>
 </head>
 <body>
+
 <!-- ============ HERO ============ -->
 <section class="hero is-light">
   <div class="hero-body has-text-centered">
     <div class="container is-max-desktop">
-      <img src="static/images/logo.png" alt="FLOATSense logo" style="max-width:320px;margin-bottom:1rem;border-radius:12px;">
+      <img src="static/images/logo.png" alt="FLOATSense logo" style="max-width:320px;margin:0 auto 1rem;display:block;">
       <h1 class="title is-2 publication-title" style="margin-bottom:1.5rem;">
         FLOATSense: A Time-Series Dataset and Benchmark for Fatigue Load Reconstruction on Floating Offshore Wind Turbine Towers
       </h1>
       <div class="is-size-5 publication-authors">
-        <span class="author-block"><a href="mailto:jpar@mit.edu">João Alves Ribeiro</a><sup>1,2</sup>,</span>
-        <span class="author-block">Bruno Alves Ribeiro<sup>3,4</sup>,</span>
-        <span class="author-block">Francisco Pimenta<sup>2</sup>,</span>
+        <span class="author-block"><a href="mailto:jpar@mit.edu">João Alves Ribeiro</a><sup>1</sup>,</span>
+        <span class="author-block">Bruno Alves Ribeiro<sup>2,3</sup>,</span>
+        <span class="author-block">Francisco Pimenta<sup>4</sup>,</span>
         <span class="author-block">Sérgio M. O. Tavares<sup>5</sup>,</span>
         <span class="author-block"><a href="mailto:faez@mit.edu">Faez Ahmed</a><sup>1</sup></span>
       </div>
       <div class="is-size-6 publication-affiliations" style="margin-top:0.4rem;">
         <span><sup>1</sup>MIT</span> &nbsp;
-        <span><sup>2</sup>University of Porto</span> &nbsp;
-        <span><sup>3</sup>TU Delft</span> &nbsp;
-        <span><sup>4</sup>Brown University</span> &nbsp;
+        <span><sup>2</sup>TU Delft</span> &nbsp;
+        <span><sup>3</sup>Brown University</span> &nbsp;
+        <span><sup>4</sup>University of Porto</span> &nbsp;
         <span><sup>5</sup>University of Aveiro</span>
       </div>
-      <div class="publication-links" id="links" style="margin-top:1.5rem;"></div>
+
+      <div class="publication-links" style="margin-top:1.5rem;">
+        <a class="button is-rounded is-dark coming" title="Coming soon">
+          <span class="icon"><i class="fas fa-file-pdf"></i></span><span>Paper</span>
+        </a>
+        <a class="button is-rounded is-dark coming" title="Coming soon">
+          <span class="icon"><i class="fas fa-archive"></i></span><span>arXiv</span>
+        </a>
+        <a href="https://github.com/Joao97ribeiro/FLOATSense" class="button is-rounded is-dark">
+          <span class="icon"><i class="fab fa-github"></i></span><span>Code</span>
+        </a>
+        <a class="button is-rounded is-dark coming" title="Coming soon on Hugging Face">
+          <span class="icon"><i class="fas fa-database"></i></span><span>Dataset</span>
+        </a>
+        <a href="#leaderboard" class="button is-rounded is-dark">
+          <span class="icon"><i class="fas fa-trophy"></i></span><span>Leaderboard</span>
+        </a>
+      </div>
     </div>
   </div>
 </section>
 
-<!-- ============ HIGHLIGHTS ============ -->
+<!-- ============ PAPER HIGHLIGHTS ============ -->
 <section class="section">
   <div class="container is-max-desktop">
+    <div class="has-text-centered" style="margin:0 0 1.5rem;padding:0.85rem 0;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;">
+      <i class="fas fa-layer-group" style="color:#c05621;margin-right:0.6rem;"></i>
+      <span style="text-transform:uppercase;letter-spacing:0.1em;color:#c05621;font-size:0.75rem;font-weight:700;">Builds on FLOATBench</span>
+      &nbsp;&nbsp;
+      <span style="color:#2d3748;">the same 19,404 simulations, <code>sim_id</code> and regime-aware partition, now as time series</span>
+      <span style="color:#cbd5e0;margin:0 0.5rem;">·</span>
+      <a href="https://joao97ribeiro.github.io/FLOATBench/" style="color:#718096;font-size:0.85rem;white-space:nowrap;">FLOATBench page →</a>
+    </div>
+
     <p class="has-text-centered" style="font-size:1.25rem;font-style:italic;color:#2d3748;margin-bottom:2rem;font-weight:500;">
-      Reconstruct the tower bending moment from a tower-top accelerometer and SCADA, and score it by the fatigue damage it implies.
+      Does the model that wins at one sensor reconstruct the fatigue load along the whole tower?
     </p>
-    <figure class="image" style="margin-bottom:2rem;">
-      <img src="static/images/overview.png" alt="FLOATSense overview">
+    <figure class="image" style="margin-bottom:1.5rem;">
+      <img src="static/images/overview.png" alt="FLOATSense overview: dataset of three towers, task, damage-based scoring and benchmark protocols">
     </figure>
 
     <h2 class="title is-3 has-text-centered" style="margin-bottom:2rem;">Paper Highlights</h2>
     <div class="highlights">
-      <div class="box has-text-centered hl">
-        <p class="title is-3" style="color:#294366;">718 k</p>
+      <div class="box has-text-centered highlight">
+        <p class="title is-3" style="color:#b02c27;">718 k</p>
         <p class="subtitle is-6">time series at 10 Hz from 19,404 OpenFAST simulations</p>
       </div>
-      <div class="box has-text-centered hl">
-        <p class="title is-3" style="color:#b02c27;">11 heights</p>
-        <p class="subtitle is-6">fore-aft moment targets, scored by fatigue damage</p>
+      <div class="box has-text-centered highlight">
+        <p class="title is-3" style="color:#294366;">11 heights</p>
+        <p class="subtitle is-6">fore-aft moment targets, scored by the fatigue damage they imply</p>
       </div>
-      <div class="box has-text-centered hl">
-        <p class="title is-3" style="color:#294366;">3 towers</p>
-        <p class="subtitle is-6">22 MW geometries for zero-shot and few-shot transfer</p>
-      </div>
-      <div class="box has-text-centered hl">
+      <div class="box has-text-centered highlight">
         <p class="title is-3" style="color:#b02c27;">3 of 20</p>
-        <p class="subtitle is-6">learned models beat a one-gain floor at the top</p>
+        <p class="subtitle is-6">learned models beat a one-gain floor at the top of the tower</p>
       </div>
-      <div class="box has-text-centered hl">
-        <p class="title is-3" style="color:#7cc0cd;">Open</p>
-        <p class="subtitle is-6">data, code, checkpoints and leaderboard</p>
+      <div class="box has-text-centered highlight">
+        <p class="title is-3" style="color:#294366;">5 sims</p>
+        <p class="subtitle is-6">of a new tower recover its base, not its top</p>
+      </div>
+      <div class="box has-text-centered highlight">
+        <p class="title is-3" style="color:#7cc0cd;">20 + 1</p>
+        <p class="subtitle is-6">learned models in eight families and a field-validated physics baseline</p>
       </div>
     </div>
   </div>
@@ -80,163 +111,508 @@
   <div class="container is-max-desktop">
     <h2 class="title is-3">Abstract</h2>
     <div class="content has-text-justified">
-      <p>Fatigue limits the lifetime of an offshore wind turbine tower and is tracked from the bending moment along it, yet the strain gauges that measure it are rare and cover one section, while a tower-top accelerometer is standard. Reconstructing the moment at every height from that one sensor is a time-series problem, and no public benchmark scores it on the quantity engineers act on, the fatigue damage.</p>
-      <p>We introduce <strong>FLOATSense</strong>, a dataset and benchmark for fatigue load reconstruction on 22 MW floating offshore wind turbines: 718 k time series at 10 Hz from the 19,404 OpenFAST simulations of FLOATBench on three tower geometries (37 channels, 1,078 operating points &times; six turbulence seeds per tower), with the accelerometer and SCADA signals as inputs and the fore-aft moment at eleven heights as target. Two choices set it apart: a reconstruction is scored by the fatigue damage it implies rather than by waveform error, and the six realizations of an operating point are kept together, so a model that reads only the condition scores zero on the within-condition metric.</p>
-      <p>Twenty learned models and a field-validated physics baseline are evaluated within tower, across towers zero-shot and few-shot, and under sensor ablation. <strong>Sensor-level leaderboards mislead</strong>: the base does not separate the models and its leaders collapse at the top, where at the declared budget only three learned models beat a one-gain floor; longer training recovers the top for the two TCNs, not for the attention and state-space models; five simulations of a new tower recover its base, not its top; and a second accelerometer axis improves the top at every budget.</p>
-      <p>Limitations: the campaign is simulated, wind and waves are aligned, and only the fore-aft moment is scored.</p>
+      <p>Fatigue limits the lifetime of an offshore wind turbine tower and is tracked from the bending moment along it, yet the strain gauges that measure it are rare and cover one section, while a tower-top accelerometer is standard. Reconstructing the moment at every height from that one sensor is a time-series problem, and no public benchmark scores it on the quantity engineers act on, the fatigue damage. We introduce <strong>FLOATSense</strong>, a dataset and benchmark for fatigue load reconstruction on 22 MW floating offshore wind turbines: 718 k time series at 10 Hz from the 19,404 OpenFAST simulations of FLOATBench on three tower geometries (37 channels, 1,078 operating points × six turbulence seeds per tower), with the accelerometer and SCADA signals as inputs and the fore-aft moment at eleven heights as target.</p>
+      <p><strong>FLOATSense</strong> is distinguished by two choices: a reconstruction is scored by the fatigue damage it implies rather than by waveform error, and the six realizations of an operating point are kept together, so a model that reads only the condition scores zero on the within-condition metric. Twenty learned models and a field-validated physics baseline are evaluated within tower, across towers zero-shot and few-shot, and under sensor ablation.</p>
+      <p><strong>Sensor-level leaderboards mislead</strong>: the base does not separate the models and its leaders collapse at the top, where at the declared budget only three learned models beat a one-gain floor; longer training recovers the top for the two TCNs, not for the attention and state-space models; five simulations of a new tower recover its base, not its top; and a second accelerometer axis improves the top at every budget. Limitations: the campaign is simulated, wind and waves are aligned, and only the fore-aft moment is scored. Data, code and leaderboard are released.</p>
     </div>
   </div>
 </section>
 
 <!-- ============ DATASET ============ -->
-<section class="section">
+<section class="section" id="dataset">
   <div class="container is-max-desktop">
     <h2 class="title is-3">Dataset</h2>
     <div class="content has-text-justified">
-      <p>Each simulation holds <strong>37 channels at 10 Hz over 1,000 s</strong>: tower-top accelerations, SCADA (rotor speed, blade pitch, power, hub wind speed), platform motions, wave elevation, and the fore-aft and side-side bending moments at 11 heights. Per tower: 1,078 operating points (22 wind speeds &times; 7 H<sub>s</sub> &times; 7 T<sub>p</sub>, IEC 61400-3-2 DLC 1.2) &times; 6 realizations = 6,468 simulations, plus 22 parked runs. Every file is keyed by the FLOATBench <code>sim_id</code>.</p>
-      <p><strong>Task.</strong> From the gravity-corrected fore-aft tower-top acceleration, rotor speed, blade pitch, hub wind speed and a height <em>z/H</em>, reconstruct the fore-aft moment at that height over 400 to 1,000 s. One model serves the whole tower. True and reconstructed moments pass through the same pipeline: 3 Hz low-pass, rainflow counting, DNV-RP-C203 S-N curve and Miner's rule.</p>
+      <p><strong>Operating envelope and simulation setup.</strong> The campaign of <a href="https://joao97ribeiro.github.io/FLOATBench/">FLOATBench</a> comprises 22 wind speeds and, at each, a 7 × 7 grid of 49 sea states in significant wave height <em>H<sub>s</sub></em> and peak period <em>T<sub>p</sub></em>, for 1,078 operating points. The IEA 22 MW turbine on a three-column semi-submersible is simulated with OpenFAST under IEC 61400-3-2 DLC 1.2, with aligned wind and waves. Each operating point has six realizations per tower, differing in the turbulence seed. A further 22 parked runs per tower, rotor parked and waves only, one at the median sea state of each wind speed, calibrate the physics baseline. Each run lasts 1,000 s at 10 Hz; evaluation uses the 400–1,000 s post-transient window (the scored window).</p>
+      <p><strong>Tower geometries.</strong> The campaign is repeated on three towers of equal height sharing platform, controller and mooring, for 19,404 simulations: the IEA 22 MW baseline <span class="tw-ref">REF</span> and the fatigue-aware redesigns <span class="tw-opt1">OPT1</span> and <span class="tw-opt2">OPT2</span> produced by <a href="https://joao97ribeiro.github.io/FLOAT/">FLOAT</a>. <span class="tw-ref">REF</span> is the flexible outlier (first fore-aft frequency 0.34 Hz against 0.57 and 0.54 Hz) and carries about 40 times the base lifetime damage of the two redesigns, so cross-tower shift comes at two levels.</p>
+      <p><strong>Channels.</strong> Each simulation is an array of 10,001 samples by 37 channels: tower-top accelerations, raw and gravity-corrected (×4), SCADA signals (×4), platform motions (×6), wave elevation (×1), and fore-aft and side-side moments at 11 heights (×22).</p>
+      <p><strong>Damage scoring.</strong> True and reconstructed moments are low-passed at 3 Hz and pass through the damage model that generated the FLOATBench labels: rainflow counting, the DNV-RP-C203 S–N curve and Miner's rule, with the radius and wall thickness of the section. The simulation campaign required about 19,400 CPU-hours across the three towers.</p>
     </div>
-    <figure class="image"><img src="static/images/channels.png" alt="The 37 channels of one simulation"></figure>
+    <figure class="image" style="margin-bottom:0.5rem;">
+      <img src="static/images/channels.png" alt="The 37 channels of one simulation">
+    </figure>
+    <p class="is-size-7 has-text-grey" style="margin-bottom:2rem;">The 37 released time series of one simulation (1,000 s at 10 Hz): tower-top accelerations and SCADA as inputs, platform motions and wave elevation as context, and the fore-aft and side-side moments at 11 heights as targets.</p>
+
+    <div class="columns is-vcentered">
+      <div class="column is-7">
+        <figure class="image"><img src="static/images/fig_tower_geometry.png" alt="Outer diameter, wall thickness and lifetime damage of the three towers"></figure>
+        <p class="how">Tower geometry and damage along the height of the three towers, from FLOATBench. Damage: lifetime-weighted Miner sum over all simulations.</p>
+      </div>
+      <div class="column is-5">
+        <div id="plot-life" class="plot plot-tall"></div>
+        <p class="how">Lifetime fore-aft damage at the 11 FLOATSense gauges, from <code>damage.parquet</code> and <code>damage_weight</code> (all 6,468 simulations per tower).</p>
+      </div>
+    </div>
+
+    <h3 class="title is-5" style="margin-top:1.5rem;">Files (per tower, on Hugging Face)</h3>
+    <div class="table-container">
+      <table class="table is-narrow is-fullwidth schema">
+        <thead><tr><th>File</th><th class="num">Rows</th><th class="num">Columns</th><th>Content</th></tr></thead>
+        <tbody>
+          <tr><td><code>series-&lt;k&gt;-of-00017.parquet</code></td><td class="num">64,686,468</td><td class="num">39</td><td><code>sim_id</code>, <code>time_s</code> and the 37 channels; 400 simulations per shard, one row group per simulation (10,001 rows)</td></tr>
+          <tr><td><code>series_stats.parquet</code></td><td class="num">6,468</td><td class="num">149</td><td>Per simulation, mean, std, min and max of every channel over the scored window</td></tr>
+          <tr><td><code>metadata.parquet</code></td><td class="num">6,468</td><td class="num">14</td><td>Operating point, realization, split, regime labels and lifetime weight, in FLOATBench order</td></tr>
+          <tr><td><code>sections.parquet</code></td><td class="num">11</td><td class="num">7</td><td>The 11 scored sections: FLOATBench section, height, radius, thickness, channel prefix, gauge height and <em>z/H</em></td></tr>
+          <tr><td><code>damage.parquet</code></td><td class="num">71,148</td><td class="num">3</td><td>Reference fore-aft damage at the 11 sections of every simulation</td></tr>
+          <tr><td><code>parked.parquet</code> (shared)</td><td class="num">660,066</td><td class="num">31</td><td>The 66 parked runs (22 per tower): 28 channels, waves only</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="how">8.0 GB per tower, 24.0 GB in all, CC-BY-4.0. Every file is keyed by the FLOATBench <code>sim_id</code>, the same on the three towers.</p>
+
+    <h3 class="title is-5" style="margin-top:1.5rem;">Channels</h3>
+    <div class="table-container">
+      <table class="table is-narrow is-fullwidth schema">
+        <thead><tr><th>Group</th><th>Column</th><th>OpenFAST</th><th>Unit</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td rowspan="4" class="grp">Accelerations</td><td><code>tower_top_afa</code></td><td>YawBrTAxp</td><td>m/s²</td><td>Tower-top fore-aft acceleration</td></tr>
+          <tr><td><code>tower_top_afa_mod</code></td><td>YawBrTAxpMod</td><td>m/s²</td><td>The same plus the gravity projection of the platform tilt: the task input</td></tr>
+          <tr><td><code>tower_top_ass</code></td><td>YawBrTAyp</td><td>m/s²</td><td>Tower-top side-side acceleration</td></tr>
+          <tr><td><code>tower_top_ass_mod</code></td><td>YawBrTAypMod</td><td>m/s²</td><td>The same plus the gravity projection of the platform roll</td></tr>
+          <tr><td rowspan="4" class="grp">SCADA</td><td><code>rotor_speed</code></td><td>RotSpeed</td><td>rpm</td><td>Rotor speed (input)</td></tr>
+          <tr><td><code>blade_pitch</code></td><td>BldPitch1</td><td>deg</td><td>Blade pitch (input)</td></tr>
+          <tr><td><code>wind_speed</code></td><td>Wind1VelX</td><td>m/s</td><td>Hub-height wind speed (input)</td></tr>
+          <tr><td><code>electrical_power</code></td><td>GenPwr</td><td>kW</td><td>Generator power (released, not used)</td></tr>
+          <tr><td rowspan="2" class="grp">Platform and wave</td><td><code>plat_surge</code> … <code>plat_yaw</code></td><td>PtfmSurge … PtfmYaw</td><td>m, deg</td><td>Six platform motions</td></tr>
+          <tr><td><code>wave_elev</code></td><td>Wave1Elev</td><td>m</td><td>Wave elevation at the platform</td></tr>
+          <tr><td rowspan="3" class="grp">Targets</td><td><code>tower_bottom_mfa</code>, <code>_mss</code></td><td>TwrBsMyt, TwrBsMxt</td><td>kN m</td><td>Base moments (section 1)</td></tr>
+          <tr><td><code>tower_&lt;k&gt;_mfa</code>, <code>_mss</code>, k = 1…9</td><td>TwHt&lt;k&gt;MLyt, MLxt</td><td>kN m</td><td>Moments at gauge <em>k</em> (section 3<em>k</em>)</td></tr>
+          <tr><td><code>tower_top_mfa</code>, <code>_mss</code></td><td>YawBrMyp, YawBrMxp</td><td>kN m</td><td>Tower-top moments (section 30)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="title is-5" style="margin-top:1.5rem;">Terms used on this page</h3>
+    <div class="table-container">
+      <table class="table is-narrow is-fullwidth schema">
+        <tbody>
+          <tr><td class="grp">Height <em>z/H</em></td><td>Gauge height as a fraction of the tower height <em>H</em> = 149.4 m. The 11 gauges run from the base (0) to the top (1); one model serves all of them with <em>z/H</em> as an input.</td></tr>
+          <tr><td class="grp">Scored window</td><td>400 to 1,000 s of each 1,000 s run, after the start-up transient; every metric is computed on it.</td></tr>
+          <tr><td class="grp">Realization</td><td>One of the six turbulence seeds of an operating point: the same <em>U</em>, <em>H<sub>s</sub></em>, <em>T<sub>p</sub></em> with a different random wind field.</td></tr>
+          <tr><td class="grp">Fatigue damage <em>D</em></td><td>Fraction of the fatigue life consumed (Miner's rule) over the 600 s window. Summed over 25 years with <code>damage_weight</code>, <em>D</em> = 1 means the section reaches its fatigue limit.</td></tr>
+          <tr><td class="grp">R² of log damage</td><td>Coefficient of determination of log<sub>10</sub> <em>D̂</em> against log<sub>10</sub> <em>D</em> over the test simulations: the primary ranking metric. It can be negative when the damage level is wrong.</td></tr>
+          <tr><td class="grp">×2 · ratio · MRE</td><td>Fraction of simulations within a factor of two of the true damage; median ratio <em>D̂</em>/<em>D</em> (1 = unbiased); mean relative error.</td></tr>
+          <tr><td class="grp">Within-condition corr.</td><td>Correlation between true and reconstructed damage across the six realizations of each operating point. A model that only recognizes the condition scores zero.</td></tr>
+          <tr><td class="grp">Regimes</td><td>The FLOATBench label of each test simulation on the wind and on the wave axis: <span class="tag tag-it">In-train</span> (IT), <span class="tag tag-ip">Interpolate</span> (IP) or <span class="tag tag-ex">Extrapolate</span> (EX).</td></tr>
+          <tr><td class="grp">Floor · physics</td><td>The floor is one scalar gain from the tower-top acceleration to the moment. The physics baseline is the field method of Pimenta et al. (2024), a six-constant spectral gain calibrated on the parked runs and the training split, extended to every height.</td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 </section>
 
-<!-- ============ EXPLORER ============ -->
-<section class="section has-background-light">
+<!-- ============ DATASET EXPLORER ============ -->
+<section class="section has-background-light" id="explorer">
   <div class="container is-max-desktop">
-    <h2 class="title is-3">Explore the Dataset</h2>
-    <p class="subtitle is-6">Interactive view of a subset: one simulation per wind speed on each tower (middle level of the wave grid, first realization), 66 simulations. Scored window 400 to 1,000 s shown at 5 Hz; drag to zoom, both plots follow.</p>
+    <h2 class="title is-3">Dataset Explorer</h2>
+    <p class="subtitle is-6">One simulation per wind speed on each tower (the middle level of the wave grid, first realization): 66 simulations, the same <code>sim_id</code> on the three towers, all in the test split. The model inputs on top, the fore-aft moment along the tower below; the scored window at 5 Hz. Drag to zoom, both plots follow.</p>
+    <p class="is-size-7 has-text-grey" id="ex-source" style="margin-top:-0.75rem;margin-bottom:1rem;"><span class="icon"><i class="fas fa-spinner fa-spin"></i></span> Loading the time series…</p>
 
     <div class="box">
-      <div class="columns is-vcentered is-multiline">
+      <div class="columns is-multiline is-vcentered">
         <div class="column is-3">
-          <label class="label is-small">Tower</label>
-          <div class="buttons has-addons" id="towerSeg"></div>
+          <label class="label is-small" for="ex-tower">Tower</label>
+          <div class="select is-fullwidth is-small">
+            <select id="ex-tower">
+              <option value="0">REF (IEA 22 MW reference)</option>
+              <option value="1">OPT1</option>
+              <option value="2" selected>OPT2</option>
+            </select>
+          </div>
+        </div>
+        <div class="column is-3">
+          <label class="label is-small" for="ex-sim">Simulation</label>
+          <div class="select is-fullwidth is-small"><select id="ex-sim"></select></div>
+        </div>
+        <div class="column is-3">
+          <label class="label is-small" for="ex-wind">Wind speed <output id="ex-wind-out"></output></label>
+          <input type="range" id="ex-wind" class="slider" min="0" max="21" step="1" value="11">
+        </div>
+        <div class="column is-3">
+          <label class="label is-small" for="ex-gauge">Moment line</label>
+          <div class="select is-fullwidth is-small"><select id="ex-gauge"></select></div>
+        </div>
+      </div>
+      <dl class="sim-card" id="sim-card"></dl>
+    </div>
+
+    <div class="box"><div id="plot-inputs" class="plot" style="height:560px;"></div></div>
+    <div class="box"><div id="plot-targets" class="plot" style="height:440px;"></div></div>
+
+    <div class="columns" style="margin-top:0.5rem;">
+      <div class="column is-7">
+        <h3 class="title is-5">Damage along the tower</h3>
+        <div id="plot-profile" class="plot plot-tall"></div>
+        <p class="how">True damage of the selected simulation (black) and the damage implied by each model's reconstruction, seed-0 checkpoints of the within-tower protocol. Dotted: the one-gain floor.</p>
+      </div>
+      <div class="column is-5">
+        <label class="label is-small">Models</label>
+        <div class="model-list" id="models"></div>
+        <p class="how" id="profile-note" style="margin-top:0.8rem;"></p>
+        <h3 class="title is-5" style="margin-top:1.5rem;">Operating envelope</h3>
+        <div class="buttons has-addons" id="env-sec" style="margin-bottom:0.25rem;">
+          <button type="button" class="button is-small" data-sec="base">Base</button>
+          <button type="button" class="button is-small is-dark is-selected" data-sec="top">Top</button>
+        </div>
+        <div id="plot-envelope" class="plot" style="height:360px;"></div>
+        <p class="how">Reference damage of all 1,078 operating points of the tower (log<sub>10</sub>, mean over the six realizations). Ringed: the explorer simulations; click one to open it.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ LOAD ============ -->
+<section class="section" id="load">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3">Load the Data</h2>
+    <p class="subtitle is-6">One simulation is one row group of one shard, so it is read without scanning the file. The benchmark code wraps this in <code>floatsense.release</code>.</p>
+    <div class="columns">
+      <div class="column">
+        <pre><code># one simulation with pyarrow
+import pyarrow.parquet as pq
+import pandas as pd
+
+meta = pd.read_parquet("opt2/metadata.parquet")
+shard = pq.ParquetFile("opt2/series-00000-of-00017.parquet")
+sim = shard.read_row_group(0).to_pandas()   # sim_id 1, 10,001 rows</code></pre>
+      </div>
+      <div class="column">
+        <pre><code># with the benchmark loader
+from floatsense.release import load_tower
+
+tower = load_tower("data/FLOATSense", "opt2")
+x = tower.load(2377)             # (10001, 37) float32
+test_ids = tower.split_ids("test")
+damage = tower.damage()          # sim_id x section_id</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ BENCHMARK PROTOCOL ============ -->
+<section class="section has-background-light" id="protocol">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3">Benchmark Protocol</h2>
+    <h3 class="title is-5">Task</h3>
+    <div class="content has-text-justified">
+      <p>Given the gravity-corrected fore-aft tower-top acceleration, three SCADA channels (rotor speed, blade pitch and hub wind speed) and a requested height <em>z/H</em>, reconstruct the fore-aft bending-moment history at that height over the scored window, 400 to 1,000 s. <strong>One model serves the full tower</strong> with <em>z/H</em> as a constant input channel: training samples one of the 11 target heights per example, testing evaluates all 11 against the OpenFAST reference histories. Only the fore-aft moment is scored; side-side moments are released but not scored.</p>
+    </div>
+
+    <h3 class="title is-5" style="margin-top:1.5rem;">Regime-aware partition</h3>
+    <div class="content has-text-justified">
+      <p>The regime-aware partition of FLOATBench, with the same simulations on the three towers: <strong>1,728 train</strong> (18 wind speeds, inner 4 × 4 sea states) and <strong>4,740 test</strong>, with all six seeds of an operating point on the same side. Each test simulation carries its FLOATBench regime label on the wind and on the wave axis. Unlike field measurements, the simulations give the true moment at every height and in extreme conditions, so extrapolation can be checked. The grid counts test simulations per cell (the same for every tower).</p>
+    </div>
+    <div class="columns is-vcentered">
+      <div class="column is-5"><div class="regime-grid" id="regime-grid"></div></div>
+      <div class="column is-7">
+        <div class="columns is-mobile is-gapless">
+          <div class="column"><img src="static/images/train_testgroups_wind.png" alt="Regime partition in the wind plane"></div>
+          <div class="column"><img src="static/images/train_testgroups_wave.png" alt="Regime partition in the wave plane"></div>
+        </div>
+        <img src="static/images/train_testgroups_leg.png" alt="Legend of the regime partition" style="max-width:420px;display:block;margin:0 auto;">
+        <p class="how">FLOATBench regime partition in the wind (left) and wave (right) planes.</p>
+      </div>
+    </div>
+
+    <h3 class="title is-5" style="margin-top:2rem;">Evaluation protocols</h3>
+    <div class="columns">
+      <div class="column is-one-third"><div class="box">
+        <p class="title is-6">Within tower</p>
+        <p class="is-size-7">Train and test on the same tower, on the regime-aware partition. Results along the 11 heights and per regime cell; the within-condition correlation tests whether a model tracks the realization or only the condition.</p>
+      </div></div>
+      <div class="column is-one-third"><div class="box">
+        <p class="title is-6">Cross tower</p>
+        <p class="is-size-7">A model trained on one tower applied to each of the other two (six pairs). Zero-shot, and ten-shot: 100 adaptation steps on ten simulations of the target training split. The towers share the wind and wave realizations, so only the tower design changes.</p>
+      </div></div>
+      <div class="column is-one-third"><div class="box">
+        <p class="title is-6">Sensor ablation</p>
+        <p class="is-size-7">Every simulation records all 37 channels, so other installations are compared on the same runs: the accelerometer alone, SCADA alone, both accelerometer axes, or the six platform motions added.</p>
+      </div></div>
+    </div>
+    <div class="content has-text-justified">
+      <p><strong>Models.</strong> Twenty learned models in eight families (convolutional, recurrent, attention, state-space, spectral, period-folding, pretrained encoders with a trained head and physics-anchored), among them a Prob-TCN with a heteroscedastic head, a condition-dependent spectral gain, and a hybrid that learns a bounded correction of the physics gain. The <strong>floor</strong> is one scalar gain from the tower-top acceleration to the moment. The <strong>physics baseline</strong> is the field method of Pimenta et al. (2024), extended to every height with a height factor.</p>
+      <p><strong>Training.</strong> One recipe for every model, declared in advance: 50 epochs of Adam at 10<sup>−3</sup>, batch 16, mean squared error on the standardized moment, no weight decay, scheduler or early stopping, the last epoch scored. Seed 0 everywhere, three training seeds for the thirteen models within tower. Longer budgets (150 and 300 epochs) are probes on selected models.</p>
+      <p><strong>Metrics.</strong> <em>R</em><sup>2</sup> of log<sub>10</sub> damage (primary), median ratio, MRE, fraction within a factor of two, and within-condition correlation, with 95% bootstrap intervals that resample operating points (<em>B</em> = 1,000). A pairwise difference counts when the paired interval excludes zero on all three towers.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ LEADERBOARD ============ -->
+<section class="section" id="leaderboard">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3">Leaderboard</h2>
+    <p class="subtitle is-6">All 20 learned models, the physics baseline and the floor at the declared budget of 50 epochs, scored by the fatigue damage of the reconstruction. Move the height to see the ranking change from the base to the top. Each cell is the median over three seeds where they exist, else seed 0 (†). Click a row to follow that model in the plots.</p>
+
+    <div class="box">
+      <div class="columns is-multiline is-vcentered">
+        <div class="column is-3">
+          <label class="label is-small" for="lb-protocol">Protocol</label>
+          <div class="select is-fullwidth is-small">
+            <select id="lb-protocol">
+              <option value="within">Within tower</option>
+              <option value="zeroshot">Cross tower, zero-shot</option>
+            </select>
+          </div>
+        </div>
+        <div class="column is-3">
+          <label class="label is-small" for="lb-tower">Tower</label>
+          <div class="select is-fullwidth is-small"><select id="lb-tower"></select></div>
+        </div>
+        <div class="column is-3">
+          <label class="label is-small" for="lb-metric">Rank by</label>
+          <div class="select is-fullwidth is-small">
+            <select id="lb-metric">
+              <option value="r2">R² of log damage</option>
+              <option value="within2">Within a factor of two</option>
+              <option value="median_ratio">Median ratio (closest to 1)</option>
+              <option value="within_corr">Within-condition correlation</option>
+              <option value="mre">MRE (lowest)</option>
+            </select>
+          </div>
+        </div>
+        <div class="column is-3">
+          <label class="label is-small" for="lb-search">Search</label>
+          <input class="input is-small" type="search" id="lb-search" placeholder="model name">
+        </div>
+        <div class="column is-12">
+          <label class="label is-small" for="lb-height">Height: <output id="lb-height-out"></output></label>
+          <input type="range" id="lb-height" class="slider" min="0" max="10" step="1" value="10">
+        </div>
+      </div>
+      <div class="chips" id="lb-families" role="group" aria-label="Filter by model family"></div>
+    </div>
+
+    <div class="table-container lb-table-wrap"><table class="table is-narrow is-hoverable is-fullwidth data lb" id="lb-table"></table></div>
+    <div class="columns" style="margin-top:1rem;">
+      <div class="column is-6">
+        <div id="plot-heights" class="plot"></div>
+        <p class="how">R² of log<sub>10</sub> damage along the tower for the selected model, the top three at this height, the physics and the floor; clipped at −1.</p>
+      </div>
+      <div class="column is-6">
+        <div id="plot-crossover" class="plot"></div>
+        <p class="how">Rank at the base against rank at the chosen height. On the diagonal a model keeps its base rank; above it, the model ranks worse here than at the base.</p>
+      </div>
+    </div>
+    <p class="is-size-7 has-text-grey">Point estimates on the test split; bootstrap intervals and the 150 and 300 epoch probes are in the paper and produced by <code>scripts/benchmark/</code>. Zero-shot: mean over the six source–target pairs or one pair; the physics is recalibrated on the target and is not listed there.</p>
+  </div>
+</section>
+
+<!-- ============ RESULTS ============ -->
+<section class="section has-background-light" id="findings">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3">Results</h2>
+
+    <div class="result-block">
+      <p class="result-tag">Within tower · along the height</p>
+      <h3 class="title is-5">The base does not separate the models, the top does</h3>
+      <div class="columns">
+        <div class="column is-6">
+          <div class="content">
+            <p><strong>At the base the sequence models are indistinguishable, and all beat the physics.</strong> Ten of the 22 entries reach <em>R</em><sup>2</sup> ≥ 0.95 at the base and the first seven lie within 0.023: Mamba, PatchTST and TCN score 0.99 to 1.00, the physics 0.967 / 0.944 / 0.961 and the floor 0.742 on average.</p>
+            <p><strong>The top spreads the entries from −2.3 to 0.84, and the base ranking does not predict it.</strong> The rank correlation between base and top is −0.37 / 0.04 / 0.22. PatchTST and Mamba, first at the base, fall below zero at the top with no simulation within a factor of two; TCN keeps 0.775 / 0.774 / 0.732 and Prob-TCN 0.818 / 0.855 / 0.852. Only three learned models beat the floor at the top (0.70): Prob-TCN, TCN and FITS.</p>
+          </div>
         </div>
         <div class="column is-6">
-          <label class="label is-small" for="wind">Wind speed: <span id="windVal"></span></label>
-          <input id="wind" class="slider" type="range" min="0" max="21" step="1" value="11">
-        </div>
-        <div class="column is-3">
-          <label class="label is-small" for="gauge">Moment line</label>
-          <div class="select is-fullwidth is-small"><select id="gauge"></select></div>
+          <figure class="image"><img src="static/images/results.png" alt="Main results of the paper"></figure>
+          <p class="how">(a) R² along the tower; (b) top within a factor of two against wind speed; (c, d) cross tower; (e, f) sensor sets against the training budget.</p>
         </div>
       </div>
-      <div class="tags" id="op"></div>
+      <p class="takeaway">A leaderboard at the base of the tower does not tell which model reconstructs its top.</p>
     </div>
 
-    <div class="box"><div id="inputs" style="height:560px;"><p class="has-text-grey">Loading the time series…</p></div></div>
-    <div class="box"><div id="targets" style="height:440px;"></div></div>
+    <div class="result-block">
+      <p class="result-tag">Within tower · why the top fails</p>
+      <h3 class="title is-5">Training and variance, not missing information</h3>
+      <div class="columns">
+        <div class="column is-6">
+          <div class="content">
+            <p><strong>TCN and Prob-TCN are under-trained at the top; the models that collapse stay collapsed.</strong> At 300 epochs TCN reaches 0.923 / 0.935 / 0.935 at the top and Prob-TCN 0.924 / 0.953 / 0.953, level with the physics on <span class="tw-ref">REF</span>. S4D stays at 0.61 to 0.65 and PatchTST below zero. Trained for the top alone, TCN scores 0.90 / 0.94 / 0.93 and Prob-TCN 0.97 / 0.98 / 0.98, while PatchTST, S4D and Mamba still fail; a damage-aware loss rescues S4D (0.88 to 0.94).</p>
+            <p>The all-height TCN keeps 0.63 to 0.73 of the true variance at the top; restoring it with noise lifts the score, not the within-condition correlation.</p>
+          </div>
+        </div>
+        <div class="column is-6">
+          <figure class="image"><img src="static/images/fig_top_mechanism.png" alt="Why the top fails"></figure>
+          <p class="how">Why the top fails, <span class="tw-opt2">OPT2</span>: variance ratio along the tower, spectra and coherence of the top moment.</p>
+        </div>
+      </div>
+      <p class="takeaway">At the declared budget a top score measures convergence as much as architecture; the collapse of the attention and state-space models survives a longer budget.</p>
+    </div>
+
+    <div class="result-block">
+      <p class="result-tag">Within tower · by regime</p>
+      <h3 class="title is-5">At the top, low wind is the hard condition</h3>
+      <div class="columns">
+        <div class="column is-6">
+          <div class="content">
+            <p><strong>Waves never cost.</strong> Wave extrapolation moves the fraction within a factor of two by −10 to +9 points for every model at any height. At the base, on extrapolated wind, the physics falls to 73 to 80% on the redesigns and Prob-TCN to 58 to 60%, while PatchTST and Mamba stay at 100%.</p>
+            <p><strong>At the top the axis that matters is wind speed, not the regime label.</strong> TCN is within a factor of two on 0 to 12% of simulations below 10 m/s, in train or not, and on 92 to 99% above 13.5 m/s. Winds below 10 m/s carry only 3 to 5% of the lifetime top damage.</p>
+          </div>
+        </div>
+        <div class="column is-6">
+          <figure class="image"><img src="static/images/fig_ratio_vs_wind.png" alt="Median damage ratio per wind speed"></figure>
+          <p class="how">Median damage ratio per mean wind speed at the base (top row) and at the top (bottom row); gray band: factor-two range.</p>
+        </div>
+      </div>
+      <p class="takeaway">At the top, what decides the error is the wind speed, not the regime label.</p>
+    </div>
+
+    <div class="result-block">
+      <p class="result-tag">Cross tower · zero-shot and few-shot</p>
+      <h3 class="title is-5">Zero-shot keeps the ranking, five simulations recover the base, not the top</h3>
+      <div class="columns">
+        <div class="column is-6">
+          <div class="content">
+            <p><strong>Zero-shot fails on scale, not on ranking.</strong> The median zero-shot <em>R</em><sup>2</sup> at the base is 0.93 and 0.84 between the redesigns, 0.75 and 0.71 into <span class="tw-ref">REF</span>, where the models over-predict (median ratio 2.6 and 2.5), and 0.41 and 0.48 out of it; the within-condition correlation stays at 0.84 to 0.95, so the realizations are ranked right and placed at the wrong level.</p>
+            <p><strong>Five target simulations recover the base; no adaptation measured recovers the top.</strong> With five target simulations LSTM, Mamba, S4D, TCN and PatchTST score 0.89 to 1.00 at the base on every pair. At the top, after ten-shot adaptation, Prob-TCN averages 0.71, the floor 0.56 and TCN 0.44.</p>
+          </div>
+        </div>
+        <div class="column is-6">
+          <figure class="image"><img src="static/images/fig_fewshot_heights.png" alt="Adaptation along the tower"></figure>
+          <p class="how">R² along the height, zero-shot (dotted) and after ten-shot adaptation (solid), one panel per ordered pair.</p>
+        </div>
+      </div>
+      <p class="takeaway">Five simulations of a new tower are enough at its base; no adaptation measured recovers its top.</p>
+    </div>
+
+    <div class="result-block">
+      <p class="result-tag">Sensor ablation</p>
+      <h3 class="title is-5">The second accelerometer axis helps the top at every budget</h3>
+      <div class="columns">
+        <div class="column is-6">
+          <div class="content">
+            <p>At the top, TCN scores 0.94 with the platform motions added, 0.93 with both accelerometer axes, 0.76 with the task inputs, 0.68 with the accelerometer alone and 0.28 with SCADA alone; at 300 epochs 0.98, 0.97, 0.93, 0.84 and 0.74. The <em>R</em><sup>2</sup> gain of the second axis shrinks from 0.17 to 0.04, but at 300 epochs it still brings 87 to 90% of simulations within a factor of two against 72 to 76% with the task inputs, and within-condition correlation 0.94 to 0.95 against 0.82 to 0.88.</p>
+          </div>
+        </div>
+        <div class="column is-6">
+          <figure class="image"><img src="static/images/fig_ablation_heights.png" alt="Sensor ablation along the tower"></figure>
+          <p class="how">R² along the height under the five input sets, one panel per model, mean over the three towers.</p>
+        </div>
+      </div>
+      <p class="takeaway">The accelerometer is the sensor: with enough training one fore-aft axis gets the level of the top damage, and a second axis brings its fatigue metrics close to the base.</p>
+    </div>
+
+    <div class="result-block" style="margin-bottom:0;">
+      <p class="result-tag">Lifetime damage</p>
+      <h3 class="title is-5">The top governs the redesigns, and it is where reconstruction fails</h3>
+      <div class="columns is-vcentered">
+        <div class="column is-8">
+          <div class="content">
+            <p>On the redesigns the top carries at least as much lifetime damage as the base (1.5 times on <span class="tw-opt1">OPT1</span>, 1.07 times on <span class="tw-opt2">OPT2</span>), so the height where every model struggles is the one that governs their fatigue life. At the base the sequence models reconstruct the lifetime damage within about 20%, and the physics is 10 to 44% conservative. At the top TCN reconstructs 0.61 to 0.66 of it and Prob-TCN 1.44 to 1.74, still 0.67 to 0.76 and 1.15 to 1.26 at 300 epochs.</p>
+          </div>
+        </div>
+        <div class="column is-4">
+          <figure class="image"><img src="static/images/fig_lifetime_opt1.png" alt="Lifetime damage along the tower"></figure>
+          <p class="how">Lifetime damage along the tower over the base truth of each tower.</p>
+        </div>
+      </div>
+    </div>
   </div>
 </section>
 
-<!-- ============ DAMAGE ============ -->
-<section class="section">
+<!-- ============ MORE RESULTS ============ -->
+<section class="section" id="more">
   <div class="container is-max-desktop">
-    <h2 class="title is-3">Damage Along the Tower</h2>
-    <p class="subtitle is-6">For the simulation selected above: true damage at the 11 gauges and the damage implied by each model's reconstruction (seed-0 checkpoints, within-tower protocol).</p>
-    <div class="columns">
-      <div class="column is-8"><div class="box"><div id="profile" style="height:470px;"></div></div></div>
-      <div class="column is-4">
-        <div class="box">
-          <label class="label is-small">Models</label>
-          <div id="models" class="model-list"></div>
-          <p class="is-size-7 has-text-grey" id="profileNote" style="margin-top:0.8rem;"></p>
-        </div>
-      </div>
+    <h2 class="title is-3">More Results from the Paper</h2>
+    <p class="subtitle is-6">Figures from the appendix of the paper. Click a figure to open it at full size.</p>
+    <div class="columns is-multiline gallery">
+      <div class="column is-half"><div class="box">
+        <p class="title is-6">Damage is not waveform error</p>
+        <a href="static/images/fig_damage_vs_waveform.png" target="_blank" rel="noopener"><img src="static/images/fig_damage_vs_waveform.png" alt="Damage is not waveform error"></a>
+        <p class="how">Simulated and physics-reconstructed base moment on <span class="tw-opt2">OPT2</span> and their spectra: a close waveform can carry the wrong damage.</p>
+      </div></div>
+      <div class="column is-half"><div class="box">
+        <p class="title is-6">From the base to the top</p>
+        <a href="static/images/fig_base_vs_top.png" target="_blank" rel="noopener"><img src="static/images/fig_base_vs_top.png" alt="From the base to the top"></a>
+        <p class="how">R² at the base and at the top, one line per model, one panel per tower.</p>
+      </div></div>
+      <div class="column is-half"><div class="box">
+        <p class="title is-6">Regime cells at the top and at the base</p>
+        <a href="static/images/fig_regime_heatmap.png" target="_blank" rel="noopener"><img src="static/images/fig_regime_heatmap.png" alt="Regime cells at the top and at the base"></a>
+        <p class="how">Within a factor of two per tower and regime cell for the physics and the three models that beat the floor at the top.</p>
+      </div></div>
+      <div class="column is-half"><div class="box">
+        <p class="title is-6">Transfer functions, acceleration to moment</p>
+        <a href="static/images/fig_transfer_function.png" target="_blank" rel="noopener"><img src="static/images/fig_transfer_function.png" alt="Transfer functions from the tower-top acceleration to the moment"></a>
+        <p class="how">Empirical gain against the physics band gain and the learned spectral gain, at the base and at the top of <span class="tw-opt2">OPT2</span>.</p>
+      </div></div>
     </div>
   </div>
 </section>
 
-<!-- ============ ENVELOPE ============ -->
+<!-- ============ SCOPE ============ -->
 <section class="section has-background-light">
   <div class="container is-max-desktop">
-    <h2 class="title is-3">Operating Envelope</h2>
-    <p class="subtitle is-6">Reference damage of all 1,078 operating points of the selected tower, averaged over the six realizations. Ringed cells are the review simulations; click one to open it in the explorer.</p>
-    <div class="columns">
-      <div class="column is-7">
-        <div class="box">
-          <div class="buttons has-addons" id="secSeg" style="margin-bottom:0.5rem;"></div>
-          <div id="heat" style="height:460px;"></div>
-        </div>
-      </div>
-      <div class="column is-5"><div class="box"><div id="life" style="height:510px;"></div></div></div>
-    </div>
-  </div>
-</section>
-
-<!-- ============ BENCHMARK ============ -->
-<section class="section">
-  <div class="container is-max-desktop">
-    <h2 class="title is-3">Benchmark</h2>
+    <h2 class="title is-3">Scope and Future Work</h2>
     <div class="content has-text-justified">
-      <p>Within tower on the regime-aware partition of FLOATBench (4,740 test simulations per tower), at the declared budget of 50 epochs. Each cell is the mean over the three towers of the per-tower median over three seeds, or seed 0 where only one was run (&dagger;); the small grey number is the lowest tower. Click a column to sort; switch the height to see the ranking change.</p>
+      <p><strong>Simulation only.</strong> No measured load series enters the benchmark; the calibrated physics constants give a plausible platform pitch period, a plausibility check, not a validation. A leaderboard winner has still to survive sensor noise, sampling jitter and unmodeled dynamics.</p>
+      <p><strong>One turbine family, aligned seas.</strong> All simulations are of one 22 MW turbine on one platform under DLC 1.2, so cross tower measures a change of tower design, not of turbine class or load case; the aligned waves leave side-side without direct wave excitation, which is why the side-side moment is released but not scored.</p>
+      <p><strong>Mid-fidelity simulation.</strong> OpenFAST models the tower as a beam with engineering aerodynamics and hydrodynamics; higher-fidelity (FEA, CFD) re-runs of selected conditions will be released as new versions.</p>
+      <p><strong>One recipe, short of convergence.</strong> All models share one budget of 50 epochs, equal and declared in advance, which is not converged at the top: every top number is a number at this budget, and the longer probes cover four models at 300 epochs.</p>
     </div>
-    <div class="box">
-      <div class="buttons has-addons" id="hSeg"></div>
-      <div class="table-container">
-        <table class="table is-fullwidth is-hoverable is-narrow" id="board"><thead></thead><tbody></tbody></table>
-      </div>
-      <p class="is-size-7 has-text-grey">R&sup2; of log<sub>10</sub> damage; &times;2: share within a factor of two; ratio: median reconstructed / true damage; within-corr: correlation among the six realizations of an operating point; MRE: mean relative error. Physics and the one-gain floor are reference rows.</p>
-    </div>
-    <figure class="image" style="margin-top:2rem;"><img src="static/images/results.png" alt="Main results of the paper"></figure>
   </div>
 </section>
 
 <!-- ============ RESOURCES ============ -->
-<section class="section has-background-light">
+<section class="section">
   <div class="container is-max-desktop">
     <h2 class="title is-3">Resources</h2>
     <div class="columns is-multiline">
       <div class="column is-half"><div class="box">
-        <p class="title is-5"><span class="ico" data-i="db"></span> <a data-link="data">FLOATSense dataset</a></p>
-        <p>19,404 simulations on three towers in Parquet: series in 17 shards per tower (one row group per simulation), metadata, sections, reference damage and 66 parked runs. 24.0 GB, CC-BY-4.0. Released on publication.</p>
+        <p class="title is-5"><i class="fab fa-github"></i> &nbsp;<a href="https://github.com/Joao97ribeiro/FLOATSense">FLOATSense (code)</a></p>
+        <p>Loader, damage scorer, physics baseline, the 20 learned models, evaluation harness and the scripts behind every table and figure, driven by <code>--flagfile</code> configs. MIT license.</p>
       </div></div>
       <div class="column is-half"><div class="box">
-        <p class="title is-5"><span class="ico" data-i="gh"></span> <a data-link="code">FLOATSense code</a></p>
-        <p>Loader, damage scorer, physics baseline, 20 learned models, evaluation harness and the scripts behind every table and figure. MIT license.</p>
+        <p class="title is-5"><i class="fas fa-database"></i> &nbsp;FLOATSense (dataset)</p>
+        <p>The 19,404 simulations of the three towers in Parquet, with metadata, sections, reference damage and the 66 parked runs. 24.0 GB, CC-BY-4.0. Coming soon on Hugging Face.</p>
       </div></div>
       <div class="column is-half"><div class="box">
-        <p class="title is-5"><span class="ico" data-i="box"></span> Review subset</p>
-        <p><code>sim_id = 25 + 294k</code>, k = 0…21, the same 22 simulations on each tower, all in the test split, with the complete tabular files, 14 checkpoints and the paper's per-simulation damage to compare against.</p>
+        <p class="title is-5"><i class="fas fa-layer-group"></i> &nbsp;<a href="https://joao97ribeiro.github.io/FLOATBench/">FLOATBench</a></p>
+        <p>The simulation campaign FLOATSense builds on: the same simulations, identifiers and regime-aware partition, with 582,120 tabular fatigue labels and their benchmark.</p>
       </div></div>
       <div class="column is-half"><div class="box">
-        <p class="title is-5"><span class="ico" data-i="doc"></span> <a href="https://arxiv.org/abs/2605.25717" target="_blank" rel="noopener">FLOATBench</a></p>
-        <p>The simulation campaign FLOATSense builds on: the same simulations, identifiers and regime-aware partition, with 582,120 tabular fatigue labels.</p>
-      </div></div>
-      <div class="column is-half"><div class="box">
-        <p class="title is-5"><span class="ico" data-i="doc"></span> <a href="https://joao97ribeiro.github.io/FLOAT/" target="_blank" rel="noopener">FLOAT</a></p>
-        <p>The fatigue-aware tower design framework behind the opt1 and opt2 geometries, integrated into WISDEM.</p>
-      </div></div>
-      <div class="column is-half"><div class="box">
-        <p class="title is-5"><span class="ico" data-i="gh"></span> <a href="https://github.com/Joao97ribeiro/FLOAT-22-280-RWT-Semi" target="_blank" rel="noopener">FLOAT-22-280-RWT-Semi (towers)</a></p>
-        <p>The fatigue-redesigned IEA 22 MW semi-submersible towers as ready-to-use OpenFAST models, the geometries simulated in FLOATSense.</p>
+        <p class="title is-5"><i class="fas fa-drafting-compass"></i> &nbsp;<a href="https://joao97ribeiro.github.io/FLOAT/">FLOAT (design framework)</a></p>
+        <p>The fatigue-aware tower design framework that produced the OPT1 and OPT2 geometries; the towers are released as <a href="https://github.com/Joao97ribeiro/FLOAT-22-280-RWT-Semi">OpenFAST models</a>.</p>
       </div></div>
     </div>
   </div>
 </section>
 
 <!-- ============ CITATION ============ -->
-<section class="section">
+<section class="section has-background-light">
   <div class="container is-max-desktop">
     <div class="level is-mobile" style="margin-bottom:1rem;">
       <div class="level-left"><h2 class="title is-3" style="margin-bottom:0;">Citation</h2></div>
-      <div class="level-right"><button id="copy-bibtex" class="button is-rounded is-dark" type="button"><span class="ico" data-i="copy"></span><span>Copy BibTeX</span></button></div>
+      <div class="level-right">
+        <button id="copy-bibtex" class="button is-rounded is-dark" type="button" title="Copy BibTeX to clipboard">
+          <span class="icon"><i class="fas fa-copy"></i></span><span>Copy BibTeX</span>
+        </button>
+      </div>
     </div>
-    <pre style="white-space:pre-wrap;"><code id="bibtex-content">@misc{ribeiro2026floatsense,
+    <div class="bibtex-block">
+      <pre style="white-space:pre-wrap;"><code id="bibtex-content">@misc{ribeiro2026floatsense,
       title={FLOATSense: A Time-Series Dataset and Benchmark for Fatigue Load Reconstruction on Floating Offshore Wind Turbine Towers},
       author={João Alves Ribeiro and Bruno Alves Ribeiro and Francisco Pimenta and Sérgio M. O. Tavares and Faez Ahmed},
       year={2026},
 }</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ACKNOWLEDGEMENTS ============ -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3">Acknowledgements</h2>
+    <div class="content has-text-justified">
+      <p>The simulations underlying FLOATSense were produced with <a href="https://github.com/OpenFAST/openfast">OpenFAST</a> on the <a href="https://github.com/IEAWindSystems/IEA-22-280-RWT">IEA-22-280-RWT</a> reference floating wind turbine. The physics baseline follows the load reconstruction method of Pimenta et al. (2024). We thank these communities for keeping the underlying tools open.</p>
+    </div>
   </div>
 </section>
 
 <footer class="footer">
   <div class="content has-text-centered">
-    <p>Page template adapted from the <a href="https://github.com/eliahuhorwitz/Academic-project-page-template" target="_blank" rel="noopener">Academic Project Page Template</a>. Source on <a href="https://github.com/Joao97ribeiro/FLOATSense/tree/gh-pages" target="_blank" rel="noopener">GitHub</a>.</p>
+    <p>Page template adapted from the <a href="https://github.com/eliahuhorwitz/Academic-project-page-template">Academic Project Page Template</a>. Source on <a href="https://github.com/Joao97ribeiro/FLOATSense/tree/gh-pages">GitHub</a>.</p>
   </div>
 </footer>
 
-<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
-<script src="static/js/page.js"></script>
 </body>
 </html>
