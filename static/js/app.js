@@ -26,13 +26,13 @@ const MOMENT_SCALE = [[0, NAVY], [0.5, "#f7f7f7"], [1, RED]];
 // Height colors: base RED to top RED_LIGHT, the height gradient of the paper figures.
 function heightColor(k) { const a = [176, 44, 39], b = [240, 179, 176], f = k / 10;
   return `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * f)).join(",")})`; }
-const HEIGHT_PRESETS = [["bmt", "Base · middle · top", [0, 5, 10]], ["all", "All 11", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]];
+const HEIGHT_PRESETS = [["bmt", "Base · middle · top", [0, 5, 10]], ["all", "All 11", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]], ["none", "None", []]];
 function heightChips() {
   const same = s => s.length === st.heights.length && s.every(k => st.heights.includes(k));
-  $("height-chips").innerHTML = `<div class="chip-row"><span class="chip-group">Presets</span>` +
+  $("height-chips").innerHTML = `<div class="chip-row"><span class="chip-group">Presets</span><div class="chip-list">` +
     HEIGHT_PRESETS.map(([k, l, s]) => `<button type="button" class="button is-small is-rounded ${same(s) ? "is-dark" : ""}" data-hpreset="${k}" aria-pressed="${same(s)}">${l}</button>`).join("") +
-    `</div><div class="chip-row"><span class="chip-group">Heights</span>` +
-    GAUGE.map((g, k) => `<button type="button" class="chip" data-k="${k}" aria-pressed="${st.heights.includes(k)}"><span class="dot" style="background:${heightColor(k)}"></span>${g}</button>`).join("") + "</div>";
+    `</div></div><div class="chip-row"><span class="chip-group">Heights</span><div class="chip-list">` +
+    GAUGE.map((g, k) => `<button type="button" class="chip" data-k="${k}" aria-pressed="${st.heights.includes(k)}"><span class="dot" style="background:${heightColor(k)}"></span>${g}</button>`).join("") + "</div></div>";
 }
 const INPUTS = [
   ["tower_top_afa_mod", "FA accel. corr. [m/s²]", NAVY, "FA accel., corrected (input)"], ["tower_top_afa", "FA accel. [m/s²]", NAVY, "FA accel., raw"],
@@ -48,14 +48,14 @@ const INPUT_GROUPS = [["Accelerations", ["tower_top_afa_mod", "tower_top_afa", "
   ["Platform and wave", ["plat_surge", "plat_sway", "plat_heave", "plat_roll", "plat_pitch", "plat_yaw", "wave_elev"]]];
 function inputChips() {
   const byKey = Object.fromEntries(INPUTS.map(r => [r[0], r]));
-  $("input-chips").innerHTML = `<div class="chip-row"><span class="chip-group">Presets</span>` +
-    [["task", "Task inputs"], ["all", "All"]].map(([k, l]) => {
-      const set = k === "task" ? TASK_INPUTS : INPUTS.map(r => r[0]);
+  $("input-chips").innerHTML = `<div class="chip-row"><span class="chip-group">Presets</span><div class="chip-list">` +
+    [["task", "Task inputs"], ["all", "All"], ["none", "None"]].map(([k, l]) => {
+      const set = k === "task" ? TASK_INPUTS : k === "all" ? INPUTS.map(r => r[0]) : [];
       const on = set.length === st.inputs.length && set.every(c => st.inputs.includes(c));
-      return `<button type="button" class="button is-small is-rounded ${on ? "is-dark" : ""}" data-preset="${k}" aria-pressed="${on}">${l}</button>`; }).join("") + "</div>" +
-    INPUT_GROUPS.map(([g, cs], gi) => `<div class="chip-row"><button type="button" class="chip-group" data-group="${gi}" title="Show or hide the whole group">${g}</button>` +
+      return `<button type="button" class="button is-small is-rounded ${on ? "is-dark" : ""}" data-preset="${k}" aria-pressed="${on}">${l}</button>`; }).join("") + "</div></div>" +
+    INPUT_GROUPS.map(([g, cs], gi) => `<div class="chip-row"><button type="button" class="chip-group" data-group="${gi}" title="Show or hide the whole group">${g}</button><div class="chip-list">` +
     cs.map(c => { const [, , col, label] = byKey[c];
-      return `<button type="button" class="chip" data-c="${c}" aria-pressed="${st.inputs.includes(c)}"><span class="dot" style="background:${col}"></span>${label}</button>`; }).join("") + "</div>").join("");
+      return `<button type="button" class="chip" data-c="${c}" aria-pressed="${st.inputs.includes(c)}"><span class="dot" style="background:${col}"></span>${label}</button>`; }).join("") + "</div></div>").join("");
 }
 function setWindow(r) {
   let [a, b] = r.map(Number); if (!(a < b)) return;
@@ -113,10 +113,12 @@ function simCard() {
 function drawSeries() {
   const x = series(st.tower, st.sim);
   const rows = INPUTS.filter(r => st.inputs.includes(r[0]));
-  const n = rows.length, gap = n > 1 ? 0.2 / n : 0, h = (1 - gap * (n - 1)) / n, lay = L({margin: {l: 80, r: 20, t: 16, b: 50}});
-  $("plot-inputs").style.height = `${Math.max(260, 90 * n + 90)}px`;
+  const empty = !rows.length;
+  const n = Math.max(1, rows.length), gap = n > 1 ? 0.2 / n : 0, h = (1 - gap * (n - 1)) / n, lay = L({margin: {l: 80, r: 20, t: 16, b: 50}});
+  $("plot-inputs").style.height = empty ? "140px" : `${Math.max(260, 90 * n + 90)}px`;
   const tr = rows.map(([c, name, col], k) => ({x: time, y: x[c], type: "scattergl", mode: "lines", line: {width: 1, color: col},
     xaxis: "x", yaxis: `y${k ? k + 1 : ""}`, hovertemplate: `%{x:.1f} s<br>${name} %{y:.3f}<extra></extra>`}));
+  if (empty) lay.yaxis = AX({domain: [0, 1], showticklabels: false, title: {text: ""}});
   rows.forEach(([, name], k) => { lay[`yaxis${k ? k + 1 : ""}`] = AX({domain: [1 - (k + 1) * h - k * gap, 1 - k * h - k * gap], title: {text: name, font: {size: 10}}, nticks: 3}); });
   lay.xaxis = AX({anchor: `y${n}`, title: {text: "Time [s]"}, range: st.xr});
   Plotly.react("plot-inputs", tr, lay, CFG);
@@ -287,12 +289,12 @@ async function init() {
   heightChips(); inputChips();
   $("input-chips").onclick = e => {
     const p = e.target.closest("[data-preset]"), g = e.target.closest("[data-group]"), b = e.target.closest(".chip");
-    if (p) st.inputs = p.dataset.preset === "task" ? TASK_INPUTS.slice() : INPUTS.map(r => r[0]);
+    if (p) st.inputs = p.dataset.preset === "task" ? TASK_INPUTS.slice() : p.dataset.preset === "all" ? INPUTS.map(r => r[0]) : [];
     else if (g) { const cs = INPUT_GROUPS[+g.dataset.group][1], on = cs.every(c => st.inputs.includes(c));
       const next = on ? st.inputs.filter(c => !cs.includes(c)) : [...new Set([...st.inputs, ...cs])];
-      if (next.length) st.inputs = next; }
+      st.inputs = next; }
     else if (b) { const c = b.dataset.c, i = st.inputs.indexOf(c);
-      if (i >= 0) { if (st.inputs.length > 1) st.inputs.splice(i, 1); } else st.inputs.push(c); }
+      if (i >= 0) st.inputs.splice(i, 1); else st.inputs.push(c); }
     else return;
     st.inputs = INPUTS.map(r => r[0]).filter(c => st.inputs.includes(c));
     inputChips(); drawSeries(); };
@@ -300,7 +302,7 @@ async function init() {
     const p = e.target.closest("[data-hpreset]"), b = e.target.closest(".chip");
     if (p) st.heights = HEIGHT_PRESETS.find(x => x[0] === p.dataset.hpreset)[2].slice();
     else if (b) { const k = +b.dataset.k, i = st.heights.indexOf(k);
-      if (i >= 0) { if (st.heights.length > 1) st.heights.splice(i, 1); } else st.heights.push(k); }
+      if (i >= 0) st.heights.splice(i, 1); else st.heights.push(k); }
     else return;
     heightChips(); drawSeries(); };
   $("tw-apply").onclick = () => setWindow([$("tw-from").value, $("tw-to").value]);
