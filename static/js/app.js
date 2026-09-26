@@ -138,13 +138,6 @@ function drawEnvelope() {
       yaxis: AX({title: {text: "Sea state (Hs, Tp)"}, tickvals: [3, 17, 31, 45], ticktext: ["Hs 1", "Hs 3", "Hs 5", "Hs 7"], showgrid: false})}), CFG);
 }
 
-function drawLife() {
-  const tr = TOWERS.map((t, k) => ({x: D.life[t], y: D.heights, mode: "lines+markers", name: TOWER_NAME[t],
-    line: {color: TOWER_COLOR[t], width: 2.5}, marker: {size: 6, color: TOWER_COLOR[t]}, hovertemplate: `${TOWER_NAME[t]} %{x:.3f}<br>%{y:.1f} m<extra></extra>`}));
-  Plotly.react("plot-life", tr, L({showlegend: true, legend: {orientation: "h", y: -0.2, x: 0.5, xanchor: "center"}, margin: {l: 60, r: 20, t: 10, b: 70},
-    xaxis: AX({title: {text: "25-year fore-aft damage"}, rangemode: "tozero"}), yaxis: AX({title: {text: "Gauge height [m]"}})}), CFG);
-}
-
 function selectSim(i) { st.sim = i; simCard(); drawSeries(); drawProfile(); drawEnvelope(); }
 function selectTower(t) { st.tower = t; $("ex-tower").value = t; simCard(); drawSeries(); drawProfile(); drawEnvelope(); }
 
@@ -271,7 +264,7 @@ async function init() {
   $("models").onchange = e => { const m = e.target.closest("label").dataset.m, k = st.models.indexOf(m);
     if (k >= 0) st.models.splice(k, 1); else st.models.push(m); drawProfile(); };
 
-  simCard(); drawSeries(); drawProfile(); drawEnvelope(); drawLife(); regimeGrid();
+  simCard(); drawSeries(); drawProfile(); drawEnvelope(); regimeGrid();
   syncZoom("plot-inputs", "plot-targets"); syncZoom("plot-targets", "plot-inputs");
   $("plot-envelope").on("plotly_click", ev => { const p = ev.points[0]; if (p.curveNumber > 0 || p.y === 24) selectSim(p.x); });
 

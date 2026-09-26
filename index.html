@@ -11,9 +11,9 @@
   <link rel="icon" type="image/png" href="static/images/logo.png">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <link rel="stylesheet" href="static/css/style.css?v=3">
+  <link rel="stylesheet" href="static/css/style.css?v=4">
   <script defer src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
-  <script defer src="static/js/app.js?v=3"></script>
+  <script defer src="static/js/app.js?v=4"></script>
 </head>
 <body>
 
@@ -133,16 +133,8 @@
     </figure>
     <p class="is-size-7 has-text-grey" style="margin-bottom:2rem;">The 37 released time series of one simulation (1,000 s at 10 Hz): tower-top accelerations and SCADA as inputs, platform motions and wave elevation as context, and the fore-aft and side-side moments at 11 heights as targets.</p>
 
-    <div class="columns is-vcentered">
-      <div class="column is-7">
-        <figure class="image"><img src="static/images/fig_tower_geometry.png" alt="Outer diameter, wall thickness and lifetime damage of the three towers"></figure>
-        <p class="how">Tower geometry and damage along the height of the three towers, from FLOATBench. Damage: lifetime-weighted Miner sum over all simulations.</p>
-      </div>
-      <div class="column is-5">
-        <div id="plot-life" class="plot plot-tall"></div>
-        <p class="how">Lifetime fore-aft damage at the 11 FLOATSense gauges, from <code>damage.parquet</code> and <code>damage_weight</code> (all 6,468 simulations per tower).</p>
-      </div>
-    </div>
+    <figure class="image" style="margin-bottom:0.5rem;"><img src="static/images/fig_tower_geometry.png" alt="Outer diameter, wall thickness and lifetime damage of the three towers"></figure>
+    <p class="is-size-7 has-text-grey" style="margin-bottom:2rem;">Tower geometry and damage along the height of the three towers, from FLOATBench. Damage: lifetime-weighted Miner sum over all simulations.</p>
 
     <h3 class="title is-5" style="margin-top:1.5rem;">Files (per tower, on Hugging Face)</h3>
     <div class="table-container">
