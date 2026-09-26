@@ -34,11 +34,17 @@ const INPUTS = [
   ["tower_top_ass_mod", "SS accel. corr. [m/s²]", "#5b7fa6", "SS accel., corrected"], ["tower_top_ass", "SS accel. [m/s²]", "#5b7fa6", "SS accel., raw"],
   ["wind_speed", "Wind [m/s]", SCADA, "Wind speed (input)"], ["rotor_speed", "Rotor [rpm]", SCADA, "Rotor speed (input)"],
   ["blade_pitch", "Pitch [deg]", SCADA, "Blade pitch (input)"], ["electrical_power", "Power [kW]", SCADA, "Generator power"],
-  ["plat_surge", "Surge [m]", CYAN, "Platform surge"], ["plat_sway", "Sway [m]", CYAN, "Platform sway"], ["plat_heave", "Heave [m]", CYAN, "Platform heave"],
-  ["plat_roll", "Roll [deg]", CYAN, "Platform roll"], ["plat_pitch", "Platform pitch [deg]", CYAN, "Platform pitch"], ["plat_yaw", "Yaw [deg]", CYAN, "Platform yaw"],
+  ["plat_surge", "Surge [m]", CYAN, "Surge"], ["plat_sway", "Sway [m]", CYAN, "Sway"], ["plat_heave", "Heave [m]", CYAN, "Heave"],
+  ["plat_roll", "Roll [deg]", CYAN, "Roll"], ["plat_pitch", "Platform pitch [deg]", CYAN, "Pitch"], ["plat_yaw", "Yaw [deg]", CYAN, "Yaw"],
   ["wave_elev", "Wave [m]", CYAN, "Wave elevation"]];
+const INPUT_GROUPS = [["Accelerations", ["tower_top_afa_mod", "tower_top_afa", "tower_top_ass_mod", "tower_top_ass"]],
+  ["SCADA", ["wind_speed", "rotor_speed", "blade_pitch", "electrical_power"]],
+  ["Platform and wave", ["plat_surge", "plat_sway", "plat_heave", "plat_roll", "plat_pitch", "plat_yaw", "wave_elev"]]];
 function inputChips() {
-  $("input-chips").innerHTML = INPUTS.map(([c, , col, label]) => `<button type="button" class="chip" data-c="${c}" aria-pressed="${st.inputs.includes(c)}"><span class="dot" style="background:${col}"></span>${label}</button>`).join("");
+  const byKey = Object.fromEntries(INPUTS.map(r => [r[0], r]));
+  $("input-chips").innerHTML = INPUT_GROUPS.map(([g, cs]) => `<div class="chip-row"><span class="chip-group">${g}</span>` +
+    cs.map(c => { const [, , col, label] = byKey[c];
+      return `<button type="button" class="chip" data-c="${c}" aria-pressed="${st.inputs.includes(c)}"><span class="dot" style="background:${col}"></span>${label}</button>`; }).join("") + "</div>").join("");
 }
 function setWindow(r) {
   let [a, b] = r.map(Number); if (!(a < b)) return;
