@@ -1,0 +1,78 @@
+"""Signed waveform metrics, within tower, on 200 fixed test sims per tower.
+
+Checkpoint outputs/heights/<tower>/seed<k>/<model>_fa.pt, the unchanged
+trainer data path (400-1000 s window, source normalization, gravity-corrected
+inputs). Both series denormalized (kN.m, zero-mean target) and low-passed at
+3 Hz (as the damage score). Per sim and height: Pearson r(pred, true) and
+NRMSE = RMS(pred - true) / std(true). Variants: tcn; prob_tcn_mean (mean
+head, no sampling); prob_tcn_sample (mean + sigma * N(0,1), torch seed = seed).
+Heights: bottom (z/H 0), tower_5 (0.48), tower_8 (0.78), top (1.0).
+Check: variance ratio var(pred)/var(true) vs the stored var_ratio column
+(tcn and prob_tcn draw columns of damage_comparison_<m>_fa.csv).
+Usage: python waveform.py <tower> <seed> [models, default tcn,prob_tcn]
+"""
+import os, sys
+import numpy as np, pandas as pd, torch
+ROOT = os.environ.get("FLOATSENSE_ROOT", ".")
+sys.path.insert(0, ROOT); os.chdir(ROOT)
+from floatsense.heights import calibrate_profile
+from floatsense.splits import split_ids
+from floatsense.tower import Tower
+from floatsense.trainer import SequenceModelTrainer
+from floatsense.physics import lowpass
+from floatsense.data import HEIGHT_TARGETS
+
+tower, seed = sys.argv[1], int(sys.argv[2])
+OUT = f"{ROOT}/outputs/controls/a5_waveform"
+ids = sorted(np.random.default_rng(0).choice(split_ids(f"data/{tower}", "E2/test"), 200, replace=False).tolist())
+pd.Series(ids, name="sim_id").to_csv(f"{OUT}/sample_ids_{tower}.csv", index=False)
+SECTIONS = [0, 5, 8, 10]
+rows = []
+MODELS = sys.argv[3].split(",") if len(sys.argv) > 3 else ["tcn", "prob_tcn"]
+for model in MODELS:
+    src = f"data/{tower}"
+    tr = SequenceModelTrainer(
+        packed_dir=f"{src}/timeseries", output_dir=f"outputs/heights/{tower}/seed{seed}",
+        tower=Tower(json_path=f"{src}/tower.json"), direction="fa", model_name=model,
+        min_time=400.0, max_time=1000.0, lowpass_hz=3.0, crop_length=4096, batch_size=16,
+        learning_rate=1e-3, num_epochs=50, val_every=0, early_stopping_patience=0,
+        num_workers=4, sn_intercepts_log10=[12.010, 15.350], sn_slopes=[3.0, 5.0],
+        loss_name="mse", damage_loss_weight=1.0, init_checkpoint=None, calibration_path=None,
+        condition_bound=0.5, target_channel=None, damage_section=0, input_channels=None,
+        height_targets=True, height_factors=calibrate_profile(src)["factors"], seed=seed)
+    tr.load_checkpoint(); tr.model.eval()
+    ds = tr._make_dataset(ids, None)
+    torch.manual_seed(seed)
+    fs = ds.sampling_frequency
+    with torch.no_grad():
+        for i in range(len(ds)):
+            for s in SECTIONS:
+                ds.section = s
+                item = ds[i]
+                x = item["inputs"][None].to(tr.device); c = item["condition"][None].to(tr.device)
+                out = tr.model(x, c)[0]
+                variants = {}
+                if getattr(tr.model, "predicts_variance", False):
+                    variants["prob_tcn_mean"] = out[0].cpu().numpy()
+                    sig = torch.exp(0.5 * out[1])
+                    variants["prob_tcn_sample"] = (out[0] + sig * torch.randn_like(sig)).cpu().numpy()
+                else:
+                    variants[model] = out[0].cpu().numpy()
+                true = lowpass(ds.denormalize_target(item["target"][0].numpy()), fs, 3.0)
+                for v, p in variants.items():
+                    p = lowpass(ds.denormalize_target(p), fs, 3.0)
+                    rows.append(dict(tower=tower, seed=seed, variant=v, sim_id=ds.sim_ids[i],
+                                     height=HEIGHT_TARGETS[s][0], z_h=HEIGHT_TARGETS[s][2],
+                                     pearson=float(np.corrcoef(p, true)[0, 1]),
+                                     nrmse=float(np.sqrt(np.mean((p - true) ** 2)) / np.std(true)),
+                                     var_ratio=float(np.var(p) / np.var(true))))
+df = pd.DataFrame(rows)
+df.to_csv(f"{OUT}/waveform_{tower}_seed{seed}.csv", index=False)
+for m, v in [(m, m) for m in MODELS if m != "prob_tcn"] + ([("prob_tcn", "prob_tcn_sample")] if "prob_tcn" in MODELS else []):
+    st = pd.read_csv(f"outputs/heights/{tower}/seed{seed}/damage_comparison_{m}_fa.csv").set_index("sim_id")
+    d = df[df.variant == v]
+    for h in d.height.unique():
+        e = d[d.height == h].set_index("sim_id")
+        rel = (e.var_ratio / st.loc[e.index, f"var_ratio_{h}"] - 1).abs()
+        print(f"check {tower} s{seed} {v} {h}: median|rel| var_ratio {rel.median():.2e} max {rel.max():.2e}")
+print(df.groupby(["variant", "height"])[["pearson", "nrmse", "var_ratio"]].median().round(3))
