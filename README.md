@@ -194,6 +194,7 @@ tower design-optimization framework that the `ref` tower is redesigned with.
 FLOATSense/                          24.0 GB
 ├── ref/
 │   ├── series-<k>-of-00017.parquet   sim_id, time_s, 37 channels; 400 simulations per shard, one row group each
+│   │                                 (the review subset has one shard, series-00000-of-00001.parquet)
 │   ├── series_stats.parquet          mean, std, min, max of every channel over 400-1,000 s
 │   ├── metadata.parquet              sim_id, wind_speed_id, wind_speed, mean_wind_speed, std_wind_speed,
 │   │                                 wave_hs_id, wave_hs, wave_tp_id, wave_tp, wind_seed_id,
@@ -260,6 +261,11 @@ $\sum_i$ `damage_i * damage_weight_i`. The benchmark metrics use the
 unweighted per-simulation damage.
 
 ## Quickstart
+
+The commands below need the full dataset: the physics calibration and
+the training read the train split, which the review subset does not ship
+(its simulations are listed in `splits/review/test`; see *Download (review
+subset)* for what runs on it).
 
 ```bash
 # Physics baseline on one tower (CPU, ~3 min): calibrate on train, score test
@@ -334,6 +340,8 @@ the source tower, so they hold only `profile.json` and
 `damage_heights.csv`.
 
 ### Protocols
+
+Full dataset only, like the Quickstart.
 
 ```bash
 # Within tower, three seeds
@@ -419,7 +427,7 @@ import pandas as pd
 from floatsense import cluster_bootstrap, load_tower
 from floatsense.metrics import condition_key
 
-df = pd.read_csv("outputs/within/opt2/seed0/damage_comparison_tcn_fa.csv")
+df = pd.read_csv("outputs/within/opt2/seed0/damage_comparison_tcn_fa.csv")  # review subset: outputs/review/opt2/...
 tower = load_tower("data/FLOATSense", "opt2")
 meta = tower.metadata.loc[df.sim_id]
 ci = cluster_bootstrap(df.damage_true_tower_top.values,
@@ -486,8 +494,8 @@ budget**, while platform motions add little beyond it.
 
 ## License
 
-Code released under the [MIT License](LICENSE.txt). Dataset on
-Hugging Face is released under
+Code released under the [MIT License](LICENSE.txt). The dataset is
+released under
 [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/).
 
 

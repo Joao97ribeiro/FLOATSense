@@ -13,7 +13,7 @@ Examples:
   python scripts/train/run.py ... --tower=ref --batch_size=4 \
       --train_split=fewshot/train_10_draw0 \
       --init_checkpoint_dir=outputs/within/opt2/seed0 \
-      --output_dir=outputs/fewshot/opt2_to_ref/draw0
+      --output_dir=outputs/fewshot/opt2_to_ref/draw0/seed0
 
   # sensor ablation: both accelerometer axes and SCADA
   python scripts/train/run.py ... --input_channels=tower_top_afa_mod,\
@@ -152,8 +152,9 @@ def main(_):
         train_ids = train_ids[:FLAGS.max_train_sims]
     if FLAGS.max_eval_sims:
         test_ids = test_ids[:FLAGS.max_eval_sims]
-    logging.info("Tower %s | train %d | test %d | out %s", FLAGS.tower,
-                 len(train_ids), len(test_ids), output_dir)
+    logging.info("Tower %s | train %s | test %d | out %s", FLAGS.tower,
+                 len(train_ids) if FLAGS.run_training else "- (evaluation only)",
+                 len(test_ids), output_dir)
 
     hybrid = any(m.startswith("hybrid") for m in FLAGS.models)
     height_factors = ({d: calibrate_profile(FLAGS.dataset_dir, FLAGS.tower,

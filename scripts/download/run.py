@@ -90,8 +90,9 @@ def main(_):
     missing = [str(p) for p in expected if not p.exists()]
     if missing:
         raise SystemExit(f"Missing after unpacking: {missing}")
+    num_files = sum(1 for p in data_dir.rglob("*") if p.is_file())
     logging.info("Dataset ready in %s/ (%d files, checksum verified).",
-                 data_dir, len(expected))
+                 data_dir, num_files)
 
 
 if __name__ == "__main__":

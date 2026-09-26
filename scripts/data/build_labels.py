@@ -18,8 +18,8 @@ the evaluation), its mean removed,
 low-passed at 3 Hz, rainflow-counted and passed through the S-N curve with
 the mean outer radius and wall thickness of the nearest FLOATBench section.
 
-Usage: python scripts/data/build_labels.py --dataset_dir=../FLOATSense-dataset \
-           --floatbench_dir=../FLOATBench-dataset --towers=ref,opt1,opt2
+Usage: python scripts/data/build_labels.py --dataset_dir=data/FLOATSense \
+           --floatbench_dir=data/FLOATBench --towers=ref,opt1,opt2
 """
 
 import glob

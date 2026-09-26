@@ -118,6 +118,12 @@ class ReleasedTower:
 
     def load(self, sim_id: int) -> np.ndarray:
         """Full (10001, 37) float32 array of one simulation."""
+        if int(sim_id) not in self._row_groups:
+            raise KeyError(
+                f"sim_id {sim_id} is not in the series shards of {self.tower_dir} "
+                f"({len(self._row_groups)} simulations present). The review subset "
+                "holds only the simulations of splits/review/test; training and the "
+                "physics calibration need the full dataset.")
         path, group = self._row_groups[int(sim_id)]
         if path not in self._files:
             self._files[path] = pq.ParquetFile(path)
