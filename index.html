@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="stylesheet" href="static/css/style.css?v=6">
   <script defer src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
-  <script defer src="static/js/app.js?v=13"></script>
+  <script defer src="static/js/app.js?v=17"></script>
 </head>
 <body>
 
@@ -150,7 +150,7 @@
         </tbody>
       </table>
     </div>
-    <p class="how">8.0 GB per tower, 24.0 GB in all, CC-BY-4.0. Every file is keyed by the FLOATBench <code>sim_id</code>, the same on the three towers.</p>
+    <p class="how">8.0 GB per tower, 24.0 GB in all, CC-BY-4.0. Every file is keyed by the FLOATBench <code>sim_id</code>, the same on the three towers. The full dataset will be shared on Hugging Face; this page and its explorer use a preview subset of 66 simulations (one per wind speed on each tower).</p>
 
     <h3 class="title is-5" style="margin-top:1.5rem;">Channels</h3>
     <div class="table-container">
@@ -198,6 +198,10 @@
   <div class="container is-max-desktop">
     <h2 class="title is-3">Dataset Explorer</h2>
     <p class="subtitle is-6">One simulation per wind speed on each tower (the middle level of the wave grid, first realization): 66 simulations, the same <code>sim_id</code> on the three towers, all in the test split. The model inputs on top; below, the fore-aft and side-side moments at the heights you pick (base dark red, top light). The scored window at 5 Hz. Pick the time window, the signals and the heights to show.</p>
+    <div class="has-text-centered" style="margin:0 0 1rem;padding:0.6rem 0;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;">
+      <span style="text-transform:uppercase;letter-spacing:0.1em;color:#c05621;font-size:0.75rem;font-weight:700;">Preview subset</span>
+      &nbsp; <span style="color:#2d3748;">This page shows 66 of the 19,404 simulations. The full dataset will be shared on Hugging Face with the release.</span>
+    </div>
     <p class="is-size-7 has-text-grey" id="ex-source" style="margin-top:-0.75rem;margin-bottom:1rem;"><span class="icon"><i class="fas fa-spinner fa-spin"></i></span> Loading the time series…</p>
 
     <div class="box">
@@ -252,8 +256,8 @@
       <div id="plot-inputs" class="plot" style="height:630px;"></div>
     </div>
     <div class="box">
-      <label class="label is-small">Heights</label>
-      <div class="chips" id="height-chips" role="group" aria-label="Heights to show" style="margin-top:0;margin-bottom:0.5rem;"></div>
+      <label class="label is-small">Moments</label>
+      <div id="height-chips" role="group" aria-label="Heights to show" style="margin-bottom:0.5rem;"></div>
       <div id="plot-targets" class="plot" style="height:520px;"></div>
     </div>
 
@@ -392,6 +396,7 @@ damage = tower.damage()          # sim_id x section_id</code></pre>
             <button type="button" class="button is-small" data-h="5">Middle (z/H 0.48)</button>
             <button type="button" class="button is-small" data-h="8">Gauge 8 (z/H 0.78)</button>
             <button type="button" class="button is-small is-dark is-selected" data-h="10">Top (z/H 1)</button>
+            <button type="button" class="button is-small" data-h="-1">Mean of 11 heights</button>
           </div>
         </div>
       </div>
