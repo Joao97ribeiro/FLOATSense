@@ -114,14 +114,19 @@ function drawSeries() {
   const x = series(st.tower, st.sim);
   const rows = INPUTS.filter(r => st.inputs.includes(r[0]));
   const empty = !rows.length;
-  const n = Math.max(1, rows.length), gap = n > 1 ? 0.2 / n : 0, h = (1 - gap * (n - 1)) / n, lay = L({margin: {l: 80, r: 20, t: 16, b: 50}});
-  const px = empty ? 140 : Math.max(260, (n > 8 ? 62 : 90) * n + 90);
+  const n = Math.max(1, rows.length), gap = n > 1 ? 0.35 / n : 0, h = (1 - gap * (n - 1)) / n, lay = L({margin: {l: 50, r: 20, t: 16, b: 50}});
+  const px = empty ? 140 : Math.max(260, (n > 8 ? 70 : 90) * n + 90);
   $("plot-inputs").style.height = `${px}px`; lay.height = px;
   const tr = rows.map(([c, name, col], k) => ({x: time, y: x[c], type: "scattergl", mode: "lines", line: {width: 1, color: col},
     xaxis: "x", yaxis: `y${k ? k + 1 : ""}`, hovertemplate: `%{x:.1f} s<br>${name} %{y:.3f}<extra></extra>`}));
   if (empty) lay.yaxis = AX({domain: [0, 1], showticklabels: false, title: {text: ""}});
-  rows.forEach(([, name], k) => { lay[`yaxis${k ? k + 1 : ""}`] = AX({domain: [1 - (k + 1) * h - k * gap, 1 - k * h - k * gap], title: {text: name, font: {size: 10}}, nticks: 3}); });
+  lay.annotations = [];
+  rows.forEach(([, name, col], k) => { const top = 1 - k * h - k * gap;
+    lay[`yaxis${k ? k + 1 : ""}`] = AX({domain: [1 - (k + 1) * h - k * gap, top], nticks: 3, tickfont: {size: 9}});
+    lay.annotations.push({text: name, xref: "paper", yref: "paper", x: 0.005, y: top, xanchor: "left", yanchor: "top", showarrow: false,
+      font: {size: 10, color: col}, bgcolor: "rgba(255,255,255,0.8)"}); });
   lay.xaxis = AX({anchor: `y${n}`, title: {text: "Time [s]"}, range: st.xr});
+  if (empty) tr.push({x: [st.xr[0], st.xr[1]], y: [0, 0], xaxis: "x", yaxis: "y", mode: "lines", line: {color: "rgba(0,0,0,0)"}, hoverinfo: "skip", showlegend: false});
   Plotly.react("plot-inputs", tr, lay, CFG);
   if (!$("plot-inputs")._fsBound) { syncZoom("plot-inputs"); $("plot-inputs")._fsBound = true; }
 
@@ -142,6 +147,8 @@ function drawSeries() {
     t2.push({x: time, y: x[`${H[k]}_mss`], type: "scattergl", mode: "lines", line: {width: 1, color: col}, xaxis: "x", yaxis: "y2", name: GAUGE[k], legendgroup: `h${k}`, showlegend: false,
       hovertemplate: `${GAUGE[k]} SS %{y:.1f}<extra></extra>`});
   });
+  // Keep both panels drawn when no height is selected.
+  ["y", "y2"].forEach(ax => t2.push({x: [st.xr[0], st.xr[1]], y: [0, 0], xaxis: "x", yaxis: ax, mode: "lines", line: {color: "rgba(0,0,0,0)"}, hoverinfo: "skip", showlegend: false}));
   Plotly.react("plot-targets", t2, T, CFG);
 }
 
