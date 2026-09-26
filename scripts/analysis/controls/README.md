@@ -11,7 +11,7 @@ surrogate needs `xgboost` and `scikit-learn`, the Markdown tables `tabulate`
 |---|---|
 | `a123_cpu.py` | (1) condition-only oracle (mean of the true damage over the six realizations of each operating point, and leave-one-out); (2) within-condition calibration slope (OLS slope of predicted on true within-condition deviation of log10 damage); (3) lifetime damage ratio. Condition-level cluster bootstrap, B = 2000. |
 | `a123_extras.py` | Same metrics for the protocol variants (two axes, SCADA only, top only). |
-| `a1b_surrogate.py` | Condition-only XGBoost surrogate (and a GP) on (wind, Hs, Tp), trained on the training split. |
+| `a1b_surrogate.py` | Condition-only XGBoost surrogate on (wind, Hs, Tp), trained on the training split. |
 | `scale/infer_designed.py` | Inference of the source-tower checkpoints on the target tower's few-shot training simulations (`fewshot/train_designed`, `fewshot/train_5_draw0`) or, with `check`, on its first three test simulations. |
 | `scale/check.py` | Checks that re-run inference (`check`) reproduces the stored zero-shot damage. |
 | `scale/analyze.py`, `scale/boot.py` | One scale factor per height, median(true/predicted damage) over the calibration simulations, applied to the stored zero-shot predictions; cluster-bootstrap intervals. |
@@ -31,14 +31,14 @@ Set by environment variables (`layout.py`); relative values are taken from
 | `FLOATSENSE_OUTPUTS` | `outputs` | root of the other experiments (table below) |
 | `FLOATSENSE_CONTROLS` | `outputs/controls` | where the controls write |
 | `FLOATSENSE_LAYOUT` | `release` | `release` or `paper` (table below) |
-| `FLOATSENSE_PAPER_TABLES` | unset | folder of the paper's `curve_top.tex` and `curve_base.tex`; fills the `paper_FT_*` columns of `scale/analyze.py` |
+| `FLOATSENSE_PAPER_TABLES` | unset | optional: folder of the paper's `curve_top.tex` and `curve_base.tex` (tables of the paper source, not shipped); fills the `paper_FT_*` columns of `scale/analyze.py`, which stay empty otherwise |
 
 Files read (`<t>` tower, `<k>` seed, `<m>` model: `naive`, `tcn`,
 `prob_tcn`, `transformer`, `mamba`):
 
 | Input | Written by | Release layout | Paper layout |
 |---|---|---|---|
-| within tower, seeds 0-2 | `scripts/train/run.py` (`--eval_towers` for the zero-shot files) | `<runs>/<t>/seed<k>/damage_comparison_<m>_fa[_zs_<target>].csv`, `<m>_fa.pt` | same, with `FLOATSENSE_RUNS=<outputs>/heights` |
+| within tower, seeds 0-2 (the floor has seed 0 only; missing files are reported and skipped) | `scripts/train/run.py` (`--eval_towers` for the zero-shot files) | `<runs>/<t>/seed<k>/damage_comparison_<m>_fa[_zs_<target>].csv`, `<m>_fa.pt` | same, with `FLOATSENSE_RUNS=<outputs>/heights` |
 | two axes, seed 0 | `--output_root=outputs/ablation/twoaxis` | `<outputs>/ablation/twoaxis/<t>/seed0/` | `<outputs>/heights/ablation/twoaxis/<t>/` |
 | SCADA only, seed 0 | `--output_root=outputs/ablation/scada` | `<outputs>/ablation/scada/<t>/seed0/` | `<outputs>/heights/ablation/scada/<t>/` |
 | top only, seed 0 | `--output_root=outputs/toponly` | `<outputs>/toponly/<t>/seed0/` | `<outputs>/diag/toponly/<t>/` |
@@ -57,8 +57,14 @@ Outputs, under `<controls>/`: `a123_per_seed.csv`, `a123_seed_median.csv`,
 
 ## Order
 
+Run from the repository root (the loop below tests the checkpoint files
+relative to it).
+
 ```bash
+# runs produced with this repository (release layout)
 export FLOATSENSE_DATA=data/FLOATSense FLOATSENSE_RUNS=outputs/within
+# or the paper's runs (paper layout):
+# export FLOATSENSE_LAYOUT=paper FLOATSENSE_OUTPUTS=<outputs> FLOATSENSE_RUNS=<outputs>/heights
 C=scripts/analysis/controls
 python $C/a123_cpu.py && python $C/make_tables.py
 python $C/a123_extras.py

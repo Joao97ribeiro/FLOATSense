@@ -4,9 +4,10 @@ Inputs (wind_speed, wave_hs, wave_tp) only; target log10 D per simulation
 from the released damage (damage.parquet), train split (1,728 sims). Scored
 on the test split against damage_true_* of the seed-0 TCN run, with the
 same metrics as a123_cpu.py (rho_wc = 0 by construction).
-Models: XGBoost (500 trees, depth 4, lr 0.05) and a GP (RBF-ARD + white
-noise, standardized inputs, fit on op-point means of log10 D).
-Needs xgboost and scikit-learn. Writes a1b_surrogate.csv to the controls
+Model: XGBoost (500 trees, depth 4, lr 0.05). A Gaussian process was also
+tried and dropped: its length-scale fit lands on degenerate optima that
+break extrapolation cells arbitrarily, and the paper reports XGBoost only.
+Needs xgboost. Writes a1b_surrogate.csv to the controls
 folder. Paths: see layout.py.
 
 Usage: python scripts/analysis/controls/a1b_surrogate.py
@@ -17,8 +18,6 @@ import sys
 import numpy as np
 import pandas as pd
 import xgboost as xgb
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import layout  # noqa: E402  pylint: disable=wrong-import-position
@@ -47,13 +46,6 @@ for t in layout.TOWERS:
                              subsample=0.8, random_state=0, n_jobs=8)
         g.fit(xtr, y)
         preds["XGBoost"] = 10**g.predict(xte)
-        mu, sd = xtr.mean(0), xtr.std(0)
-        opm = pd.DataFrame(xtr).assign(y=y).groupby([0, 1, 2]).y.mean()
-        xo = (np.array(opm.index.tolist()) - mu) / sd
-        k = ConstantKernel() * RBF([1.0] * 3) + WhiteKernel(1e-3)
-        gp = GaussianProcessRegressor(k, normalize_y=True, random_state=0,
-                                      n_restarts_optimizer=2).fit(xo, opm.values)
-        preds["GP"] = 10**gp.predict((xte - mu) / sd)
         for name, rec in preds.items():
             for grp in ["all"] + sorted(set(reg)):
                 sel = np.ones(len(reg), bool) if grp == "all" else reg == grp

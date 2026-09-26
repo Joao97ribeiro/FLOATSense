@@ -64,6 +64,8 @@ for seed in (0, 1, 2):
                     for k, s in scales.items():
                         rows.append({**base, "calib": k, "scale": s, **summarize_damage(t, s * r)})
 df = pd.DataFrame(rows)
+if df.empty:
+    sys.exit(f"No designed/rand5 inference found under {A}/infer: run scale/infer_designed.py with 'designed' and 'rand5' first.")
 df.to_csv(f"{A}/scale_recal_all.csv", index=False)
 
 # paper fine-tuning numbers (seed 0, draw 0)

@@ -16,6 +16,8 @@ import layout  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense import load_tower  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.metrics import cluster_bootstrap  # noqa: E402  pylint: disable=wrong-import-position
 A = layout.controls("a4_scale")
+if not os.path.exists(f"{A}/scale_recal_all.csv") or os.path.getsize(f"{A}/scale_recal_all.csv") == 0:
+    sys.exit(f"{A}/scale_recal_all.csv is missing: run scale/analyze.py first.")
 S = pd.read_csv(f"{A}/scale_recal_all.csv")
 S = S[(S.seed == 0) & S.model.isin(["tcn", "prob_tcn"]) & S.calib.isin(["none", "rand5", "des18"])]
 
