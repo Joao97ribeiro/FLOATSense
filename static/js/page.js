@@ -1,11 +1,13 @@
 // FLOATSense project page: dataset explorer, damage profiles, envelope and leaderboard.
 
-// Links: null while the anonymized repositories are pending.
+// Links: null until available (paper preprint, public dataset).
 const LINKS = {
   paper: null,
   code: "https://github.com/Joao97ribeiro/FLOATSense",
   data: null,
   subset: null,
+  floatbench: "https://arxiv.org/abs/2605.25717",
+  towers: "https://github.com/Joao97ribeiro/FLOAT-22-280-RWT-Semi",
 };
 
 const ICONS = {
@@ -53,8 +55,8 @@ function links(){
   const btn = (key, label, icon, note) => LINKS[key]
     ? `<a href="${LINKS[key]}" target="_blank" rel="noopener" class="button is-rounded is-dark"><span class="ico">${ICONS[icon]}</span><span>${label}</span></a>`
     : `<button class="button is-rounded is-dark" disabled title="${note}"><span class="ico">${ICONS[icon]}</span><span>${label}</span></button>`;
-  $("links").innerHTML = btn("paper","Paper","doc","On OpenReview") + btn("code","Code","gh","Anonymized link pending") +
-    btn("data","Dataset","db","Released on publication") + btn("subset","Review subset","box","Anonymized link pending");
+  $("links").innerHTML = btn("paper","Paper","doc","Coming soon") + btn("code","Code","gh","") +
+    btn("data","Dataset","db","Coming soon on Hugging Face") + btn("floatbench","FLOATBench","doc","") + btn("towers","Towers","gh","");
   document.querySelectorAll("a[data-link]").forEach(a => { const u = LINKS[a.dataset.link]; if(u){ a.href = u; a.target = "_blank"; a.rel = "noopener"; } });
 }
 function seg(el, items, cur, on){
