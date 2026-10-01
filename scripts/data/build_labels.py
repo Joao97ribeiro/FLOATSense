@@ -51,7 +51,9 @@ flags.DEFINE_list("towers", ["ref", "opt1", "opt2"], "Towers to process.")
 flags.DEFINE_integer("workers", 8, "Worker processes for the damage.")
 flags.DEFINE_list("tower_geometry", None,
                   "<tower>:<path> of the tower geometry JSON of the OpenFAST "
-                  "campaign, one per tower (radius at the gauge height).")
+                  "campaign, one per tower (diameter and z at the section "
+                  "transitions, section thickness); the outer radius at each "
+                  "gauge height is interpolated linearly from it.")
 
 FS, MIN_TIME, MAX_TIME, LOWPASS_HZ = 10.0, 400.0, 1000.0, 3.0
 SN_INTERCEPTS, SN_SLOPES = [12.010, 15.350], [3.0, 5.0]
