@@ -244,7 +244,8 @@ class PhysicsReconstruction:
                  segment_length: int = 4096,
                  lf_fit_band: Tuple[float, float] = (0.01, 0.05),
                  operating_power_kw: float = 100.0,
-                 lowpass_hz: float = 3.0,
+                 band_hz: float = 3.0,
+                 lowpass_hz: float = 0.0,
                  sn_intercepts_log10: Optional[List[float]] = None,
                  sn_slopes: Optional[List[float]] = None):
         """Initializes the baseline.
@@ -265,8 +266,11 @@ class PhysicsReconstruction:
             lf_fit_band (Tuple[float, float]): Bins [Hz] fitting C4 and C5.
             operating_power_kw (float): Generated power above which a sample
               counts as operating, for the rotor-speed windows.
-            lowpass_hz (float): Low-pass cutoff applied to both the
-              reconstruction and the simulated moment before the damage.
+            band_hz (float): Upper edge of the reconstruction band: the gain
+              is zero above it (part of the method; 0 keeps every bin).
+            lowpass_hz (float): Low-pass cutoff applied to both the true and
+              the reconstructed moment before the damage (0 = none, the
+              default: the damage is that of the simulated moment).
             sn_intercepts_log10 (List[float], optional): SN log10 intercepts.
             sn_slopes (List[float], optional): SN slopes.
         """
@@ -280,6 +284,7 @@ class PhysicsReconstruction:
         self.segment_length = segment_length
         self.lf_fit_band = tuple(lf_fit_band)
         self.operating_power_kw = operating_power_kw
+        self.band_hz = band_hz
         self.lowpass_hz = lowpass_hz
         self.sn_intercepts_log10 = sn_intercepts_log10
         self.sn_slopes = sn_slopes
@@ -430,8 +435,8 @@ class PhysicsReconstruction:
         for mask in masks:
             harmonic_mask |= mask
         gains = calibration.gain(freqs, low_mask, harmonic_mask)
-        if self.lowpass_hz:
-            gains[freqs > self.lowpass_hz] = 0.0
+        if self.band_hz:
+            gains[freqs > self.band_hz] = 0.0
         moment = np.fft.irfft(np.fft.rfft(accel) * gains, n=num_samples)
         return DIRECTION_CHANNELS[direction]["sign"] * moment[pad:num_samples - pad]
 
@@ -455,12 +460,13 @@ class PhysicsReconstruction:
             data = self.load(sim_id)
             row = {"sim_id": sim_id}
             for direction, calibration in calibrations.items():
-                # The reconstruction is already low-passed through its gain;
-                # the simulated moment gets the same filter here.
+                # Optional metric filter (off by default), the same on both.
                 moment_true = lowpass(
                     self.scored(data, DIRECTION_CHANNELS[direction]["moment"]),
                     self.sampling_frequency, self.lowpass_hz)
-                moment_rec = self.reconstruct(data, direction, calibration)
+                moment_rec = lowpass(
+                    self.reconstruct(data, direction, calibration),
+                    self.sampling_frequency, self.lowpass_hz)
                 row[f"damage_true_{direction}"] = self.damage(moment_true)
                 row[f"damage_rec_{direction}"] = self.damage(moment_rec)
                 row[f"var_ratio_{direction}"] = float(

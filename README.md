@@ -72,8 +72,8 @@ accelerometer axis improves the top at every budget.
   reconstruct the fore-aft moment at that height over 400 to 1,000 s.
   One model serves the whole tower.
 - **Damage-based scoring.** True and reconstructed moments pass through
-  the pipeline that generated the FLOATBench labels (3 Hz low-pass,
-  rainflow, DNV-RP-C203 S-N curve, Miner's rule). Five metrics: $R^2$
+  the pipeline that generated the FLOATBench labels (rainflow,
+  DNV-RP-C203 S-N curve, Miner's rule; no low-pass). Five metrics: $R^2$
   of $\log_{10}$ damage, median damage ratio, fraction within a factor
   of two, mean relative error, and within-condition correlation over
   the six realizations of an operating point.

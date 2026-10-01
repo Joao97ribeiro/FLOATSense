@@ -60,7 +60,7 @@ class SequenceModelTrainer:
                  condition_channels: Optional[List[str]] = None,
                  min_time: float = 400.0,
                  max_time: float = 1000.0,
-                 lowpass_hz: float = 3.0,
+                 lowpass_hz: float = 0.0,
                  crop_length: int = 4096,
                  batch_size: int = 16,
                  learning_rate: float = 1e-3,
@@ -95,6 +95,10 @@ class SequenceModelTrainer:
             condition_channels (List[str], optional): Operating-state
               channels.
             min_time (float): Start time of the usable window [s].
+            max_time (float): End time of the usable window [s].
+            lowpass_hz (float): Low-pass cutoff applied to both the true and
+              the reconstructed moment before the damage (0 = none, the
+              default).
             crop_length (int): Training crop length; the length-fixed
               spectral models always train on the full window.
             batch_size (int): Training batch size.

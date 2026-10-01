@@ -65,7 +65,7 @@ flags.DEFINE_integer("max_eval_sims", 0, "If > 0, cap the evaluated sims.")
 flags.DEFINE_float("min_time", 400.0, "Start of the scored window (s).")
 flags.DEFINE_float("max_time", 1000.0, "End of the scored window (s).")
 flags.DEFINE_float(
-    "lowpass_hz", 3.0, "Low-pass on true and reconstructed moments before the "
+    "lowpass_hz", 0.0, "Low-pass on true and reconstructed moments before the "
     "damage metric (0 disables).")
 flags.DEFINE_integer("crop_length", 4096, "Training crop length.")
 flags.DEFINE_integer("batch_size", 16, "Training batch size.")

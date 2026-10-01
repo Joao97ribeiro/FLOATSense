@@ -129,7 +129,7 @@ def evaluate_heights(physics: PhysicsReconstruction, sim_ids: List[int],
             if name not in physics.channels:
                 continue
             true = lowpass(physics.scored(data, name), fs, physics.lowpass_hz)
-            rec = base * factor
+            rec = lowpass(base * factor, fs, physics.lowpass_hz)
             row[f"damage_true_{channel}"] = compute_base_damage(
                 true,
                 physics.tower,
