@@ -14,5 +14,4 @@ from .physics import parked_constants
 from .release import ReleasedTower
 from .release import TowerSections
 from .release import load_tower
-from .tower import Tower
 from .trainer import SequenceModelTrainer
