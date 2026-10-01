@@ -30,7 +30,6 @@ import glob
 import multiprocessing
 import os
 import sys
-import types
 
 from absl import app
 from absl import flags
@@ -40,7 +39,7 @@ import pyarrow.parquet as pq
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from floatsense.data import HEIGHT_TARGETS  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.fatigue import compute_base_damage  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.release import TowerSections  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.physics import damage_filter  # noqa: E402  pylint: disable=wrong-import-position
 
 FLAGS = flags.FLAGS
@@ -120,9 +119,7 @@ def build_sections(floatbench: pd.DataFrame,
 def _shard_damage(args):
     """Damage at the 11 sections of every simulation of one shard."""
     path, sections, apply_lowpass, lowpass_hz = args
-    geometry = types.SimpleNamespace(
-        mean_radius_sections=sections["gauge_radius_m"].to_numpy(),
-        thickness_sections=sections["gauge_thickness_m"].to_numpy())
+    geometry = TowerSections(sections)
     # The evaluation keeps an even number of samples of the inclusive
     # 400-1000 s window (floatsense.data), i.e. 400.0 to 999.9 s.
     start = int(round(MIN_TIME * FS))
@@ -133,13 +130,14 @@ def _shard_damage(args):
     for group in range(shard.num_row_groups):
         table = shard.read_row_group(group, columns=columns).to_pandas()
         sim_id = int(table["sim_id"].iloc[0])
-        for position, (section_id, channel) in enumerate(
-                zip(sections["section_id"], sections["channel"])):
+        for section_id, channel in zip(sections["section_id"],
+                                       sections["channel"]):
             moment = table[f"{channel}_mfa"].to_numpy(float)[start:stop]
             moment = damage_filter(moment - moment.mean(), FS, apply_lowpass,
                                    lowpass_hz)
-            damage = compute_base_damage(moment, geometry, SN_INTERCEPTS,
-                                         SN_SLOPES, section=position)
+            damage = geometry.damage(moment,
+                                     int(section_id) - 1, SN_INTERCEPTS,
+                                     SN_SLOPES)
             rows.append((sim_id, int(section_id), damage))
     return rows
 

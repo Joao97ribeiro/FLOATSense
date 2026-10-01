@@ -47,7 +47,6 @@ import pandas as pd
 import scipy.signal
 from tqdm import tqdm
 
-from .fatigue import compute_base_damage
 from .release import ReleasedTower
 from .release import load_parked
 
@@ -468,8 +467,8 @@ class PhysicsReconstruction:
 
     def damage(self, moment: np.ndarray) -> float:
         """Base-section damage of a moment series."""
-        return compute_base_damage(moment, self.tower, self.sn_intercepts_log10,
-                                   self.sn_slopes)
+        return self.tower.damage(moment, 0, self.sn_intercepts_log10,
+                                 self.sn_slopes)
 
     def evaluate(self,
                  sim_ids: List[int],

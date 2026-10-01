@@ -25,7 +25,6 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import brentq
 
-from .fatigue import compute_base_damage
 from .physics import PhysicsReconstruction
 from .physics import damage_filter
 from .physics import parked_constants
@@ -132,18 +131,10 @@ def evaluate_heights(physics: PhysicsReconstruction, sim_ids: List[int],
                                  physics.apply_lowpass, physics.lowpass_hz)
             rec = damage_filter(base * factor, fs, physics.apply_lowpass,
                                 physics.lowpass_hz)
-            row[f"damage_true_{channel}"] = compute_base_damage(
-                true,
-                physics.tower,
-                physics.sn_intercepts_log10,
-                physics.sn_slopes,
-                section=section)
-            row[f"damage_rec_{channel}"] = compute_base_damage(
-                rec,
-                physics.tower,
-                physics.sn_intercepts_log10,
-                physics.sn_slopes,
-                section=section)
+            row[f"damage_true_{channel}"] = physics.tower.damage(
+                true, section, physics.sn_intercepts_log10, physics.sn_slopes)
+            row[f"damage_rec_{channel}"] = physics.tower.damage(
+                rec, section, physics.sn_intercepts_log10, physics.sn_slopes)
         rows.append(row)
     df = pd.DataFrame(rows)
     os.makedirs(os.path.dirname(csv_path), exist_ok=True)

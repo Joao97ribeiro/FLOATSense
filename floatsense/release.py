@@ -28,6 +28,8 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
+from .fatigue import compute_base_damage
+
 SAMPLING_FREQUENCY = 10.0
 TOWER_HEIGHT = 149.386
 NUM_SECTIONS = 30
@@ -45,8 +47,9 @@ class TowerSections:
     recorded.
 
     Attributes:
-        mean_radius_sections (np.ndarray): Radius used for the damage [m].
-        thickness_sections (np.ndarray): Thickness used for the damage [m].
+        radius_gauges (np.ndarray): Outer radius at the gauge height [m].
+        thickness_gauges (np.ndarray): Thickness of the section containing
+          the gauge [m].
         height (float): Tower height [m].
     """
 
@@ -61,12 +64,35 @@ class TowerSections:
             raise KeyError("gauge_radius_m is not in sections.parquet "
                            "(release v1.0); rebuild it with "
                            "scripts/data/build_labels.py.")
-        self.mean_radius_sections = np.full(NUM_SECTIONS, np.nan)
-        self.thickness_sections = np.full(NUM_SECTIONS, np.nan)
+        self.radius_gauges = np.full(NUM_SECTIONS, np.nan)
+        self.thickness_gauges = np.full(NUM_SECTIONS, np.nan)
         index = sections["section_id"].to_numpy(int) - 1
-        self.mean_radius_sections[index] = sections["gauge_radius_m"]
-        self.thickness_sections[index] = sections["gauge_thickness_m"]
+        self.radius_gauges[index] = sections["gauge_radius_m"]
+        self.thickness_gauges[index] = sections["gauge_thickness_m"]
         self.height = TOWER_HEIGHT
+
+    def damage(self,
+               moment_series: np.ndarray,
+               section: int,
+               sn_intercepts_log10: Optional[List[float]] = None,
+               sn_slopes: Optional[List[float]] = None) -> float:
+        """Fatigue damage of a moment series (true or predicted) at a gauge.
+
+        Args:
+            moment_series (np.ndarray): Bending moment [kN.m] at the gauge.
+            section (int): Zero-based FLOATBench section of the gauge
+              (section_id - 1).
+            sn_intercepts_log10 (List[float], optional): SN log10 intercepts.
+            sn_slopes (List[float], optional): SN curve slopes.
+
+        Returns:
+            float: Miner damage (unitless).
+        """
+        return compute_base_damage(moment_series,
+                                   self,
+                                   sn_intercepts_log10,
+                                   sn_slopes,
+                                   section=section)
 
 
 class ReleasedTower:
@@ -165,6 +191,58 @@ class ReleasedTower:
         """Regime cell label ('<wind_group>/<wave_group>') per sim_id."""
         meta = self.metadata.loc[self.split_ids(name)]
         return meta["wind_group"] + "/" + meta["wave_group"]
+
+    def scored_moment(self,
+                      sim_id: int,
+                      gauge: str,
+                      min_time: float = 400.0,
+                      max_time: float = 1000.0) -> np.ndarray:
+        """True fore-aft moment of one gauge over the scored window.
+
+        The window is the one of the evaluation: an even number of samples
+        (6,000) from `min_time`, with the mean removed.
+
+        Args:
+            sim_id (int): Simulation ID.
+            gauge (str): Gauge name ('tower_bottom', 'tower_1', ...,
+              'tower_top').
+            min_time (float): Start of the scored window [s].
+            max_time (float): End of the scored window [s], inclusive.
+
+        Returns:
+            np.ndarray: Moment [kN.m].
+        """
+        start = int(round(min_time * self.sampling_frequency))
+        stop = int(round(max_time * self.sampling_frequency)) + 1
+        stop = start + 2 * ((stop - start) // 2)
+        series = self.load(sim_id)[start:stop,
+                                   self.channels.index(f"{gauge}_mfa")]
+        series = series.astype(float)
+        return series - series.mean()
+
+    def gauge_damage(self,
+                     moment_series: np.ndarray,
+                     gauge: str,
+                     sn_intercepts_log10: Optional[List[float]] = None,
+                     sn_slopes: Optional[List[float]] = None) -> float:
+        """Fatigue damage of any moment series (true or predicted) at a gauge.
+
+        Args:
+            moment_series (np.ndarray): Bending moment [kN.m] at the gauge.
+            gauge (str): Gauge name ('tower_bottom', ..., 'tower_top').
+            sn_intercepts_log10 (List[float], optional): SN log10 intercepts.
+            sn_slopes (List[float], optional): SN curve slopes.
+
+        Returns:
+            float: Miner damage (unitless), as in damage.parquet for the true
+              moment of scored_moment.
+        """
+        row = self.sections.loc[self.sections["channel"] == gauge]
+        if row.empty:
+            raise KeyError(f"Unknown gauge '{gauge}'.")
+        section = int(row["section_id"].iloc[0]) - 1
+        return self.geometry.damage(moment_series, section,
+                                    sn_intercepts_log10, sn_slopes)
 
     def damage(self) -> pd.DataFrame:
         """damage.parquet as a (sim_id x section_id) table."""

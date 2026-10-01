@@ -29,7 +29,6 @@ from tqdm import tqdm
 from .data import HEIGHT_TARGETS
 from .data import SequenceDataset
 from .data import compute_norm_stats
-from .fatigue import compute_base_damage
 from .metrics import summarize_damage
 from .models import ACCEL_FIRST_MODELS
 from .models import LENGTH_FIXED_MODELS
@@ -42,11 +41,7 @@ from .release import TowerSections
 def _damage_job(moment, section, tower: TowerSections, intercepts,
                 slopes) -> float:
     """Damage of one series at one section (picklable for the pool)."""
-    return compute_base_damage(moment,
-                               tower,
-                               intercepts,
-                               slopes,
-                               section=section)
+    return tower.damage(moment, section, intercepts, slopes)
 
 
 class SequenceModelTrainer:

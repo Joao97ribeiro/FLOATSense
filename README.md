@@ -246,6 +246,18 @@ python -c "from floatsense import load_tower; \
   t = load_tower('data/FLOATSense', 'opt2'); print(t.load(1).shape, t.channels[:4])"
 ```
 
+**Damage of a series.** The same code scores the true moment and any
+prediction at a gauge (radius at the gauge height, DNV-RP-C203 S-N curve,
+Miner's rule):
+
+```python
+from floatsense import load_tower
+tower = load_tower("data/FLOATSense", "opt2")
+true = tower.scored_moment(sim_id=1, gauge="tower_top")  # 400-1,000 s, 6,000 samples
+tower.gauge_damage(true, "tower_top")       # = tower.damage().loc[1, 30]
+tower.gauge_damage(predicted, "tower_top")  # any reconstructed series
+```
+
 The configs expect the dataset at `data/FLOATSense` (for a copy elsewhere:
 `mkdir -p data && ln -s <path>/FLOATSense data/FLOATSense`); change
 `--dataset_dir` otherwise.

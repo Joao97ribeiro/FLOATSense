@@ -10,16 +10,17 @@ rule on a bending-moment series at one tower section. The same function
 scores the physics baseline and every learned model.
 """
 
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 import numpy as np
 import rainflow
 
-from .release import TowerSections
+if TYPE_CHECKING:
+    from .release import TowerSections
 
 
 def compute_base_damage(moment_series: np.ndarray,
-                        tower: TowerSections,
+                        tower: "TowerSections",
                         sn_intercepts_log10: Optional[List[float]] = None,
                         sn_slopes: Optional[List[float]] = None,
                         thickness_reference: float = 25.0,
@@ -30,8 +31,8 @@ def compute_base_damage(moment_series: np.ndarray,
 
     Args:
         moment_series (np.ndarray): Bending moment time series [kN.m].
-        tower (TowerSections): Mean outer radius and wall thickness of the
-          FLOATBench sections.
+        tower (TowerSections): Outer radius and wall thickness at the
+          gauges (radius_gauges, thickness_gauges).
         sn_intercepts_log10 (List[float], optional): SN log10 intercepts.
         sn_slopes (List[float], optional): SN curve slopes.
         thickness_reference (float): Reference thickness for SN [mm].
@@ -45,8 +46,8 @@ def compute_base_damage(moment_series: np.ndarray,
     sn_intercepts_log10 = sn_intercepts_log10 or [12.010, 15.350]
     sn_slopes = sn_slopes or [3, 5]
 
-    radius = tower.mean_radius_sections[section]
-    thickness = tower.thickness_sections[section]
+    radius = tower.radius_gauges[section]
+    thickness = tower.thickness_gauges[section]
     if not (np.isfinite(radius) and np.isfinite(thickness)):
         raise ValueError(f"Section index {section} (section_id {section + 1}) "
                          "is not one of the 11 scored sections.")
