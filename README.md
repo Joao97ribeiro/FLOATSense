@@ -209,7 +209,7 @@ FLOATSense/                          24.0 GB
 │   ├── sections.parquet              section_id, section_height_m, section_radius_m, section_thickness_m,
 │   │                                 channel, gauge_height_m, z_over_h, gauge_radius_m,
 │   │                                 gauge_thickness_m (the 11 scored sections)
-│   └── damage.parquet                sim_id, section_id, damage, damage_gauge (reference fore-aft damage)
+│   └── damage.parquet                sim_id, section_id, damage (reference fore-aft damage)
 ├── opt1/                             same files
 ├── opt2/                             same files
 ├── parked.parquet                    the 22 parked runs (waves only) of each tower
@@ -221,21 +221,19 @@ Column names and order follow FLOATBench, so a run joins its FLOATBench
 rows on `sim_id` (and `section_id`). The 11 gauges are FLOATBench
 sections 1, 3, 6, ..., 27, 30.
 
-**Radius of the damage.** By default (`--damage_radius=gauge`) the stress
-at a gauge uses the outer radius at the gauge height and the wall
-thickness of the section that contains it (`gauge_radius_m`,
-`gauge_thickness_m` in `sections.parquet`, written by
+**Radius of the damage.** The stress at a gauge uses the outer radius at
+the gauge height and the wall thickness of the section that contains it
+(`gauge_radius_m`, `gauge_thickness_m` in `sections.parquet`, written by
 `scripts/data/build_labels.py --tower_geometry` from the tower geometry of
 the OpenFAST campaign), so the stress is taken where the moment is
-recorded. Release v1.0 used the mean outer radius and thickness of the
-nearest FLOATBench section (`--damage_radius=section`, column `damage`):
-at the top of the redesigns that radius is 2.5 to 4% larger than at the
-gauge, so the v1.0 top damage is about 27% (`opt1`) and 19% (`opt2`) low;
-elsewhere the two rules differ by at most 7%. The rule scales the true and
-the reconstructed damage alike, so the benchmark metrics change by at most
-0.005; the absolute damage (lifetime profile) changes. The 30-section
-FLOATBench labels are unaffected: there the moment is interpolated to the
-mid-height of each section, where its mean radius applies.
+recorded. Release v1.0 used the mean outer radius of that section: at the
+top of the redesigns it is 2.5 to 4% larger than at the gauge, so the v1.0
+top damage was about 27% (`opt1`) and 19% (`opt2`) low; elsewhere the two
+differ by at most 7%. The radius scales the true and the reconstructed
+damage alike, so the benchmark metrics change by at most 0.005. The
+30-section FLOATBench labels are unaffected: there the moment is
+interpolated to the mid-height of each section, where its mean radius
+applies.
 
 ### Download
 

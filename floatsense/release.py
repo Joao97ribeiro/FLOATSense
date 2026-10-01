@@ -10,9 +10,8 @@ The dataset has one directory per tower and one shared parked file:
   <dataset_dir>/<tower>/metadata.parquet  operating point, split, regime
                                     labels and lifetime weight
   <dataset_dir>/<tower>/sections.parquet  the 11 scored FLOATBench sections
-  <dataset_dir>/<tower>/damage.parquet  reference damage (sim_id, section_id;
-                                    damage = section radius, damage_gauge =
-                                    radius at the gauge, from v1.1)
+  <dataset_dir>/<tower>/damage.parquet  reference damage (sim_id, section_id,
+                                    damage; radius at the gauge, from v1.1)
   <dataset_dir>/parked.parquet      the 22 parked runs of every tower
 
 Split names: `train` and `test` (the regime-aware partition, from
@@ -35,7 +34,6 @@ TOWER_HEIGHT = 149.386
 NUM_SECTIONS = 30
 SPLITS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)),
                           "splits")
-RADIUS_RULES = ("gauge", "section")
 
 
 def _ordered(values: dict) -> np.ndarray:
@@ -76,53 +74,33 @@ class TowerSections:
     """Radius and wall thickness used for the damage at the scored sections.
 
     Arrays are indexed by the zero-based FLOATBench section (section_id - 1);
-    only the scored sections are filled, the others are NaN.
-
-    Two rules set the radius and thickness of a scored section:
-      * 'gauge' (default): the outer radius at the gauge height and the
-        thickness of the section that contains the gauge, so that the
-        stress is taken where the moment is recorded.
-      * 'section': the mean outer radius and thickness of the nearest
-        FLOATBench section (release v1.0). At the top of the redesigns this
-        radius is 2.5 to 4% larger than at the gauge and lowers the top
-        damage by 20 to 35%; it reproduces the v1.0 numbers.
+    only the scored sections are filled, the others are NaN. The radius is
+    the outer radius at the gauge height and the thickness that of the
+    section containing the gauge, so the stress is taken where the moment is
+    recorded.
 
     Attributes:
         mean_radius_sections (np.ndarray): Radius used for the damage [m].
         thickness_sections (np.ndarray): Thickness used for the damage [m].
         height (float): Tower height [m].
-        radius_rule (str): 'gauge' or 'section'.
     """
 
-    def __init__(self, sections: pd.DataFrame, radius_rule: str = "gauge"):
+    def __init__(self, sections: pd.DataFrame):
         """Initializes the geometry from a sections.parquet table.
 
         Args:
-            sections (pd.DataFrame): Rows with section_id, section_radius_m,
-              section_thickness_m and, for the 'gauge' rule, gauge_radius_m
-              and gauge_thickness_m (release v1.1).
-            radius_rule (str): 'gauge' or 'section'.
+            sections (pd.DataFrame): Rows with section_id, gauge_radius_m and
+              gauge_thickness_m (release v1.1).
         """
-        if radius_rule not in RADIUS_RULES:
-            raise ValueError(f"radius_rule must be one of {RADIUS_RULES}, "
-                             f"got '{radius_rule}'.")
-        self.radius_rule = radius_rule
+        if "gauge_radius_m" not in sections:
+            raise KeyError("gauge_radius_m is not in sections.parquet "
+                           "(release v1.0); rebuild it with "
+                           "scripts/data/build_labels.py.")
         self.mean_radius_sections = np.full(NUM_SECTIONS, np.nan)
         self.thickness_sections = np.full(NUM_SECTIONS, np.nan)
         index = sections["section_id"].to_numpy(int) - 1
-        if radius_rule == "section":
-            radius = sections["section_radius_m"].to_numpy(float)
-            thickness = sections["section_thickness_m"].to_numpy(float)
-        elif "gauge_radius_m" in sections:
-            radius = sections["gauge_radius_m"].to_numpy(float)
-            thickness = sections["gauge_thickness_m"].to_numpy(float)
-        else:
-            raise KeyError("gauge_radius_m is not in sections.parquet (release "
-                           "v1.0 has the 'section' rule only); rebuild it with "
-                           "scripts/data/build_labels.py or use "
-                           "--damage_radius=section.")
-        self.mean_radius_sections[index] = radius
-        self.thickness_sections[index] = thickness
+        self.mean_radius_sections[index] = sections["gauge_radius_m"]
+        self.thickness_sections[index] = sections["gauge_thickness_m"]
         self.height = TOWER_HEIGHT
 
 
@@ -139,13 +117,11 @@ class ReleasedTower:
         geometry (TowerSections): Section properties for the damage.
     """
 
-    def __init__(self, tower_dir: str, radius_rule: str = "gauge"):
+    def __init__(self, tower_dir: str):
         """Reads the metadata and indexes the series shards.
 
         Args:
             tower_dir (str): <dataset_dir>/<tower>.
-            radius_rule (str): Radius of the damage, 'gauge' or 'section'
-              (see TowerSections).
         """
         self.tower_dir = tower_dir
         self.name = os.path.basename(os.path.normpath(tower_dir))
@@ -154,7 +130,7 @@ class ReleasedTower:
             os.path.join(tower_dir, "metadata.parquet")).set_index("sim_id")
         self.sections = pd.read_parquet(
             os.path.join(tower_dir, "sections.parquet"))
-        self.geometry = TowerSections(self.sections, radius_rule)
+        self.geometry = TowerSections(self.sections)
         self._shards = sorted(
             glob.glob(os.path.join(tower_dir, "series-*.parquet")))
         if not self._shards:
@@ -226,19 +202,10 @@ class ReleasedTower:
         return meta["wind_group"] + "/" + meta["wave_group"]
 
     def damage(self) -> pd.DataFrame:
-        """damage.parquet as a (sim_id x section_id) table, with the radius
-        rule of this tower ('damage_gauge' for 'gauge', 'damage' for
-        'section')."""
+        """damage.parquet as a (sim_id x section_id) table."""
         damage = pd.read_parquet(os.path.join(self.tower_dir, "damage.parquet"))
-        column = "damage_gauge" if self.geometry.radius_rule == "gauge" else (
-            "damage")
-        if column not in damage:
-            raise KeyError(f"{column} is not in damage.parquet (release v1.0 "
-                           "has the 'section' rule only); rebuild it with "
-                           "scripts/data/build_labels.py or use "
-                           "--damage_radius=section.")
         return damage.pivot(index="sim_id", columns="section_id",
-                            values=column)
+                            values="damage")
 
 
 def split_tag(name: str) -> str:
@@ -253,11 +220,9 @@ def split_tag(name: str) -> str:
     return name.replace("/", "_")
 
 
-def load_tower(dataset_dir: str,
-               name: str,
-               radius_rule: str = "gauge") -> ReleasedTower:
-    """Opens <dataset_dir>/<name> with the given damage radius rule."""
-    return ReleasedTower(os.path.join(dataset_dir, name), radius_rule)
+def load_tower(dataset_dir: str, name: str) -> ReleasedTower:
+    """Opens <dataset_dir>/<name>."""
+    return ReleasedTower(os.path.join(dataset_dir, name))
 
 
 def load_parked(dataset_dir: str, tower: str) -> Dict[str, np.ndarray]:
