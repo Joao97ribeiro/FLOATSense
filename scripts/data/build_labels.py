@@ -24,7 +24,8 @@ the gauge height and the thickness of the section that contains it
 (release v1.1, the default of the benchmark; see floatsense.release).
 
 Usage: python scripts/data/build_labels.py --dataset_dir=data/FLOATSense \
-           --floatbench_dir=data/FLOATBench --towers=ref,opt1,opt2
+           --floatbench_dir=data/FLOATBench --towers=ref,opt1,opt2 \
+           --tower_geometry=ref:<ref.json>,opt1:<opt1.json>,opt2:<opt2.json>
 """
 
 import glob
@@ -50,6 +51,9 @@ flags.DEFINE_string("dataset_dir", None, "Released dataset, one folder per tower
 flags.DEFINE_string("floatbench_dir", None, "FLOATBench dataset directory.")
 flags.DEFINE_list("towers", ["ref", "opt1", "opt2"], "Towers to process.")
 flags.DEFINE_integer("workers", 8, "Worker processes for the damage.")
+flags.DEFINE_list("tower_geometry", None,
+                  "<tower>:<path> of the tower geometry JSON of the OpenFAST "
+                  "campaign, one per tower (radius at the gauge height).")
 
 FS, MIN_TIME, MAX_TIME, LOWPASS_HZ = 10.0, 400.0, 1000.0, 3.0
 SN_INTERCEPTS, SN_SLOPES = [12.010, 15.350], [3.0, 5.0]
@@ -79,12 +83,13 @@ def build_metadata(floatbench: pd.DataFrame) -> pd.DataFrame:
         drop=True)
 
 
-def build_sections(floatbench: pd.DataFrame, tower: str) -> pd.DataFrame:
+def build_sections(floatbench: pd.DataFrame,
+                   geometry_path: str) -> pd.DataFrame:
     """Geometry of the 11 scored FLOATBench sections and their gauges.
 
     Args:
         floatbench (pd.DataFrame): FLOATBench rows of the tower.
-        tower (str): Tower name, for towers/<tower>_geometry.json.
+        geometry_path (str): Tower geometry JSON (see --tower_geometry).
 
     Returns:
         pd.DataFrame: One row per scored section, base to top.
@@ -98,7 +103,7 @@ def build_sections(floatbench: pd.DataFrame, tower: str) -> pd.DataFrame:
                     "z_over_h": z_over_h})
         rows.append(row)
     sections = pd.DataFrame(rows)
-    radius, thickness = gauge_properties(tower,
+    radius, thickness = gauge_properties(geometry_path,
                                          sections["gauge_height_m"].to_numpy())
     sections["gauge_radius_m"] = radius
     sections["gauge_thickness_m"] = thickness
@@ -159,6 +164,11 @@ def build_damage(tower_dir: str, sections: pd.DataFrame) -> pd.DataFrame:
 
 def main(_) -> None:
     """Writes metadata, sections and damage for every requested tower."""
+    geometry_paths = dict(
+        item.split(":", 1) for item in (FLAGS.tower_geometry or []))
+    missing = [t for t in FLAGS.towers if t not in geometry_paths]
+    if missing:
+        raise ValueError(f"--tower_geometry has no path for {missing}.")
     for tower in FLAGS.towers:
         tower_dir = os.path.join(FLAGS.dataset_dir, tower)
         floatbench = pd.concat([
@@ -167,7 +177,7 @@ def main(_) -> None:
             for split in ("train", "test")
         ])
         metadata = build_metadata(floatbench)
-        sections = build_sections(floatbench, tower)
+        sections = build_sections(floatbench, geometry_paths[tower])
         damage = build_damage(tower_dir, sections)
         metadata.to_parquet(os.path.join(tower_dir, "metadata.parquet"),
                             index=False)

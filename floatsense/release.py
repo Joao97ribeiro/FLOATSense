@@ -35,8 +35,6 @@ TOWER_HEIGHT = 149.386
 NUM_SECTIONS = 30
 SPLITS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)),
                           "splits")
-TOWERS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                          "towers")
 RADIUS_RULES = ("gauge", "section")
 
 
@@ -47,7 +45,7 @@ def _ordered(values: dict) -> np.ndarray:
     ], dtype=float)
 
 
-def gauge_properties(tower: str,
+def gauge_properties(geometry_path: str,
                      gauge_heights: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """Outer radius and wall thickness of a tower at the gauge heights.
 
@@ -56,15 +54,14 @@ def gauge_properties(tower: str,
     the section that contains the gauge.
 
     Args:
-        tower (str): Tower name (ref, opt1 or opt2), read from
-          towers/<tower>_geometry.json.
+        geometry_path (str): Tower geometry JSON of the OpenFAST campaign
+          (diameter, z and thickness transitions).
         gauge_heights (np.ndarray): Gauge heights above the tower base [m].
 
     Returns:
         Tuple[np.ndarray, np.ndarray]: Radius [m] and thickness [m].
     """
-    with open(os.path.join(TOWERS_DIR, f"{tower}_geometry.json"),
-              encoding="utf-8") as file:
+    with open(geometry_path, encoding="utf-8") as file:
         geometry = json.load(file)
     z = _ordered(geometry["z_transitions (m)"])
     radius = _ordered(geometry["diameter_transitions (m)"]) / 2
@@ -97,18 +94,14 @@ class TowerSections:
         radius_rule (str): 'gauge' or 'section'.
     """
 
-    def __init__(self,
-                 sections: pd.DataFrame,
-                 radius_rule: str = "gauge",
-                 tower: Optional[str] = None):
+    def __init__(self, sections: pd.DataFrame, radius_rule: str = "gauge"):
         """Initializes the geometry from a sections.parquet table.
 
         Args:
             sections (pd.DataFrame): Rows with section_id, section_radius_m,
-              section_thickness_m and gauge_height_m.
+              section_thickness_m and, for the 'gauge' rule, gauge_radius_m
+              and gauge_thickness_m (release v1.1).
             radius_rule (str): 'gauge' or 'section'.
-            tower (str, optional): Tower name, needed by the 'gauge' rule
-              when sections has no gauge_radius_m column.
         """
         if radius_rule not in RADIUS_RULES:
             raise ValueError(f"radius_rule must be one of {RADIUS_RULES}, "
@@ -124,11 +117,10 @@ class TowerSections:
             radius = sections["gauge_radius_m"].to_numpy(float)
             thickness = sections["gauge_thickness_m"].to_numpy(float)
         else:
-            if tower is None:
-                raise ValueError("The 'gauge' rule needs the tower name when "
-                                 "sections.parquet has no gauge_radius_m.")
-            radius, thickness = gauge_properties(
-                tower, sections["gauge_height_m"].to_numpy(float))
+            raise KeyError("gauge_radius_m is not in sections.parquet (release "
+                           "v1.0 has the 'section' rule only); rebuild it with "
+                           "scripts/data/build_labels.py or use "
+                           "--damage_radius=section.")
         self.mean_radius_sections[index] = radius
         self.thickness_sections[index] = thickness
         self.height = TOWER_HEIGHT
@@ -162,7 +154,7 @@ class ReleasedTower:
             os.path.join(tower_dir, "metadata.parquet")).set_index("sim_id")
         self.sections = pd.read_parquet(
             os.path.join(tower_dir, "sections.parquet"))
-        self.geometry = TowerSections(self.sections, radius_rule, self.name)
+        self.geometry = TowerSections(self.sections, radius_rule)
         self._shards = sorted(
             glob.glob(os.path.join(tower_dir, "series-*.parquet")))
         if not self._shards:

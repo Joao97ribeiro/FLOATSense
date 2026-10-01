@@ -223,8 +223,10 @@ sections 1, 3, 6, ..., 27, 30.
 
 **Radius of the damage.** By default (`--damage_radius=gauge`) the stress
 at a gauge uses the outer radius at the gauge height and the wall
-thickness of the section that contains it, read from
-`towers/<tower>_geometry.json`, so the stress is taken where the moment is
+thickness of the section that contains it (`gauge_radius_m`,
+`gauge_thickness_m` in `sections.parquet`, written by
+`scripts/data/build_labels.py --tower_geometry` from the tower geometry of
+the OpenFAST campaign), so the stress is taken where the moment is
 recorded. Release v1.0 used the mean outer radius and thickness of the
 nearest FLOATBench section (`--damage_radius=section`, column `damage`):
 at the top of the redesigns that radius is 2.5 to 4% larger than at the
