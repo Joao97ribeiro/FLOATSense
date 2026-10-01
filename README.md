@@ -72,8 +72,8 @@ accelerometer axis improves the top at every budget.
   reconstruct the fore-aft moment at that height over 400 to 1,000 s.
   One model serves the whole tower.
 - **Damage-based scoring.** True and reconstructed moments pass through
-  the pipeline that generated the FLOATBench labels (3 Hz low-pass,
-  rainflow, DNV-RP-C203 S-N curve, Miner's rule). Five metrics: $R^2$
+  the pipeline that generated the FLOATBench labels (rainflow,
+  DNV-RP-C203 S-N curve, Miner's rule; no low-pass). Five metrics: $R^2$
   of $\log_{10}$ damage, median damage ratio, fraction within a factor
   of two, mean relative error, and within-condition correlation over
   the six realizations of an operating point.
@@ -207,7 +207,8 @@ FLOATSense/                          24.0 GB
 │   │                                 wave_hs_id, wave_hs, wave_tp_id, wave_tp, wind_seed_id,
 │   │                                 split, wind_group, wave_group, damage_weight
 │   ├── sections.parquet              section_id, section_height_m, section_radius_m, section_thickness_m,
-│   │                                 channel, gauge_height_m, z_over_h (the 11 scored sections)
+│   │                                 channel, gauge_height_m, z_over_h, gauge_radius_m,
+│   │                                 gauge_thickness_m (the 11 scored sections)
 │   └── damage.parquet                sim_id, section_id, damage (reference fore-aft damage)
 ├── opt1/                             same files
 ├── opt2/                             same files
@@ -218,8 +219,21 @@ FLOATSense/                          24.0 GB
 
 Column names and order follow FLOATBench, so a run joins its FLOATBench
 rows on `sim_id` (and `section_id`). The 11 gauges are FLOATBench
-sections 1, 3, 6, ..., 27, 30; each is scored with the mean outer radius
-and wall thickness of that section.
+sections 1, 3, 6, ..., 27, 30.
+
+**Radius of the damage.** The stress at a gauge uses the outer radius at
+the gauge height and the wall thickness of the section that contains it
+(`gauge_radius_m`, `gauge_thickness_m` in `sections.parquet`, written by
+`scripts/data/build_labels.py --gauge_profile` from the gauge profile of
+the OpenFAST campaign), so the stress is taken where the moment is
+recorded. Release v1.0 used the mean outer radius of that section: at the
+top of the redesigns it is 2.5 to 4% larger than at the gauge, so the v1.0
+top damage was about 27% (`opt1`) and 19% (`opt2`) low; elsewhere the two
+differ by at most 7%. The radius scales the true and the reconstructed
+damage alike, so the benchmark metrics change by at most 0.005. The
+30-section FLOATBench labels are unaffected: there the moment is
+interpolated to the mid-height of each section, where its mean radius
+applies.
 
 ### Download
 
@@ -230,6 +244,18 @@ hf download DeCoDELab/FLOATSense --repo-type=dataset --local-dir=data/FLOATSense
 # Check the download: read one simulation from Python
 python -c "from floatsense import load_tower; \
   t = load_tower('data/FLOATSense', 'opt2'); print(t.load(1).shape, t.channels[:4])"
+```
+
+**Damage of a series.** The same code scores the true moment and any
+prediction at a gauge (radius at the gauge height, DNV-RP-C203 S-N curve,
+Miner's rule):
+
+```python
+from floatsense import load_tower
+tower = load_tower("data/FLOATSense", "opt2")
+true = tower.scored_moment(sim_id=1, gauge="tower_top")  # 400-1,000 s, 6,000 samples
+tower.gauge_damage(true, "tower_top")       # = tower.damage().loc[1, 30]
+tower.gauge_damage(predicted, "tower_top")  # any reconstructed series
 ```
 
 The configs expect the dataset at `data/FLOATSense` (for a copy elsewhere:

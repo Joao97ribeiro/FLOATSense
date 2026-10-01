@@ -29,12 +29,11 @@ from tqdm import tqdm
 from .data import HEIGHT_TARGETS
 from .data import SequenceDataset
 from .data import compute_norm_stats
-from .fatigue import compute_base_damage
 from .metrics import summarize_damage
 from .models import ACCEL_FIRST_MODELS
 from .models import LENGTH_FIXED_MODELS
 from .models import build_model
-from .physics import lowpass
+from .physics import damage_filter
 from .release import ReleasedTower
 from .release import TowerSections
 
@@ -42,11 +41,7 @@ from .release import TowerSections
 def _damage_job(moment, section, tower: TowerSections, intercepts,
                 slopes) -> float:
     """Damage of one series at one section (picklable for the pool)."""
-    return compute_base_damage(moment,
-                               tower,
-                               intercepts,
-                               slopes,
-                               section=section)
+    return tower.damage(moment, section, intercepts, slopes)
 
 
 class SequenceModelTrainer:
@@ -60,6 +55,7 @@ class SequenceModelTrainer:
                  condition_channels: Optional[List[str]] = None,
                  min_time: float = 400.0,
                  max_time: float = 1000.0,
+                 apply_lowpass: bool = False,
                  lowpass_hz: float = 3.0,
                  crop_length: int = 4096,
                  batch_size: int = 16,
@@ -95,6 +91,10 @@ class SequenceModelTrainer:
             condition_channels (List[str], optional): Operating-state
               channels.
             min_time (float): Start time of the usable window [s].
+            max_time (float): End time of the usable window [s].
+            apply_lowpass (bool): Low-pass the true and the reconstructed
+              moment before the damage (off by default).
+            lowpass_hz (float): Cutoff of that low-pass [Hz].
             crop_length (int): Training crop length; the length-fixed
               spectral models always train on the full window.
             batch_size (int): Training batch size.
@@ -137,6 +137,7 @@ class SequenceModelTrainer:
         self.condition_channels = condition_channels
         self.min_time = min_time
         self.max_time = max_time
+        self.apply_lowpass = apply_lowpass
         self.lowpass_hz = lowpass_hz
         self.crop_length = (crop_length
                             if model_name not in LENGTH_FIXED_MODELS else None)
@@ -505,12 +506,14 @@ class SequenceModelTrainer:
                 for section in sections:
                     dataset.section = section
                     item = dataset[index]
-                    moment_rec = lowpass(
+                    moment_rec = damage_filter(
                         dataset.denormalize_target(self._predict(item)),
-                        dataset.sampling_frequency, self.lowpass_hz)
-                    moment_true = lowpass(
+                        dataset.sampling_frequency, self.apply_lowpass,
+                        self.lowpass_hz)
+                    moment_true = damage_filter(
                         dataset.denormalize_target(item["target"][0].numpy()),
-                        dataset.sampling_frequency, self.lowpass_hz)
+                        dataset.sampling_frequency, self.apply_lowpass,
+                        self.lowpass_hz)
                     if section is None:
                         # Single height: columns named by the gauge.
                         stem = dataset.moment_channel.rsplit("_m", 1)[0]

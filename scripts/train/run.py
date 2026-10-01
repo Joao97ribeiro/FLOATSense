@@ -64,9 +64,10 @@ flags.DEFINE_integer("max_eval_sims", 0, "If > 0, cap the evaluated sims.")
 
 flags.DEFINE_float("min_time", 400.0, "Start of the scored window (s).")
 flags.DEFINE_float("max_time", 1000.0, "End of the scored window (s).")
-flags.DEFINE_float(
-    "lowpass_hz", 3.0, "Low-pass on true and reconstructed moments before the "
-    "damage metric (0 disables).")
+flags.DEFINE_bool("lowpass", False,
+                  "Low-pass the true and reconstructed moments before the "
+                  "damage metric (off in the benchmark).")
+flags.DEFINE_float("lowpass_hz", 3.0, "Cutoff of --lowpass [Hz].")
 flags.DEFINE_integer("crop_length", 4096, "Training crop length.")
 flags.DEFINE_integer("batch_size", 16, "Training batch size.")
 flags.DEFINE_float("learning_rate", 1e-3, "Adam learning rate.")
@@ -199,6 +200,7 @@ def main(_):
                 model_name=model_name,
                 min_time=FLAGS.min_time,
                 max_time=FLAGS.max_time,
+                apply_lowpass=FLAGS.lowpass,
                 lowpass_hz=FLAGS.lowpass_hz,
                 crop_length=crop_length,
                 batch_size=FLAGS.batch_size,

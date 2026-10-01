@@ -9,24 +9,27 @@ train/test files give the split), and writes, next to the series
                     wind_seed_id, split, wind_group, wave_group, damage_weight
   sections.parquet  the 11 scored FLOATBench sections: section_id,
                     section_height_m, section_radius_m, section_thickness_m
-                    (as in FLOATBench), channel, gauge_height_m, z_over_h
+                    (as in FLOATBench), channel, gauge_height_m, z_over_h,
+                    gauge_radius_m, gauge_thickness_m (at the gauge height)
   damage.parquet    sim_id, section_id, damage (11 rows per simulation)
 
 The damage is computed as in the evaluation: the fore-aft moment of each
 gauge is cut to the scored window (400-1000 s, an even 6,000 samples as in
-the evaluation), its mean removed,
-low-passed at 3 Hz, rainflow-counted and passed through the S-N curve with
-the mean outer radius and wall thickness of the nearest FLOATBench section.
+the evaluation), its mean removed, rainflow-counted (no low-pass by
+default, see --lowpass) and passed through the S-N curve with
+the outer radius at the gauge height and the wall thickness of the section
+that contains it (release v1.1; v1.0 used the mean radius of that section,
+which underestimates the top damage of the redesigns).
 
 Usage: python scripts/data/build_labels.py --dataset_dir=data/FLOATSense \
-           --floatbench_dir=data/FLOATBench --towers=ref,opt1,opt2
+           --floatbench_dir=data/FLOATBench --towers=ref,opt1,opt2 \
+           --gauge_profile=ref:<ref.csv>,opt1:<opt1.csv>,opt2:<opt2.csv>
 """
 
 import glob
 import multiprocessing
 import os
 import sys
-import types
 
 from absl import app
 from absl import flags
@@ -36,16 +39,26 @@ import pyarrow.parquet as pq
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from floatsense.data import HEIGHT_TARGETS  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.fatigue import compute_base_damage  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.physics import lowpass  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.release import TowerSections  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.physics import damage_filter  # noqa: E402  pylint: disable=wrong-import-position
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("dataset_dir", None, "Released dataset, one folder per tower.")
 flags.DEFINE_string("floatbench_dir", None, "FLOATBench dataset directory.")
 flags.DEFINE_list("towers", ["ref", "opt1", "opt2"], "Towers to process.")
 flags.DEFINE_integer("workers", 8, "Worker processes for the damage.")
+flags.DEFINE_list("gauge_profile", None,
+                  "<tower>:<path> of the gauge profile of the OpenFAST "
+                  "campaign, one per tower (CSV with gauge_id, z [m], "
+                  "radius [m], thickness [m], bottom to top: the outer "
+                  "radius at each gauge height and the thickness of the "
+                  "section containing it).")
+flags.DEFINE_bool("lowpass", False,
+                  "Low-pass the moment before the damage, as in the "
+                  "evaluation (off in the benchmark).")
+flags.DEFINE_float("lowpass_hz", 3.0, "Cutoff of --lowpass [Hz].")
 
-FS, MIN_TIME, MAX_TIME, LOWPASS_HZ = 10.0, 400.0, 1000.0, 3.0
+FS, MIN_TIME, MAX_TIME = 10.0, 400.0, 1000.0
 SN_INTERCEPTS, SN_SLOPES = [12.010, 15.350], [3.0, 5.0]
 HEIGHT = 149.386
 METADATA_COLUMNS = [
@@ -73,11 +86,13 @@ def build_metadata(floatbench: pd.DataFrame) -> pd.DataFrame:
         drop=True)
 
 
-def build_sections(floatbench: pd.DataFrame) -> pd.DataFrame:
+def build_sections(floatbench: pd.DataFrame,
+                   gauge_profile: pd.DataFrame) -> pd.DataFrame:
     """Geometry of the 11 scored FLOATBench sections and their gauges.
 
     Args:
         floatbench (pd.DataFrame): FLOATBench rows of the tower.
+        gauge_profile (pd.DataFrame): Gauge profile (see --gauge_profile).
 
     Returns:
         pd.DataFrame: One row per scored section, base to top.
@@ -90,15 +105,21 @@ def build_sections(floatbench: pd.DataFrame) -> pd.DataFrame:
         row.update({"channel": name, "gauge_height_m": z_over_h * HEIGHT,
                     "z_over_h": z_over_h})
         rows.append(row)
-    return pd.DataFrame(rows)
+    sections = pd.DataFrame(rows)
+    gauges = gauge_profile.sort_values("gauge_id")
+    heights = gauges["z [m]"].to_numpy() - gauges["z [m]"].iloc[0]
+    if (len(gauges) != len(sections) or
+            not np.allclose(heights, sections["gauge_height_m"], atol=1e-2)):
+        raise ValueError("The gauge profile does not match the 11 gauges.")
+    sections["gauge_radius_m"] = gauges["radius [m]"].to_numpy()
+    sections["gauge_thickness_m"] = gauges["thickness [m]"].to_numpy()
+    return sections
 
 
 def _shard_damage(args):
     """Damage at the 11 sections of every simulation of one shard."""
-    path, sections = args
-    geometry = types.SimpleNamespace(
-        mean_radius_sections=sections["section_radius_m"].to_numpy(),
-        thickness_sections=sections["section_thickness_m"].to_numpy())
+    path, sections, apply_lowpass, lowpass_hz = args
+    geometry = TowerSections(sections)
     # The evaluation keeps an even number of samples of the inclusive
     # 400-1000 s window (floatsense.data), i.e. 400.0 to 999.9 s.
     start = int(round(MIN_TIME * FS))
@@ -109,12 +130,14 @@ def _shard_damage(args):
     for group in range(shard.num_row_groups):
         table = shard.read_row_group(group, columns=columns).to_pandas()
         sim_id = int(table["sim_id"].iloc[0])
-        for position, (section_id, channel) in enumerate(
-                zip(sections["section_id"], sections["channel"])):
+        for section_id, channel in zip(sections["section_id"],
+                                       sections["channel"]):
             moment = table[f"{channel}_mfa"].to_numpy(float)[start:stop]
-            moment = lowpass(moment - moment.mean(), FS, LOWPASS_HZ)
-            damage = compute_base_damage(moment, geometry, SN_INTERCEPTS,
-                                         SN_SLOPES, section=position)
+            moment = damage_filter(moment - moment.mean(), FS, apply_lowpass,
+                                   lowpass_hz)
+            damage = geometry.damage(moment,
+                                     int(section_id) - 1, SN_INTERCEPTS,
+                                     SN_SLOPES)
             rows.append((sim_id, int(section_id), damage))
     return rows
 
@@ -131,7 +154,9 @@ def build_damage(tower_dir: str, sections: pd.DataFrame) -> pd.DataFrame:
     """
     shards = sorted(glob.glob(os.path.join(tower_dir, "series-*.parquet")))
     with multiprocessing.Pool(FLAGS.workers) as pool:
-        parts = pool.map(_shard_damage, [(s, sections) for s in shards])
+        parts = pool.map(_shard_damage,
+                         [(s, sections, FLAGS.lowpass, FLAGS.lowpass_hz)
+                          for s in shards])
     damage = pd.DataFrame([r for part in parts for r in part],
                           columns=["sim_id", "section_id", "damage"])
     return damage.sort_values(["sim_id", "section_id"]).reset_index(drop=True)
@@ -139,6 +164,11 @@ def build_damage(tower_dir: str, sections: pd.DataFrame) -> pd.DataFrame:
 
 def main(_) -> None:
     """Writes metadata, sections and damage for every requested tower."""
+    profile_paths = dict(
+        item.split(":", 1) for item in (FLAGS.gauge_profile or []))
+    missing = [t for t in FLAGS.towers if t not in profile_paths]
+    if missing:
+        raise ValueError(f"--gauge_profile has no path for {missing}.")
     for tower in FLAGS.towers:
         tower_dir = os.path.join(FLAGS.dataset_dir, tower)
         floatbench = pd.concat([
@@ -147,7 +177,8 @@ def main(_) -> None:
             for split in ("train", "test")
         ])
         metadata = build_metadata(floatbench)
-        sections = build_sections(floatbench)
+        sections = build_sections(floatbench,
+                                  pd.read_csv(profile_paths[tower]))
         damage = build_damage(tower_dir, sections)
         metadata.to_parquet(os.path.join(tower_dir, "metadata.parquet"),
                             index=False)
