@@ -42,7 +42,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from floatsense.data import HEIGHT_TARGETS  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.fatigue import compute_base_damage  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.physics import lowpass  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.release import gauge_properties  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.tower import Tower  # noqa: E402  pylint: disable=wrong-import-position
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("dataset_dir", None, "Released dataset, one folder per tower.")
@@ -103,8 +103,8 @@ def build_sections(floatbench: pd.DataFrame,
                     "z_over_h": z_over_h})
         rows.append(row)
     sections = pd.DataFrame(rows)
-    radius, thickness = gauge_properties(geometry_path,
-                                         sections["gauge_height_m"].to_numpy())
+    radius, thickness = Tower(json_path=geometry_path).gauge_properties(
+        sections["gauge_height_m"].to_numpy())
     sections["gauge_radius_m"] = radius
     sections["gauge_thickness_m"] = thickness
     return sections

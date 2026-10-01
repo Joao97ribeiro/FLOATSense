@@ -21,7 +21,6 @@ sim_id shipped with the code in `splits/`, the same on the three towers.
 """
 
 import glob
-import json
 import os
 from typing import Dict, List, Optional, Tuple
 
@@ -34,40 +33,6 @@ TOWER_HEIGHT = 149.386
 NUM_SECTIONS = 30
 SPLITS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)),
                           "splits")
-
-
-def _ordered(values: dict) -> np.ndarray:
-    """Values of a d0.., h0.. or t1.. dict in index order."""
-    return np.array([
-        values[key] for key in sorted(values, key=lambda k: int(k[1:]))
-    ], dtype=float)
-
-
-def gauge_properties(geometry_path: str,
-                     gauge_heights: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """Outer radius and wall thickness of a tower at the gauge heights.
-
-    The radius is interpolated linearly between the section transitions
-    (the tower tapers linearly within a section); the thickness is that of
-    the section that contains the gauge.
-
-    Args:
-        geometry_path (str): Tower geometry JSON of the OpenFAST campaign
-          (diameter, z and thickness transitions).
-        gauge_heights (np.ndarray): Gauge heights above the tower base [m].
-
-    Returns:
-        Tuple[np.ndarray, np.ndarray]: Radius [m] and thickness [m].
-    """
-    with open(geometry_path, encoding="utf-8") as file:
-        geometry = json.load(file)
-    z = _ordered(geometry["z_transitions (m)"])
-    radius = _ordered(geometry["diameter_transitions (m)"]) / 2
-    thickness = _ordered(geometry["thickness_sections (m)"])
-    heights = np.asarray(gauge_heights, dtype=float) + z[0]
-    section = np.clip(np.searchsorted(z, heights, side="right") - 1, 0,
-                      len(thickness) - 1)
-    return np.interp(heights, z, radius), thickness[section]
 
 
 class TowerSections:
