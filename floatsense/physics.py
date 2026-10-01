@@ -81,13 +81,36 @@ def _linear_fit(x: np.ndarray, y: np.ndarray) -> Tuple[float, float]:
 
 def lowpass(series: np.ndarray, sampling_frequency: float,
             cutoff_hz: float) -> np.ndarray:
-    """Zeroes every rFFT bin above `cutoff_hz` (no-op when cutoff is 0)."""
-    if not cutoff_hz:
-        return series
+    """Zeroes every rFFT bin above `cutoff_hz`.
+
+    Raises:
+        ValueError: If the cutoff is not between 0 and the Nyquist frequency.
+    """
+    if not 0.0 < cutoff_hz < sampling_frequency / 2:
+        raise ValueError(f"Low-pass cutoff {cutoff_hz} Hz must be between 0 "
+                         f"and {sampling_frequency / 2} Hz.")
     spectrum = np.fft.rfft(series)
     freqs = np.fft.rfftfreq(len(series), d=1.0 / sampling_frequency)
     spectrum[freqs > cutoff_hz] = 0.0
     return np.fft.irfft(spectrum, n=len(series))
+
+
+def damage_filter(series: np.ndarray, sampling_frequency: float,
+                  apply_lowpass: bool, cutoff_hz: float) -> np.ndarray:
+    """Moment fed to the damage metric: low-passed only if `apply_lowpass`.
+
+    Args:
+        series (np.ndarray): Moment series.
+        sampling_frequency (float): Sampling frequency [Hz].
+        apply_lowpass (bool): Whether to low-pass (off in the benchmark).
+        cutoff_hz (float): Cutoff [Hz] when `apply_lowpass` is True.
+
+    Returns:
+        np.ndarray: The series, low-passed or unchanged.
+    """
+    if not apply_lowpass:
+        return series
+    return lowpass(series, sampling_frequency, cutoff_hz)
 
 
 @dataclasses.dataclass
@@ -245,7 +268,8 @@ class PhysicsReconstruction:
                  lf_fit_band: Tuple[float, float] = (0.01, 0.05),
                  operating_power_kw: float = 100.0,
                  band_hz: float = 3.0,
-                 lowpass_hz: float = 0.0,
+                 apply_lowpass: bool = False,
+                 lowpass_hz: float = 3.0,
                  sn_intercepts_log10: Optional[List[float]] = None,
                  sn_slopes: Optional[List[float]] = None):
         """Initializes the baseline.
@@ -268,9 +292,10 @@ class PhysicsReconstruction:
               counts as operating, for the rotor-speed windows.
             band_hz (float): Upper edge of the reconstruction band: the gain
               is zero above it (part of the method; 0 keeps every bin).
-            lowpass_hz (float): Low-pass cutoff applied to both the true and
-              the reconstructed moment before the damage (0 = none, the
-              default: the damage is that of the simulated moment).
+            apply_lowpass (bool): Low-pass the true and the reconstructed
+              moment before the damage (off by default: the damage is that of
+              the simulated moment).
+            lowpass_hz (float): Cutoff of that low-pass [Hz].
             sn_intercepts_log10 (List[float], optional): SN log10 intercepts.
             sn_slopes (List[float], optional): SN slopes.
         """
@@ -285,6 +310,7 @@ class PhysicsReconstruction:
         self.lf_fit_band = tuple(lf_fit_band)
         self.operating_power_kw = operating_power_kw
         self.band_hz = band_hz
+        self.apply_lowpass = apply_lowpass
         self.lowpass_hz = lowpass_hz
         self.sn_intercepts_log10 = sn_intercepts_log10
         self.sn_slopes = sn_slopes
@@ -461,12 +487,14 @@ class PhysicsReconstruction:
             row = {"sim_id": sim_id}
             for direction, calibration in calibrations.items():
                 # Optional metric filter (off by default), the same on both.
-                moment_true = lowpass(
+                moment_true = damage_filter(
                     self.scored(data, DIRECTION_CHANNELS[direction]["moment"]),
-                    self.sampling_frequency, self.lowpass_hz)
-                moment_rec = lowpass(
+                    self.sampling_frequency, self.apply_lowpass,
+                    self.lowpass_hz)
+                moment_rec = damage_filter(
                     self.reconstruct(data, direction, calibration),
-                    self.sampling_frequency, self.lowpass_hz)
+                    self.sampling_frequency, self.apply_lowpass,
+                    self.lowpass_hz)
                 row[f"damage_true_{direction}"] = self.damage(moment_true)
                 row[f"damage_rec_{direction}"] = self.damage(moment_rec)
                 row[f"var_ratio_{direction}"] = float(

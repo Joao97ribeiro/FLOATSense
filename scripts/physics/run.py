@@ -66,9 +66,10 @@ flags.DEFINE_float("operating_power_kw", 100.0,
 flags.DEFINE_float("band_hz", 3.0,
                    "Upper edge of the reconstruction band (gain is zero "
                    "above it).")
-flags.DEFINE_float("lowpass_hz", 0.0,
-                   "Low-pass on true and reconstructed moments before the "
-                   "damage metric (0 disables).")
+flags.DEFINE_bool("lowpass", False,
+                  "Low-pass the true and reconstructed moments before the "
+                  "damage metric (off in the benchmark).")
+flags.DEFINE_float("lowpass_hz", 3.0, "Cutoff of --lowpass [Hz].")
 flags.DEFINE_integer("max_eval_sims", 0, "If > 0, cap the evaluated sims.")
 flags.DEFINE_list("sn_intercepts_log10", ["12.010", "15.350"],
                   "SN curve log10 intercepts.")
@@ -96,6 +97,7 @@ def main(_):
         lf_fit_band=tuple(float(v) for v in FLAGS.lf_fit_band),
         operating_power_kw=FLAGS.operating_power_kw,
         band_hz=FLAGS.band_hz,
+        apply_lowpass=FLAGS.lowpass,
         lowpass_hz=FLAGS.lowpass_hz,
         sn_intercepts_log10=[float(v) for v in FLAGS.sn_intercepts_log10],
         sn_slopes=[float(v) for v in FLAGS.sn_slopes])

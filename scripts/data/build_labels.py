@@ -16,7 +16,7 @@ train/test files give the split), and writes, next to the series
 The damage is computed as in the evaluation: the fore-aft moment of each
 gauge is cut to the scored window (400-1000 s, an even 6,000 samples as in
 the evaluation), its mean removed, rainflow-counted (no low-pass by
-default, see --lowpass_hz) and passed through the S-N curve with
+default, see --lowpass) and passed through the S-N curve with
 the outer radius at the gauge height and the wall thickness of the section
 that contains it (release v1.1; v1.0 used the mean radius of that section,
 which underestimates the top damage of the redesigns).
@@ -41,7 +41,7 @@ import pyarrow.parquet as pq
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from floatsense.data import HEIGHT_TARGETS  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.fatigue import compute_base_damage  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.physics import lowpass  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.physics import damage_filter  # noqa: E402  pylint: disable=wrong-import-position
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("dataset_dir", None, "Released dataset, one folder per tower.")
@@ -54,9 +54,10 @@ flags.DEFINE_list("gauge_profile", None,
                   "radius [m], thickness [m], bottom to top: the outer "
                   "radius at each gauge height and the thickness of the "
                   "section containing it).")
-flags.DEFINE_float("lowpass_hz", 0.0,
-                   "Low-pass on the moment before the damage, as in the "
-                   "evaluation (0 = none, the default).")
+flags.DEFINE_bool("lowpass", False,
+                  "Low-pass the moment before the damage, as in the "
+                  "evaluation (off in the benchmark).")
+flags.DEFINE_float("lowpass_hz", 3.0, "Cutoff of --lowpass [Hz].")
 
 FS, MIN_TIME, MAX_TIME = 10.0, 400.0, 1000.0
 SN_INTERCEPTS, SN_SLOPES = [12.010, 15.350], [3.0, 5.0]
@@ -118,7 +119,7 @@ def build_sections(floatbench: pd.DataFrame,
 
 def _shard_damage(args):
     """Damage at the 11 sections of every simulation of one shard."""
-    path, sections, lowpass_hz = args
+    path, sections, apply_lowpass, lowpass_hz = args
     geometry = types.SimpleNamespace(
         mean_radius_sections=sections["gauge_radius_m"].to_numpy(),
         thickness_sections=sections["gauge_thickness_m"].to_numpy())
@@ -135,7 +136,8 @@ def _shard_damage(args):
         for position, (section_id, channel) in enumerate(
                 zip(sections["section_id"], sections["channel"])):
             moment = table[f"{channel}_mfa"].to_numpy(float)[start:stop]
-            moment = lowpass(moment - moment.mean(), FS, lowpass_hz)
+            moment = damage_filter(moment - moment.mean(), FS, apply_lowpass,
+                                   lowpass_hz)
             damage = compute_base_damage(moment, geometry, SN_INTERCEPTS,
                                          SN_SLOPES, section=position)
             rows.append((sim_id, int(section_id), damage))
@@ -155,7 +157,8 @@ def build_damage(tower_dir: str, sections: pd.DataFrame) -> pd.DataFrame:
     shards = sorted(glob.glob(os.path.join(tower_dir, "series-*.parquet")))
     with multiprocessing.Pool(FLAGS.workers) as pool:
         parts = pool.map(_shard_damage,
-                         [(s, sections, FLAGS.lowpass_hz) for s in shards])
+                         [(s, sections, FLAGS.lowpass, FLAGS.lowpass_hz)
+                          for s in shards])
     damage = pd.DataFrame([r for part in parts for r in part],
                           columns=["sim_id", "section_id", "damage"])
     return damage.sort_values(["sim_id", "section_id"]).reset_index(drop=True)

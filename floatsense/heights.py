@@ -27,7 +27,7 @@ from scipy.optimize import brentq
 
 from .fatigue import compute_base_damage
 from .physics import PhysicsReconstruction
-from .physics import lowpass
+from .physics import damage_filter
 from .physics import parked_constants
 
 BASE_Z, TOP_Z = 15.0, 164.386
@@ -128,8 +128,10 @@ def evaluate_heights(physics: PhysicsReconstruction, sim_ids: List[int],
             name = f"{channel}_m{direction}"
             if name not in physics.channels:
                 continue
-            true = lowpass(physics.scored(data, name), fs, physics.lowpass_hz)
-            rec = lowpass(base * factor, fs, physics.lowpass_hz)
+            true = damage_filter(physics.scored(data, name), fs,
+                                 physics.apply_lowpass, physics.lowpass_hz)
+            rec = damage_filter(base * factor, fs, physics.apply_lowpass,
+                                physics.lowpass_hz)
             row[f"damage_true_{channel}"] = compute_base_damage(
                 true,
                 physics.tower,
