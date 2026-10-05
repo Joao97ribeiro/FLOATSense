@@ -29,9 +29,9 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 from .fatigue import compute_base_damage
+from .fatigue import damage_filter
 
 SAMPLING_FREQUENCY = 10.0
-TOWER_HEIGHT = 149.386
 NUM_SECTIONS = 30
 SPLITS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)),
                           "splits")
@@ -50,7 +50,7 @@ class TowerSections:
         radius_gauges (np.ndarray): Outer radius at the gauge height [m].
         thickness_gauges (np.ndarray): Thickness of the section containing
           the gauge [m].
-        height (float): Tower height [m].
+        height (float): Tower height [m] (height of the top gauge).
     """
 
     def __init__(self, sections: pd.DataFrame):
@@ -69,7 +69,7 @@ class TowerSections:
         index = sections["section_id"].to_numpy(int) - 1
         self.radius_gauges[index] = sections["gauge_radius_m"]
         self.thickness_gauges[index] = sections["gauge_thickness_m"]
-        self.height = TOWER_HEIGHT
+        self.height = float(sections["gauge_height_m"].max())
 
     def damage(self,
                moment_series: np.ndarray,
@@ -199,8 +199,8 @@ class ReleasedTower:
                       max_time: float = 1000.0) -> np.ndarray:
         """True fore-aft moment of one gauge over the scored window.
 
-        The window is the one of the evaluation: an even number of samples
-        (6,000) from `min_time`, with the mean removed.
+        The window is the one of the evaluation and of FLOATBench: from
+        `min_time` to `max_time` inclusive (6,001 samples), mean removed.
 
         Args:
             sim_id (int): Simulation ID.
@@ -214,22 +214,31 @@ class ReleasedTower:
         """
         start = int(round(min_time * self.sampling_frequency))
         stop = int(round(max_time * self.sampling_frequency)) + 1
-        stop = start + 2 * ((stop - start) // 2)
         series = self.load(sim_id)[start:stop,
                                    self.channels.index(f"{gauge}_mfa")]
         series = series.astype(float)
         return series - series.mean()
 
-    def gauge_damage(self,
-                     moment_series: np.ndarray,
-                     gauge: str,
-                     sn_intercepts_log10: Optional[List[float]] = None,
-                     sn_slopes: Optional[List[float]] = None) -> float:
+    def gauge_damage(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+            self,
+            moment_series: np.ndarray,
+            gauge: str,
+            apply_lowpass: bool = True,
+            lowpass_hz: float = 3.0,
+            lowpass_order: int = 4,
+            sn_intercepts_log10: Optional[List[float]] = None,
+            sn_slopes: Optional[List[float]] = None) -> float:
         """Fatigue damage of any moment series (true or predicted) at a gauge.
+
+        The series goes through the low-pass of the benchmark metric (zero-
+        phase Butterworth, 3 Hz) unless `apply_lowpass` is False.
 
         Args:
             moment_series (np.ndarray): Bending moment [kN.m] at the gauge.
             gauge (str): Gauge name ('tower_bottom', ..., 'tower_top').
+            apply_lowpass (bool): Low-pass before the damage (as the metric).
+            lowpass_hz (float): Cutoff of the low-pass [Hz].
+            lowpass_order (int): Butterworth order of one pass.
             sn_intercepts_log10 (List[float], optional): SN log10 intercepts.
             sn_slopes (List[float], optional): SN curve slopes.
 
@@ -241,8 +250,10 @@ class ReleasedTower:
         if row.empty:
             raise KeyError(f"Unknown gauge '{gauge}'.")
         section = int(row["section_id"].iloc[0]) - 1
-        return self.geometry.damage(moment_series, section,
-                                    sn_intercepts_log10, sn_slopes)
+        series = damage_filter(moment_series, self.sampling_frequency,
+                               apply_lowpass, lowpass_hz, lowpass_order)
+        return self.geometry.damage(series, section, sn_intercepts_log10,
+                                    sn_slopes)
 
     def damage(self) -> pd.DataFrame:
         """damage.parquet as a (sim_id x section_id) table."""

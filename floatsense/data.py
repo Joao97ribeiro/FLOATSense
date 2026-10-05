@@ -63,7 +63,8 @@ class SequenceDataset(Dataset):
                  target_channel: Optional[str] = None,
                  input_channels: Optional[List[str]] = None,
                  height_targets: bool = False,
-                 height_factors: Optional[List[float]] = None):
+                 height_factors: Optional[List[float]] = None,
+                 window_length: Optional[int] = None):
         """Initializes the dataset.
 
         Args:
@@ -76,8 +77,8 @@ class SequenceDataset(Dataset):
             min_time (float): Start of the usable window [s].
             max_time (float): End of the usable window [s], inclusive.
             crop_length (int, optional): If set, a random crop of this many
-              samples is returned (training); otherwise the full window,
-              trimmed to an even length (evaluation).
+              samples is returned (training); otherwise the full scored
+              window (6,001 samples, 400.0-1,000.0 s, as FLOATBench).
             norm_stats (dict, optional): Mapping channel -> [mean, std].
             calibration_path (str, optional): Physics calibration JSON that
               adds the per-simulation 'physics_gain' item.
@@ -115,6 +116,10 @@ class SequenceDataset(Dataset):
         self.height_targets = height_targets
         self.height_factors = height_factors
         self.section = None
+        # Length-fixed models see `window_length` samples from
+        # `window_offset` (their input size); None keeps the full window.
+        self.window_length = window_length
+        self.window_offset = 0
         if height_targets:
             self.input_channels = self.input_channels + ["height"]
             self.height_channels = [
@@ -177,8 +182,9 @@ class SequenceDataset(Dataset):
             max_start = window.shape[0] - self.crop_length
             offset = int(np.random.randint(0, max_start + 1))
             window = window[offset:offset + self.crop_length]
-        else:
-            window = window[:2 * (window.shape[0] // 2)]
+        elif self.window_length:
+            window = window[self.window_offset:self.window_offset +
+                            self.window_length]
 
         section, height = None, 0.0
         if self.height_targets:

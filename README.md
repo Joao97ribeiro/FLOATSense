@@ -70,8 +70,7 @@ accelerometer axis improves the top at every budget.
 - **Task.** From the gravity-corrected fore-aft tower-top acceleration,
   rotor speed, blade pitch, hub wind speed and a height $z/H$,
   reconstruct the fore-aft moment at that height over 400 to 1,000 s
-  (scored window: 6,000 samples, 400.0 to 999.9 s; FLOATBench uses the
-  6,001 samples to 1,000.0 s, which moves single damages by at most 5%).
+  (scored window: 6,001 samples, 400.0 to 1,000.0 s, as in FLOATBench).
   One model serves the whole tower.
 - **Damage-based scoring.** True and reconstructed moments pass through
   the pipeline that generated the FLOATBench labels (rainflow,

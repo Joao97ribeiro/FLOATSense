@@ -14,8 +14,8 @@ train/test files give the split), and writes, next to the series
   damage.parquet    sim_id, section_id, damage (11 rows per simulation)
 
 The damage is computed as in the evaluation: the fore-aft moment of each
-gauge is cut to the scored window (400-1000 s, an even 6,000 samples as in
-the evaluation), its mean removed, low-passed at 3 Hz with a zero-phase
+gauge is cut to the scored window (400.0-1000.0 s inclusive, 6,001 samples,
+as in the evaluation and FLOATBench), its mean removed, low-passed at 3 Hz with a zero-phase
 Butterworth filter (see --lowpass), rainflow-counted and passed through the
 S-N curve with
 the outer radius at the gauge height and the wall thickness of the section
@@ -41,7 +41,7 @@ import pyarrow.parquet as pq
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from floatsense.data import HEIGHT_TARGETS  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.release import TowerSections  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.physics import damage_filter  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.fatigue import damage_filter  # noqa: E402  pylint: disable=wrong-import-position
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("dataset_dir", None, "Released dataset, one folder per tower.")
@@ -63,7 +63,6 @@ flags.DEFINE_integer("lowpass_order", 4,
 
 FS, MIN_TIME, MAX_TIME = 10.0, 400.0, 1000.0
 SN_INTERCEPTS, SN_SLOPES = [12.010, 15.350], [3.0, 5.0]
-HEIGHT = 149.386
 METADATA_COLUMNS = [
     "sim_id", "wind_speed_id", "wind_speed", "mean_wind_speed",
     "std_wind_speed", "wave_hs_id", "wave_hs", "wave_tp_id", "wave_tp",
@@ -100,20 +99,24 @@ def build_sections(floatbench: pd.DataFrame,
     Returns:
         pd.DataFrame: One row per scored section, base to top.
     """
-    geometry = floatbench.drop_duplicates("section_id").set_index("section_id")
-    rows = []
-    for name, index, z_over_h in HEIGHT_TARGETS:
-        row = {"section_id": index + 1}
-        row.update(geometry.loc[index + 1, GEOMETRY_COLUMNS[1:]].to_dict())
-        row.update({"channel": name, "gauge_height_m": z_over_h * HEIGHT,
-                    "z_over_h": z_over_h})
-        rows.append(row)
-    sections = pd.DataFrame(rows)
+    # Gauge heights, radius and thickness come from the gauge profile of the
+    # OpenFAST campaign; the gauges are matched to HEIGHT_TARGETS in order.
     gauges = gauge_profile.sort_values("gauge_id")
     heights = gauges["z [m]"].to_numpy() - gauges["z [m]"].iloc[0]
-    if (len(gauges) != len(sections) or
-            not np.allclose(heights, sections["gauge_height_m"], atol=1e-2)):
+    z_over_h = heights / heights[-1]
+    if (len(gauges) != len(HEIGHT_TARGETS) or not np.allclose(
+            z_over_h, [target[2] for target in HEIGHT_TARGETS], atol=1e-4)):
         raise ValueError("The gauge profile does not match the 11 gauges.")
+    geometry = floatbench.drop_duplicates("section_id").set_index("section_id")
+    rows = []
+    for (name, index, _), height, ratio in zip(HEIGHT_TARGETS, heights,
+                                                z_over_h):
+        row = {"section_id": index + 1}
+        row.update(geometry.loc[index + 1, GEOMETRY_COLUMNS[1:]].to_dict())
+        row.update({"channel": name, "gauge_height_m": float(height),
+                    "z_over_h": float(ratio)})
+        rows.append(row)
+    sections = pd.DataFrame(rows)
     sections["gauge_radius_m"] = gauges["radius [m]"].to_numpy()
     sections["gauge_thickness_m"] = gauges["thickness [m]"].to_numpy()
     return sections
@@ -123,10 +126,9 @@ def _shard_damage(args):
     """Damage at the 11 sections of every simulation of one shard."""
     path, sections, apply_lowpass, lowpass_hz, lowpass_order = args
     geometry = TowerSections(sections)
-    # The evaluation keeps an even number of samples of the inclusive
-    # 400-1000 s window (floatsense.data), i.e. 400.0 to 999.9 s.
+    # The scored window, inclusive: 400.0 to 1000.0 s (6,001 samples).
     start = int(round(MIN_TIME * FS))
-    stop = start + 2 * ((int(round(MAX_TIME * FS)) + 1 - start) // 2)
+    stop = int(round(MAX_TIME * FS)) + 1
     shard = pq.ParquetFile(path)
     columns = ["sim_id"] + [f"{c}_mfa" for c in sections["channel"]]
     rows = []

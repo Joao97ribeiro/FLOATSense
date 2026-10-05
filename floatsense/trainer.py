@@ -33,7 +33,7 @@ from .metrics import summarize_damage
 from .models import ACCEL_FIRST_MODELS
 from .models import LENGTH_FIXED_MODELS
 from .models import build_model
-from .physics import damage_filter
+from .fatigue import damage_filter
 from .release import ReleasedTower
 from .release import TowerSections
 
@@ -176,7 +176,8 @@ class SequenceModelTrainer:
             self,
             sim_ids: List[int],
             crop_length: Optional[int],
-            release: Optional[ReleasedTower] = None) -> SequenceDataset:
+            release: Optional[ReleasedTower] = None,
+            window_length: Optional[int] = None) -> SequenceDataset:
         return SequenceDataset(release=release or self.release,
                                      sim_ids=sim_ids,
                                      direction=self.direction,
@@ -189,7 +190,39 @@ class SequenceModelTrainer:
                                      target_channel=self.target_channel,
                                      input_channels=self.input_channels,
                                      height_targets=self.height_targets,
-                                     height_factors=self.height_factors)
+                                     height_factors=self.height_factors,
+                                     window_length=window_length)
+
+    def _input_length(self) -> Optional[int]:
+        """Window of a length-fixed model (None: crops or any length)."""
+        return None if self.crop_length else self._eval_length
+
+    def _predict_window(self, dataset: SequenceDataset,
+                        index: int) -> np.ndarray:
+        """Normalized prediction over the full scored window.
+
+        Models trained on crops, and length-fixed models trained on the full
+        window, predict it directly. A length-fixed checkpoint trained on
+        fewer samples (`_eval_length` = 6,000, release v1.0) predicts the
+        first and the last 6,000 samples; the last samples of the second
+        prediction, aligned on the overlap, complete the first.
+        """
+        if self.crop_length or self.model_name not in LENGTH_FIXED_MODELS:
+            return self._predict(dataset[index])
+        full = dataset.stop_index - dataset.start_index
+        extra = full - self._eval_length
+        if extra <= 0:
+            return self._predict(dataset[index])
+        dataset.window_length = self._eval_length
+        try:
+            dataset.window_offset = 0
+            first = self._predict(dataset[index])
+            dataset.window_offset = extra
+            last = self._predict(dataset[index])
+        finally:
+            dataset.window_length, dataset.window_offset = None, 0
+        shift = float(np.mean(first[extra:] - last[:-extra]))
+        return np.concatenate([first, last[-extra:] + shift])
 
     def _damage_proxy_loss(self, prediction: torch.Tensor, target: torch.Tensor,
                            freq_weights: torch.Tensor) -> torch.Tensor:
@@ -258,9 +291,14 @@ class SequenceModelTrainer:
             self.norm_stats = compute_norm_stats(self.release, train_ids,
                                                  stat_channels, self.min_time,
                                                  self.max_time)
+        # Input length of the length-fixed models: the full scored window
+        # (6,001 samples). Checkpoints trained before stored 6,000 and are
+        # scored over the full window by _predict_window.
         self._eval_length = probe[0]["inputs"].shape[-1]
 
-        dataset = self._make_dataset(train_ids, self.crop_length)
+        dataset = self._make_dataset(train_ids,
+                                     self.crop_length,
+                                     window_length=self._input_length())
         # Full batches only, unless the split is smaller than one batch.
         loader = DataLoader(dataset,
                             batch_size=self.batch_size,
@@ -293,8 +331,8 @@ class SequenceModelTrainer:
         val_loader = None
         if val_ids:
             history["val_loss"] = []
-            val_loader = DataLoader(self._make_dataset(val_ids,
-                                                       self.crop_length),
+            val_loader = DataLoader(self._make_dataset(
+                val_ids, self.crop_length, window_length=self._input_length()),
                                     batch_size=self.batch_size,
                                     shuffle=False, num_workers=0)
         val_interval = self.val_every or max(1, self.num_epochs // 10)
@@ -511,7 +549,8 @@ class SequenceModelTrainer:
                     dataset.section = section
                     item = dataset[index]
                     moment_rec = damage_filter(
-                        dataset.denormalize_target(self._predict(item)),
+                        dataset.denormalize_target(
+                            self._predict_window(dataset, index)),
                         dataset.sampling_frequency, self.apply_lowpass,
                         self.lowpass_hz, self.lowpass_order)
                     moment_true = damage_filter(

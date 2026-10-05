@@ -26,11 +26,9 @@ import pandas as pd
 from scipy.optimize import brentq
 
 from .physics import PhysicsReconstruction
-from .physics import damage_filter
+from .fatigue import damage_filter
 from .physics import parked_constants
 
-BASE_Z, TOP_Z = 15.0, 164.386
-HEIGHT = TOP_Z - BASE_Z
 # Rotor-nacelle assembly of the IEA 22 MW (ElastoDyn inputs).
 NAC_MASS, NAC_CM_Z = 821239.8004933242, 4.2647901842947595
 HUB_MASS, YAW_MASS, BLADE_MASS = 120447.70224890654, 28740.99049474962, 82427.5
@@ -40,10 +38,6 @@ TWR2SHFT, OVERHANG, SHFT_TILT = 4.142540706280534, -14.07711591388923, -6.0
 HEIGHT_CHANNELS = ([("tower_bottom", 0)] +
                    [(f"tower_{k}", 3 * k - 1) for k in range(1, 10)] +
                    [("tower_top", 29)])
-GAUGE_Z = np.array([
-    0.0, 12.4488, 27.3874, 42.3260, 57.2646, 72.2032, 87.1418, 102.0804,
-    117.0190, 131.9576, HEIGHT
-])
 
 
 def rna_properties() -> Tuple[float, float]:
@@ -55,8 +49,11 @@ def rna_properties() -> Tuple[float, float]:
 
 
 def height_factor(z: np.ndarray, s: np.ndarray, m: np.ndarray, h_rna: float,
-                  mass_rna: float) -> np.ndarray:
-    """f(z) = M(z)/M(0) of the inertial model, tower mass included."""
+                  mass_rna: float, height: float) -> np.ndarray:
+    """f(z) = M(z)/M(0) of the inertial model, tower mass included.
+
+    `height` is the tower height [m]; z and s are heights above the base.
+    """
 
     def upper(power):
         weight = m * s**power
@@ -67,8 +64,8 @@ def height_factor(z: np.ndarray, s: np.ndarray, m: np.ndarray, h_rna: float,
 
     def moment(zz):
         return (
-            mass_rna * (1 + h_rna / HEIGHT) * (HEIGHT + h_rna - zz) +
-            (np.interp(zz, s, second) - zz * np.interp(zz, s, first)) / HEIGHT)
+            mass_rna * (1 + h_rna / height) * (height + h_rna - zz) +
+            (np.interp(zz, s, second) - zz * np.interp(zz, s, first)) / height)
 
     return moment(np.asarray(z, float)) / moment(0.0)
 
@@ -84,7 +81,8 @@ def calibrate_profile(dataset_dir: str,
     """Height factors of a tower from its mass and parked profile.
 
     Args:
-        dataset_dir (str): Released dataset directory (parked runs).
+        dataset_dir (str): Released dataset directory (parked runs and
+          <tower>/sections.parquet).
         tower (str): Tower name.
         direction (str): 'fa' or 'ss'.
         mass_csv (str, optional): Two-column CSV (height above the base [m],
@@ -96,20 +94,27 @@ def calibrate_profile(dataset_dir: str,
     """
     mass = pd.read_csv(mass_csv or
                        os.path.join(TOWERS_DIR, f"{tower}_mass.csv"))
+    # Gauge heights above the base, from the released sections table; the
+    # top gauge sits at the tower top.
+    gauge_z = pd.read_parquet(
+        os.path.join(dataset_dir, tower,
+                     "sections.parquet"))["gauge_height_m"].to_numpy(float)
+    height = float(gauge_z[-1])
     s, m = mass.iloc[:, 0].values, mass.iloc[:, 1].values
     parked = parked_constants(dataset_dir, tower)
     parked_f = (parked[direction] / parked[direction].iloc[0]).values
     anchor = len(parked_f) - 1
     mass_rna, h_nominal = rna_properties()
     h_eff = brentq(
-        lambda hh: height_factor(GAUGE_Z[anchor], s, m, hh, mass_rna) -
+        lambda hh: height_factor(gauge_z[anchor], s, m, hh, mass_rna, height) -
         parked_f[anchor], -100.0, 5000.0)
     return {
         "h_rna_nominal": float(h_nominal),
         "h_rna_effective": float(h_eff),
-        "factors": height_factor(GAUGE_Z, s, m, h_eff, mass_rna).tolist(),
+        "factors": height_factor(gauge_z, s, m, h_eff, mass_rna,
+                                 height).tolist(),
         "parked_factors": parked_f.tolist(),
-        "heights": GAUGE_Z.tolist(),
+        "heights": gauge_z.tolist(),
     }
 
 
