@@ -69,14 +69,17 @@ accelerometer axis improves the top at every budget.
   (the parked runs by tower and run name).
 - **Task.** From the gravity-corrected fore-aft tower-top acceleration,
   rotor speed, blade pitch, hub wind speed and a height $z/H$,
-  reconstruct the fore-aft moment at that height over 400 to 1,000 s.
+  reconstruct the fore-aft moment at that height over 400 to 1,000 s
+  (scored window: 6,000 samples, 400.0 to 999.9 s; FLOATBench uses the
+  6,001 samples to 1,000.0 s, which moves single damages by at most 5%).
   One model serves the whole tower.
 - **Damage-based scoring.** True and reconstructed moments pass through
   the pipeline that generated the FLOATBench labels (rainflow,
   DNV-RP-C203 S-N curve, Miner's rule), after a 3 Hz zero-phase
   Butterworth low-pass (order 4, forward and backward): the fatigue
   damage of these towers lies below 3 Hz (filtered and unfiltered true
-  damage agree within 1% in every simulation). Five metrics: $R^2$
+  damage agree within 1% in 99.8% of the gauge-simulation pairs). Five
+  metrics: $R^2$
   of $\log_{10}$ damage, median damage ratio, fraction within a factor
   of two, mean relative error, and within-condition correlation over
   the six realizations of an operating point.
@@ -212,7 +215,8 @@ FLOATSense/                          24.0 GB
 │   ├── sections.parquet              section_id, section_height_m, section_radius_m, section_thickness_m,
 │   │                                 channel, gauge_height_m, z_over_h, gauge_radius_m,
 │   │                                 gauge_thickness_m (the 11 scored sections)
-│   └── damage.parquet                sim_id, section_id, damage (reference fore-aft damage)
+│   └── damage.parquet                sim_id, section_id, damage (reference fore-aft damage at the
+│                                     gauge: radius at the gauge, 3 Hz Butterworth low-pass; v1.1)
 ├── opt1/                             same files
 ├── opt2/                             same files
 ├── parked.parquet                    the 22 parked runs (waves only) of each tower
