@@ -1,5 +1,9 @@
 """Writes the label and metadata files of the released dataset.
 
+Maintainers only: the released files already contain the labels. The gauge
+geometry (--gauge_profile) is the gauge profile written by the fatigue flow
+of the OpenFAST campaign (tower_weighted_damage_profile_gauges.csv).
+
 Reads the released series of each tower and the FLOATBench dataset (the
 train/test files give the split), and writes, next to the series
 (<dataset_dir>/<tower>/):

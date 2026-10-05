@@ -106,6 +106,8 @@ scripts/           Pipeline entry points — see "Scripts" below
 splits/            Model-selection and few-shot splits (lists of sim_id, same on every tower)
 towers/            ElastoDyn tower mass density of each tower (physics height factor)
 docs/              Figures used in this README
+tests/             Damage-metric tests (python -m unittest discover tests;
+                   FLOATSENSE_DATA=data/FLOATSense also checks the labels)
 environment.yml    Conda environment (Python 3.11 + GPU PyTorch)
 requirements.txt   Pinned runtime dependencies
 ```
@@ -119,7 +121,7 @@ models.py      the floor and the 20 learned models
 trainer.py     training recipe and damage evaluation
 physics.py     band-gain physics baseline and its parked calibration
 heights.py     physics height factor along the tower
-fatigue.py     rainflow, S-N curve and Miner's rule
+fatigue.py     damage metric: 3 Hz zero-phase low-pass, rainflow, S-N curve, Miner's rule
 metrics.py     damage metrics and cluster bootstrap
 ```
 
