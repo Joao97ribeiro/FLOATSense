@@ -73,7 +73,10 @@ accelerometer axis improves the top at every budget.
   One model serves the whole tower.
 - **Damage-based scoring.** True and reconstructed moments pass through
   the pipeline that generated the FLOATBench labels (rainflow,
-  DNV-RP-C203 S-N curve, Miner's rule; no low-pass). Five metrics: $R^2$
+  DNV-RP-C203 S-N curve, Miner's rule), after a 3 Hz zero-phase
+  Butterworth low-pass (order 4, forward and backward): the fatigue
+  damage of these towers lies below 3 Hz (filtered and unfiltered true
+  damage agree within 1% in every simulation). Five metrics: $R^2$
   of $\log_{10}$ damage, median damage ratio, fraction within a factor
   of two, mean relative error, and within-condition correlation over
   the six realizations of an operating point.

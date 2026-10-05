@@ -15,8 +15,9 @@ train/test files give the split), and writes, next to the series
 
 The damage is computed as in the evaluation: the fore-aft moment of each
 gauge is cut to the scored window (400-1000 s, an even 6,000 samples as in
-the evaluation), its mean removed, rainflow-counted (no low-pass by
-default, see --lowpass) and passed through the S-N curve with
+the evaluation), its mean removed, low-passed at 3 Hz with a zero-phase
+Butterworth filter (see --lowpass), rainflow-counted and passed through the
+S-N curve with
 the outer radius at the gauge height and the wall thickness of the section
 that contains it (release v1.1; v1.0 used the mean radius of that section,
 which underestimates the top damage of the redesigns).
@@ -53,10 +54,12 @@ flags.DEFINE_list("gauge_profile", None,
                   "radius [m], thickness [m], bottom to top: the outer "
                   "radius at each gauge height and the thickness of the "
                   "section containing it).")
-flags.DEFINE_bool("lowpass", False,
-                  "Low-pass the moment before the damage, as in the "
-                  "evaluation (off in the benchmark).")
+flags.DEFINE_bool("lowpass", True,
+                  "Zero-phase Butterworth low-pass of the moment before the "
+                  "damage, as in the evaluation.")
 flags.DEFINE_float("lowpass_hz", 3.0, "Cutoff of --lowpass [Hz].")
+flags.DEFINE_integer("lowpass_order", 4,
+                     "Butterworth order of one pass (sosfiltfilt runs two).")
 
 FS, MIN_TIME, MAX_TIME = 10.0, 400.0, 1000.0
 SN_INTERCEPTS, SN_SLOPES = [12.010, 15.350], [3.0, 5.0]
@@ -118,7 +121,7 @@ def build_sections(floatbench: pd.DataFrame,
 
 def _shard_damage(args):
     """Damage at the 11 sections of every simulation of one shard."""
-    path, sections, apply_lowpass, lowpass_hz = args
+    path, sections, apply_lowpass, lowpass_hz, lowpass_order = args
     geometry = TowerSections(sections)
     # The evaluation keeps an even number of samples of the inclusive
     # 400-1000 s window (floatsense.data), i.e. 400.0 to 999.9 s.
@@ -134,7 +137,7 @@ def _shard_damage(args):
                                        sections["channel"]):
             moment = table[f"{channel}_mfa"].to_numpy(float)[start:stop]
             moment = damage_filter(moment - moment.mean(), FS, apply_lowpass,
-                                   lowpass_hz)
+                                   lowpass_hz, lowpass_order)
             damage = geometry.damage(moment,
                                      int(section_id) - 1, SN_INTERCEPTS,
                                      SN_SLOPES)
@@ -155,8 +158,8 @@ def build_damage(tower_dir: str, sections: pd.DataFrame) -> pd.DataFrame:
     shards = sorted(glob.glob(os.path.join(tower_dir, "series-*.parquet")))
     with multiprocessing.Pool(FLAGS.workers) as pool:
         parts = pool.map(_shard_damage,
-                         [(s, sections, FLAGS.lowpass, FLAGS.lowpass_hz)
-                          for s in shards])
+                         [(s, sections, FLAGS.lowpass, FLAGS.lowpass_hz,
+                           FLAGS.lowpass_order) for s in shards])
     damage = pd.DataFrame([r for part in parts for r in part],
                           columns=["sim_id", "section_id", "damage"])
     return damage.sort_values(["sim_id", "section_id"]).reset_index(drop=True)

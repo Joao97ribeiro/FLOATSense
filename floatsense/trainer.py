@@ -55,8 +55,9 @@ class SequenceModelTrainer:
                  condition_channels: Optional[List[str]] = None,
                  min_time: float = 400.0,
                  max_time: float = 1000.0,
-                 apply_lowpass: bool = False,
+                 apply_lowpass: bool = True,
                  lowpass_hz: float = 3.0,
+                 lowpass_order: int = 4,
                  crop_length: int = 4096,
                  batch_size: int = 16,
                  learning_rate: float = 1e-3,
@@ -93,8 +94,10 @@ class SequenceModelTrainer:
             min_time (float): Start time of the usable window [s].
             max_time (float): End time of the usable window [s].
             apply_lowpass (bool): Low-pass the true and the reconstructed
-              moment before the damage (off by default).
+              moment before the damage (on by default: the damage of these
+              towers lies below 3 Hz).
             lowpass_hz (float): Cutoff of that low-pass [Hz].
+            lowpass_order (int): Butterworth order of one pass.
             crop_length (int): Training crop length; the length-fixed
               spectral models always train on the full window.
             batch_size (int): Training batch size.
@@ -139,6 +142,7 @@ class SequenceModelTrainer:
         self.max_time = max_time
         self.apply_lowpass = apply_lowpass
         self.lowpass_hz = lowpass_hz
+        self.lowpass_order = lowpass_order
         self.crop_length = (crop_length
                             if model_name not in LENGTH_FIXED_MODELS else None)
         self.batch_size = batch_size
@@ -509,11 +513,11 @@ class SequenceModelTrainer:
                     moment_rec = damage_filter(
                         dataset.denormalize_target(self._predict(item)),
                         dataset.sampling_frequency, self.apply_lowpass,
-                        self.lowpass_hz)
+                        self.lowpass_hz, self.lowpass_order)
                     moment_true = damage_filter(
                         dataset.denormalize_target(item["target"][0].numpy()),
                         dataset.sampling_frequency, self.apply_lowpass,
-                        self.lowpass_hz)
+                        self.lowpass_hz, self.lowpass_order)
                     if section is None:
                         # Single height: columns named by the gauge.
                         stem = dataset.moment_channel.rsplit("_m", 1)[0]

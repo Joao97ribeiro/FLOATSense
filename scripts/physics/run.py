@@ -66,10 +66,13 @@ flags.DEFINE_float("operating_power_kw", 100.0,
 flags.DEFINE_float("band_hz", 3.0,
                    "Upper edge of the reconstruction band (gain is zero "
                    "above it).")
-flags.DEFINE_bool("lowpass", False,
-                  "Low-pass the true and reconstructed moments before the "
-                  "damage metric (off in the benchmark).")
+flags.DEFINE_bool("lowpass", True,
+                  "Zero-phase Butterworth low-pass of the true and "
+                  "reconstructed moments before the damage metric (the "
+                  "damage of these towers lies below 3 Hz).")
 flags.DEFINE_float("lowpass_hz", 3.0, "Cutoff of --lowpass [Hz].")
+flags.DEFINE_integer("lowpass_order", 4,
+                     "Butterworth order of one pass (sosfiltfilt runs two).")
 flags.DEFINE_integer("max_eval_sims", 0, "If > 0, cap the evaluated sims.")
 flags.DEFINE_list("sn_intercepts_log10", ["12.010", "15.350"],
                   "SN curve log10 intercepts.")
@@ -99,6 +102,7 @@ def main(_):
         band_hz=FLAGS.band_hz,
         apply_lowpass=FLAGS.lowpass,
         lowpass_hz=FLAGS.lowpass_hz,
+        lowpass_order=FLAGS.lowpass_order,
         sn_intercepts_log10=[float(v) for v in FLAGS.sn_intercepts_log10],
         sn_slopes=[float(v) for v in FLAGS.sn_slopes])
 

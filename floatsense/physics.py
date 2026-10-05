@@ -78,9 +78,25 @@ def _linear_fit(x: np.ndarray, y: np.ndarray) -> Tuple[float, float]:
     return float(coeffs[0]), float(coeffs[1])
 
 
-def lowpass(series: np.ndarray, sampling_frequency: float,
-            cutoff_hz: float) -> np.ndarray:
-    """Zeroes every rFFT bin above `cutoff_hz`.
+def lowpass(series: np.ndarray,
+            sampling_frequency: float,
+            cutoff_hz: float,
+            order: int = 4) -> np.ndarray:
+    """Zero-phase Butterworth low-pass (forward and backward, sosfiltfilt).
+
+    Run in both directions, an order-4 filter has the attenuation of an
+    order-8 one and no phase shift. Unlike a hard cut of the FFT bins, it
+    does not ring at the window edges (which added spurious rainflow
+    cycles).
+
+    Args:
+        series (np.ndarray): Time series.
+        sampling_frequency (float): Sampling frequency [Hz].
+        cutoff_hz (float): Cutoff frequency [Hz].
+        order (int): Butterworth order of one pass.
+
+    Returns:
+        np.ndarray: Filtered series, same length.
 
     Raises:
         ValueError: If the cutoff is not between 0 and the Nyquist frequency.
@@ -88,28 +104,34 @@ def lowpass(series: np.ndarray, sampling_frequency: float,
     if not 0.0 < cutoff_hz < sampling_frequency / 2:
         raise ValueError(f"Low-pass cutoff {cutoff_hz} Hz must be between 0 "
                          f"and {sampling_frequency / 2} Hz.")
-    spectrum = np.fft.rfft(series)
-    freqs = np.fft.rfftfreq(len(series), d=1.0 / sampling_frequency)
-    spectrum[freqs > cutoff_hz] = 0.0
-    return np.fft.irfft(spectrum, n=len(series))
+    sos = scipy.signal.butter(order,
+                              cutoff_hz,
+                              fs=sampling_frequency,
+                              output="sos")
+    return scipy.signal.sosfiltfilt(sos, np.asarray(series, dtype=float))
 
 
-def damage_filter(series: np.ndarray, sampling_frequency: float,
-                  apply_lowpass: bool, cutoff_hz: float) -> np.ndarray:
+def damage_filter(series: np.ndarray,
+                  sampling_frequency: float,
+                  apply_lowpass: bool,
+                  cutoff_hz: float,
+                  order: int = 4) -> np.ndarray:
     """Moment fed to the damage metric: low-passed only if `apply_lowpass`.
 
     Args:
         series (np.ndarray): Moment series.
         sampling_frequency (float): Sampling frequency [Hz].
-        apply_lowpass (bool): Whether to low-pass (off in the benchmark).
+        apply_lowpass (bool): Whether to low-pass (on in the benchmark: the
+          fatigue damage of these towers lies below 3 Hz).
         cutoff_hz (float): Cutoff [Hz] when `apply_lowpass` is True.
+        order (int): Butterworth order of one pass.
 
     Returns:
         np.ndarray: The series, low-passed or unchanged.
     """
     if not apply_lowpass:
         return series
-    return lowpass(series, sampling_frequency, cutoff_hz)
+    return lowpass(series, sampling_frequency, cutoff_hz, order)
 
 
 @dataclasses.dataclass
@@ -267,8 +289,9 @@ class PhysicsReconstruction:
                  lf_fit_band: Tuple[float, float] = (0.01, 0.05),
                  operating_power_kw: float = 100.0,
                  band_hz: float = 3.0,
-                 apply_lowpass: bool = False,
+                 apply_lowpass: bool = True,
                  lowpass_hz: float = 3.0,
+                 lowpass_order: int = 4,
                  sn_intercepts_log10: Optional[List[float]] = None,
                  sn_slopes: Optional[List[float]] = None):
         """Initializes the baseline.
@@ -292,9 +315,10 @@ class PhysicsReconstruction:
             band_hz (float): Upper edge of the reconstruction band: the gain
               is zero above it (part of the method; 0 keeps every bin).
             apply_lowpass (bool): Low-pass the true and the reconstructed
-              moment before the damage (off by default: the damage is that of
-              the simulated moment).
+              moment before the damage (on by default: the damage of these
+              towers lies below 3 Hz).
             lowpass_hz (float): Cutoff of that low-pass [Hz].
+            lowpass_order (int): Butterworth order of one pass.
             sn_intercepts_log10 (List[float], optional): SN log10 intercepts.
             sn_slopes (List[float], optional): SN slopes.
         """
@@ -311,6 +335,7 @@ class PhysicsReconstruction:
         self.band_hz = band_hz
         self.apply_lowpass = apply_lowpass
         self.lowpass_hz = lowpass_hz
+        self.lowpass_order = lowpass_order
         self.sn_intercepts_log10 = sn_intercepts_log10
         self.sn_slopes = sn_slopes
         self.channels = release.channels
@@ -485,15 +510,15 @@ class PhysicsReconstruction:
             data = self.load(sim_id)
             row = {"sim_id": sim_id}
             for direction, calibration in calibrations.items():
-                # Optional metric filter (off by default), the same on both.
+                # Metric filter (on by default), the same on both.
                 moment_true = damage_filter(
                     self.scored(data, DIRECTION_CHANNELS[direction]["moment"]),
                     self.sampling_frequency, self.apply_lowpass,
-                    self.lowpass_hz)
+                    self.lowpass_hz, self.lowpass_order)
                 moment_rec = damage_filter(
                     self.reconstruct(data, direction, calibration),
                     self.sampling_frequency, self.apply_lowpass,
-                    self.lowpass_hz)
+                    self.lowpass_hz, self.lowpass_order)
                 row[f"damage_true_{direction}"] = self.damage(moment_true)
                 row[f"damage_rec_{direction}"] = self.damage(moment_rec)
                 row[f"var_ratio_{direction}"] = float(

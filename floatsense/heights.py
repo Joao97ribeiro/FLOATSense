@@ -128,9 +128,10 @@ def evaluate_heights(physics: PhysicsReconstruction, sim_ids: List[int],
             if name not in physics.channels:
                 continue
             true = damage_filter(physics.scored(data, name), fs,
-                                 physics.apply_lowpass, physics.lowpass_hz)
+                                 physics.apply_lowpass, physics.lowpass_hz,
+                                 physics.lowpass_order)
             rec = damage_filter(base * factor, fs, physics.apply_lowpass,
-                                physics.lowpass_hz)
+                                physics.lowpass_hz, physics.lowpass_order)
             row[f"damage_true_{channel}"] = physics.tower.damage(
                 true, section, physics.sn_intercepts_log10, physics.sn_slopes)
             row[f"damage_rec_{channel}"] = physics.tower.damage(
