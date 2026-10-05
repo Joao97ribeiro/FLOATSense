@@ -197,8 +197,8 @@ class SequenceModelTrainer:
         """Window of a length-fixed model (None: crops or any length)."""
         return None if self.crop_length else self._eval_length
 
-    def _predict_window(self, dataset: SequenceDataset,
-                        index: int) -> np.ndarray:
+    def _predict_window(self, dataset: SequenceDataset, index: int,
+                        item: Dict[str, torch.Tensor]) -> np.ndarray:
         """Normalized prediction over the full scored window.
 
         Models trained on crops, and length-fixed models trained on the full
@@ -206,13 +206,20 @@ class SequenceModelTrainer:
         fewer samples (`_eval_length` = 6,000, release v1.0) predicts the
         first and the last 6,000 samples; the last samples of the second
         prediction, aligned on the overlap, complete the first.
+
+        Args:
+            dataset (SequenceDataset): Evaluation dataset (full window).
+            index (int): Item index.
+            item (dict): dataset[index], already loaded.
+
+        Returns:
+            np.ndarray: Normalized prediction over the full window.
         """
         if self.crop_length or self.model_name not in LENGTH_FIXED_MODELS:
-            return self._predict(dataset[index])
-        full = dataset.stop_index - dataset.start_index
-        extra = full - self._eval_length
+            return self._predict(item)
+        extra = item["target"].shape[-1] - self._eval_length
         if extra <= 0:
-            return self._predict(dataset[index])
+            return self._predict(item)
         dataset.window_length = self._eval_length
         try:
             dataset.window_offset = 0
@@ -550,7 +557,7 @@ class SequenceModelTrainer:
                     item = dataset[index]
                     moment_rec = damage_filter(
                         dataset.denormalize_target(
-                            self._predict_window(dataset, index)),
+                            self._predict_window(dataset, index, item)),
                         dataset.sampling_frequency, self.apply_lowpass,
                         self.lowpass_hz, self.lowpass_order)
                     moment_true = damage_filter(
