@@ -26,7 +26,6 @@ import pandas as pd
 from scipy.optimize import brentq
 
 from .constants import BLADE_MASS
-from .constants import HEIGHT_TARGETS
 from .constants import HUB_MASS
 from .constants import NAC_CM_Z
 from .constants import NAC_MASS
@@ -38,8 +37,6 @@ from .physics import PhysicsReconstruction
 from .fatigue import damage_filter
 from .physics import parked_constants
 
-# Target channels along the tower, gauge index 0 (base) to 10 (top).
-HEIGHT_CHANNELS = [stem for stem, _, _ in HEIGHT_TARGETS]
 
 
 def rna_properties() -> Tuple[float, float]:
@@ -131,7 +128,7 @@ def evaluate_heights(physics: PhysicsReconstruction, sim_ids: List[int],
         base = physics.reconstruct(data, direction, calibration)
         row = {"sim_id": sim_id}
         for gauge, (channel, factor) in enumerate(
-                zip(HEIGHT_CHANNELS, factors)):
+                zip(physics.tower.channels, factors)):
             name = f"{channel}_m{direction}"
             if name not in physics.channels:
                 continue

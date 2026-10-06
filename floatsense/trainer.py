@@ -26,7 +26,6 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from .constants import HEIGHT_TARGETS
 from .constants import LOWPASS_HZ
 from .constants import LOWPASS_ORDER
 from .constants import MAX_TIME
@@ -547,7 +546,7 @@ class SequenceModelTrainer:
         # same, whatever ran before.
         torch.manual_seed(self.seed)
         dataset = self._make_dataset(eval_ids, None, release)
-        sections = (list(range(len(HEIGHT_TARGETS)))
+        sections = (list(range(len(tower.channels)))
                     if self.height_targets else [None])
         sn_args = (tower, self.sn_intercepts_log10, self.sn_slopes)
         rows, jobs = [], []
@@ -573,7 +572,7 @@ class SequenceModelTrainer:
                         stem = dataset.moment_channel.rsplit("_m", 1)[0]
                         damage_gauge = self.damage_gauge
                     else:
-                        stem, damage_gauge = HEIGHT_TARGETS[section][0], section
+                        stem, damage_gauge = tower.channels[section], section
                     row[f"var_ratio_{stem}"] = float(
                         np.var(moment_rec) / np.var(moment_true))
                     # Rainflow is the bottleneck: it runs in a process pool.

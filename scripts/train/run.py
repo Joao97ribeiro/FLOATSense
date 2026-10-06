@@ -33,7 +33,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from floatsense import constants as C  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense import SequenceModelTrainer  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense import load_tower  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.data import HEIGHT_TARGETS  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.models import LENGTH_FIXED_MODELS  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.release import split_tag  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.heights import calibrate_profile  # noqa: E402  pylint: disable=wrong-import-position
@@ -150,6 +149,7 @@ def main(_):
                         "scripts/physics/run.py on the same tower and "
                         "--train_split first, or pass --calibration_dir.")
 
+    source = load_tower(FLAGS.dataset_dir, FLAGS.tower)
     # Single-height task: the damage is scored at the gauge of the target.
     damage_gauge = 0
     if FLAGS.height_targets and FLAGS.target_channel:
@@ -157,7 +157,7 @@ def main(_):
                          "add --height_targets=False.")
     if FLAGS.target_channel:
         gauges = {f"{stem}_m{d}": gauge
-                  for gauge, (stem, _, _) in enumerate(HEIGHT_TARGETS)
+                  for gauge, stem in enumerate(source.geometry.channels)
                   for d in ("fa", "ss")}
         if FLAGS.target_channel not in gauges:
             raise ValueError(f"Unknown target channel {FLAGS.target_channel}.")
@@ -166,7 +166,6 @@ def main(_):
     if hybrids and not FLAGS.height_targets and damage_gauge:
         raise ValueError("The hybrid models anchor to the physics at the "
                          "requested height only in the 11-height task.")
-    source = load_tower(FLAGS.dataset_dir, FLAGS.tower)
     train_ids = source.split_ids(FLAGS.train_split)
     test_ids = source.split_ids(FLAGS.test_split)
     if FLAGS.max_train_sims:

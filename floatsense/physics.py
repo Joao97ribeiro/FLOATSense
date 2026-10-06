@@ -51,7 +51,6 @@ from tqdm import tqdm
 
 from .constants import BAND_HZ
 from .constants import HARMONIC_ORDERS
-from .constants import HEIGHT_TARGETS
 from .constants import LF_FIT_BAND
 from .constants import LOWPASS_HZ
 from .constants import LOWPASS_ORDER
@@ -63,6 +62,7 @@ from .constants import SEGMENT_LENGTH
 from .fatigue import damage_filter
 from .fatigue import lowpass  # noqa: F401  pylint: disable=unused-import
 from .release import ReleasedTower
+from .release import load_gauges
 from .release import load_parked
 
 # `sign` restores the phase of the reconstruction: the gains are fitted on
@@ -188,9 +188,6 @@ def band_masks(
     return low_mask, masks
 
 
-GAUGE_STEMS = [stem for stem, _, _ in HEIGHT_TARGETS]
-
-
 def parked_constants(dataset_dir: str, tower: str,
                      min_time: float = MIN_TIME) -> pd.DataFrame:
     """Parked C1 of one tower at the 11 gauges, per direction.
@@ -201,7 +198,8 @@ def parked_constants(dataset_dir: str, tower: str,
     record (Pimenta et al., 2024).
 
     Args:
-        dataset_dir (str): Released dataset directory (parked.parquet).
+        dataset_dir (str): Released dataset directory (parked.parquet
+          and <tower>/sections.parquet).
         tower (str): Tower name.
         min_time (float): Start of the scored window [s].
 
@@ -216,7 +214,7 @@ def parked_constants(dataset_dir: str, tower: str,
                           for i, name in enumerate(channels)}
                          for data in runs.values()])
     rows = []
-    for stem in GAUGE_STEMS:
+    for stem in load_gauges(dataset_dir, tower).channels:
         row = {"gauge": stem}
         for direction, config in DIRECTION_CHANNELS.items():
             row[direction] = float(np.polyfit(stds[config["accel"]],

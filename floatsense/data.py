@@ -15,7 +15,6 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from .constants import HEIGHT_TARGETS  # noqa: F401 (re-export)
 from .constants import MAX_TIME
 from .constants import MIN_TIME
 from .constants import OPERATING_POWER_KW
@@ -118,8 +117,9 @@ class SequenceDataset(Dataset):
         if height_targets:
             self.input_channels = self.input_channels + ["height"]
             self.height_channels = [
-                f"{stem}_m{direction}" for stem, _, _ in HEIGHT_TARGETS
+                f"{stem}_m{direction}" for stem in release.geometry.channels
             ]
+            self.height_z_over_h = release.geometry.z_over_h
         # Field-SCADA channels 'stat:<channel>:<mean|std|min|max>' read the
         # released per-window statistics (series_stats.parquet); the series
         # of that channel is never touched.
@@ -184,9 +184,9 @@ class SequenceDataset(Dataset):
         section, height = None, 0.0
         if self.height_targets:
             section = (self.section if self.section is not None else int(
-                np.random.randint(len(HEIGHT_TARGETS))))
+                np.random.randint(len(self.height_channels))))
             self.moment_channel = self.height_channels[section]
-            height = HEIGHT_TARGETS[section][2]
+            height = float(self.height_z_over_h[section])
         inputs = [
             np.full(window.shape[0], height) if channel == "height" else
             np.full(window.shape[0], stats[channel]) if channel in stats else

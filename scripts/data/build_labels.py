@@ -36,12 +36,10 @@ import sys
 
 from absl import app
 from absl import flags
-import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from floatsense.constants import HEIGHT_TARGETS  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.constants import LOWPASS_HZ  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.constants import LOWPASS_ORDER  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.constants import MAX_TIME  # noqa: E402  pylint: disable=wrong-import-position
@@ -57,8 +55,9 @@ flags.DEFINE_list("towers", ["ref", "opt1", "opt2"], "Towers to process.")
 flags.DEFINE_integer("workers", 8, "Worker processes for the damage.")
 flags.DEFINE_list("gauge_profile", None,
                   "<tower>:<path> of the gauge profile of the OpenFAST "
-                  "campaign, one per tower (CSV with gauge_id, z [m], "
-                  "radius [m], thickness [m], bottom to top: the outer "
+                  "campaign, one per tower (CSV with gauge_id, gauge, "
+                  "section_id, z [m], radius [m], thickness [m], bottom to "
+                  "top: the outer "
                   "radius at each gauge height and the thickness of the "
                   "section containing it).")
 flags.DEFINE_bool("lowpass", True,
@@ -105,22 +104,23 @@ def build_sections(floatbench: pd.DataFrame,
     Returns:
         pd.DataFrame: One row per scored section, base to top.
     """
-    # Gauge heights, radius and thickness come from the gauge profile of the
-    # OpenFAST campaign; the gauges are matched to HEIGHT_TARGETS in order.
+    # Every gauge property comes from the gauge profile of the OpenFAST
+    # campaign: name, FLOATBench section, height, radius and thickness.
+    missing = {"gauge", "section_id"} - set(gauge_profile.columns)
+    if missing:
+        raise ValueError(f"The gauge profile has no {sorted(missing)} column; "
+                         "regenerate it with the current fatigue flow.")
     gauges = gauge_profile.sort_values("gauge_id")
     heights = gauges["z [m]"].to_numpy() - gauges["z [m]"].iloc[0]
-    z_over_h = heights / heights[-1]
-    if (len(gauges) != len(HEIGHT_TARGETS) or not np.allclose(
-            z_over_h, [target[2] for target in HEIGHT_TARGETS], atol=1e-4)):
-        raise ValueError("The gauge profile does not match the 11 gauges.")
     geometry = floatbench.drop_duplicates("section_id").set_index("section_id")
     rows = []
-    for (name, index, _), height, ratio in zip(HEIGHT_TARGETS, heights,
-                                                z_over_h):
-        row = {"section_id": index + 1}
-        row.update(geometry.loc[index + 1, GEOMETRY_COLUMNS[1:]].to_dict())
+    for name, section_id, height in zip(gauges["gauge"],
+                                        gauges["section_id"].astype(int),
+                                        heights):
+        row = {"section_id": section_id}
+        row.update(geometry.loc[section_id, GEOMETRY_COLUMNS[1:]].to_dict())
         row.update({"channel": name, "gauge_height_m": float(height),
-                    "z_over_h": float(ratio)})
+                    "z_over_h": float(height / heights[-1])})
         rows.append(row)
     sections = pd.DataFrame(rows)
     sections["gauge_radius_m"] = gauges["radius [m]"].to_numpy()

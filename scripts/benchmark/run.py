@@ -29,7 +29,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from floatsense import load_tower  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense import summarize_by_group  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.data import HEIGHT_TARGETS  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.metrics import condition_key  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.metrics import mean_relative_error  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.metrics import within_condition_correlation  # noqa: E402  pylint: disable=wrong-import-position
@@ -44,7 +43,6 @@ flags.DEFINE_integer("num_resamples", 1000, "Bootstrap resamples (0 = none).")
 flags.DEFINE_integer("num_workers", 16, "Parallel scoring processes.")
 
 TOWERS = ("ref", "opt1", "opt2")
-GAUGES = [(stem, z_over_h) for stem, _, z_over_h in HEIGHT_TARGETS]
 _CONTEXTS = {}
 
 
@@ -53,7 +51,9 @@ def tower_context(tower: str) -> dict:
     simulation (so runs scored on other splits, e.g. val/val, work too)."""
     release = load_tower(FLAGS.dataset_dir, tower)
     return {"cells": release.regime_cells(FLAGS.test_split),
-            "clusters": condition_key(release.metadata)}
+            "clusters": condition_key(release.metadata),
+            "gauges": list(zip(release.geometry.channels,
+                               release.geometry.z_over_h))}
 
 
 def describe(path: str) -> dict:
@@ -103,7 +103,7 @@ def score_file(path: str) -> pd.DataFrame:
     df = pd.read_csv(path).set_index("sim_id")
     cells = context["cells"].loc[context["cells"].index.intersection(df.index)]
     tables = []
-    for stem, z_over_h in GAUGES:
+    for stem, z_over_h in context["gauges"]:
         true_col, rec_col = f"damage_true_{stem}", f"damage_rec_{stem}"
         if true_col not in df.columns:
             continue

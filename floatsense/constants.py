@@ -2,8 +2,9 @@
 
 Every module and the defaults of the script flags read these values; the
 configs in scripts/*/config.cfg repeat them as the record of a run. The
-geometry of each tower (gauge heights, radius, thickness, mass per length)
-is data and comes with the dataset (sections.parquet) and towers/; the
+gauges of each tower (name, FLOATBench section, height, radius,
+thickness) and its mass per length are data: sections.parquet and
+towers/; the
 training recipe is in the trainer and the configs.
 """
 
@@ -11,17 +12,6 @@ training recipe is in the trainer and the configs.
 SAMPLING_FREQUENCY = 10.0  # [Hz] of the released series
 MIN_TIME = 400.0  # start of the scored window [s]
 MAX_TIME = 1000.0  # end of the scored window [s], inclusive (6,001 samples)
-
-# The 11 moment gauges, base to top (gauge index 0-10): channel stem, the
-# zero-based FLOATBench section that contains the gauge (a label, section_id
-# - 1, to join FLOATBench) and the gauge height above the base as a fraction
-# of the tower height (model input of the 11-height task; the exact heights
-# are in sections.parquet).
-HEIGHT_TARGETS = ([("tower_bottom", 0, 0.0)] + [
-    (f"tower_{k}", 3 * k - 1, z / 149.386)
-    for k, z in zip(range(1, 10), (12.4488, 27.3874, 42.3260, 57.2646, 72.2032,
-                                   87.1418, 102.0804, 117.0190, 131.9576))
-] + [("tower_top", 29, 1.0)])
 
 # --- Damage metric ---------------------------------------------------------
 LOWPASS_HZ = 3.0  # zero-phase Butterworth cutoff on true and predicted [Hz]

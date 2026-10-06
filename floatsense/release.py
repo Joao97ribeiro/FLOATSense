@@ -52,6 +52,8 @@ class TowerGauges:
 
     Attributes:
         channels (List[str]): Gauge names ('tower_bottom', ..., 'tower_top').
+        section_ids (List[int]): FLOATBench section containing each gauge.
+        z_over_h (np.ndarray): Gauge height over the tower height.
         radius_gauges (np.ndarray): Outer radius at the gauge height [m].
         thickness_gauges (np.ndarray): Thickness of the section containing
           the gauge [m].
@@ -63,13 +65,16 @@ class TowerGauges:
 
         Args:
             sections (pd.DataFrame): One row per gauge, base to top, with
-              channel, gauge_height_m, gauge_radius_m and gauge_thickness_m.
+              channel, section_id, gauge_height_m, z_over_h, gauge_radius_m
+              and gauge_thickness_m.
         """
         if "gauge_radius_m" not in sections:
             raise KeyError("gauge_radius_m is not in sections.parquet; "
                            "download the current dataset.")
         gauges = sections.sort_values("gauge_height_m")
         self.channels = gauges["channel"].tolist()
+        self.section_ids = gauges["section_id"].astype(int).tolist()
+        self.z_over_h = gauges["z_over_h"].to_numpy(float)
         self.radius_gauges = gauges["gauge_radius_m"].to_numpy(float)
         self.thickness_gauges = gauges["gauge_thickness_m"].to_numpy(float)
         self.height = float(gauges["gauge_height_m"].max())
@@ -273,6 +278,12 @@ def split_tag(name: str) -> str:
     if name.startswith("fewshot/train_"):
         return "fs" + name[len("fewshot/train_"):]
     return name.replace("/", "_")
+
+
+def load_gauges(dataset_dir: str, name: str) -> TowerGauges:
+    """The 11 gauges of <dataset_dir>/<name> (sections.parquet only)."""
+    return TowerGauges(
+        pd.read_parquet(os.path.join(dataset_dir, name, "sections.parquet")))
 
 
 def load_tower(dataset_dir: str, name: str) -> ReleasedTower:
