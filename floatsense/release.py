@@ -1,4 +1,6 @@
 # pylint: disable=too-many-instance-attributes
+# pylint: disable=too-many-arguments
+# pylint: disable=too-many-positional-arguments
 """Reader of the released FLOATSense dataset.
 
 The dataset has one directory per tower and one shared parked file:
@@ -28,11 +30,15 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
+from .constants import LOWPASS_HZ
+from .constants import LOWPASS_ORDER
+from .constants import MAX_TIME
+from .constants import MIN_TIME
+from .constants import NUM_SECTIONS
+from .constants import SAMPLING_FREQUENCY
 from .fatigue import compute_base_damage
 from .fatigue import damage_filter
 
-SAMPLING_FREQUENCY = 10.0
-NUM_SECTIONS = 30
 SPLITS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)),
                           "splits")
 
@@ -194,8 +200,8 @@ class ReleasedTower:
     def scored_moment(self,
                       sim_id: int,
                       gauge: str,
-                      min_time: float = 400.0,
-                      max_time: float = 1000.0) -> np.ndarray:
+                      min_time: float = MIN_TIME,
+                      max_time: float = MAX_TIME) -> np.ndarray:
         """True fore-aft moment of one gauge over the scored window.
 
         The window is the one of the evaluation and of FLOATBench: from
@@ -218,13 +224,13 @@ class ReleasedTower:
         series = series.astype(float)
         return series - series.mean()
 
-    def gauge_damage(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    def gauge_damage(
             self,
             moment_series: np.ndarray,
             gauge: str,
             apply_lowpass: bool = True,
-            lowpass_hz: float = 3.0,
-            lowpass_order: int = 4,
+            lowpass_hz: float = LOWPASS_HZ,
+            lowpass_order: int = LOWPASS_ORDER,
             sn_intercepts_log10: Optional[List[float]] = None,
             sn_slopes: Optional[List[float]] = None) -> float:
         """Fatigue damage of any moment series (true or predicted) at a gauge.

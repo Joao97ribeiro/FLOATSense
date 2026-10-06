@@ -16,6 +16,13 @@ import numpy as np
 import rainflow
 import scipy.signal
 
+from .constants import FATIGUE_LIFE_THRESHOLD
+from .constants import LOWPASS_ORDER
+from .constants import SN_INTERCEPTS_LOG10
+from .constants import SN_SLOPES
+from .constants import THICKNESS_EXPONENT
+from .constants import THICKNESS_REFERENCE_MM
+
 if TYPE_CHECKING:
     from .release import TowerSections
 
@@ -23,7 +30,7 @@ if TYPE_CHECKING:
 def lowpass(series: np.ndarray,
             sampling_frequency: float,
             cutoff_hz: float,
-            order: int = 4) -> np.ndarray:
+            order: int = LOWPASS_ORDER) -> np.ndarray:
     """Zero-phase Butterworth low-pass (forward and backward, sosfiltfilt).
 
     Run in both directions, an order-4 filter has the attenuation of an
@@ -57,7 +64,7 @@ def damage_filter(series: np.ndarray,
                   sampling_frequency: float,
                   apply_lowpass: bool,
                   cutoff_hz: float,
-                  order: int = 4) -> np.ndarray:
+                  order: int = LOWPASS_ORDER) -> np.ndarray:
     """Moment fed to the damage metric: low-passed only if `apply_lowpass`.
 
     Args:
@@ -80,9 +87,9 @@ def compute_base_damage(moment_series: np.ndarray,
                         tower: "TowerSections",
                         sn_intercepts_log10: Optional[List[float]] = None,
                         sn_slopes: Optional[List[float]] = None,
-                        thickness_reference: float = 25.0,
-                        thickness_exponent: float = 0.2,
-                        fatigue_life_threshold: float = 1e7,
+                        thickness_reference: float = THICKNESS_REFERENCE_MM,
+                        thickness_exponent: float = THICKNESS_EXPONENT,
+                        fatigue_life_threshold: float = FATIGUE_LIFE_THRESHOLD,
                         section: int = 0) -> float:
     """Computes fatigue damage of a moment series at one tower section.
 
@@ -100,8 +107,8 @@ def compute_base_damage(moment_series: np.ndarray,
     Returns:
         float: Total fatigue damage (unitless).
     """
-    sn_intercepts_log10 = sn_intercepts_log10 or [12.010, 15.350]
-    sn_slopes = sn_slopes or [3, 5]
+    sn_intercepts_log10 = sn_intercepts_log10 or list(SN_INTERCEPTS_LOG10)
+    sn_slopes = sn_slopes or list(SN_SLOPES)
 
     radius = tower.radius_gauges[section]
     thickness = tower.thickness_gauges[section]

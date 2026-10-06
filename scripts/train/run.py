@@ -30,6 +30,7 @@ from absl import logging
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from floatsense import constants as C  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense import SequenceModelTrainer  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense import load_tower  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.data import HEIGHT_TARGETS  # noqa: E402  pylint: disable=wrong-import-position
@@ -62,14 +63,14 @@ flags.DEFINE_bool("deterministic", True,
 flags.DEFINE_integer("max_train_sims", 0, "If > 0, cap the training sims.")
 flags.DEFINE_integer("max_eval_sims", 0, "If > 0, cap the evaluated sims.")
 
-flags.DEFINE_float("min_time", 400.0, "Start of the scored window (s).")
-flags.DEFINE_float("max_time", 1000.0, "End of the scored window (s).")
+flags.DEFINE_float("min_time", C.MIN_TIME, "Start of the scored window (s).")
+flags.DEFINE_float("max_time", C.MAX_TIME, "End of the scored window (s).")
 flags.DEFINE_bool("lowpass", True,
                   "Zero-phase Butterworth low-pass of the true and "
                   "reconstructed moments before the damage metric (the "
                   "damage of these towers lies below 3 Hz).")
-flags.DEFINE_float("lowpass_hz", 3.0, "Cutoff of --lowpass [Hz].")
-flags.DEFINE_integer("lowpass_order", 4,
+flags.DEFINE_float("lowpass_hz", C.LOWPASS_HZ, "Cutoff of --lowpass [Hz].")
+flags.DEFINE_integer("lowpass_order", C.LOWPASS_ORDER,
                      "Butterworth order of one pass (sosfiltfilt runs two).")
 flags.DEFINE_integer("crop_length", 4096, "Training crop length.")
 flags.DEFINE_integer("batch_size", 16, "Training batch size.")
@@ -104,9 +105,11 @@ flags.DEFINE_bool(
     "moment at the 11 instrumented heights.")
 flags.DEFINE_enum("loss", "mse", ["mse", "damage"], "Training loss.")
 flags.DEFINE_float("damage_loss_weight", 1.0, "Weight of the damage term.")
-flags.DEFINE_list("sn_intercepts_log10", ["12.010", "15.350"],
+flags.DEFINE_list("sn_intercepts_log10",
+                  [str(v) for v in C.SN_INTERCEPTS_LOG10],
                   "SN curve log10 intercepts.")
-flags.DEFINE_list("sn_slopes", ["3", "5"], "SN curve slopes.")
+flags.DEFINE_list("sn_slopes", [str(v) for v in C.SN_SLOPES],
+                  "SN curve slopes.")
 
 def floats(values: List[str]) -> List[float]:
     """Converts a list of strings to floats."""

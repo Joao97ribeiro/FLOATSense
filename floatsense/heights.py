@@ -25,19 +25,21 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import brentq
 
+from .constants import BLADE_MASS
+from .constants import HEIGHT_TARGETS
+from .constants import HUB_MASS
+from .constants import NAC_CM_Z
+from .constants import NAC_MASS
+from .constants import OVERHANG
+from .constants import SHFT_TILT
+from .constants import TWR2SHFT
+from .constants import YAW_MASS
 from .physics import PhysicsReconstruction
 from .fatigue import damage_filter
 from .physics import parked_constants
 
-# Rotor-nacelle assembly of the IEA 22 MW (ElastoDyn inputs).
-NAC_MASS, NAC_CM_Z = 821239.8004933242, 4.2647901842947595
-HUB_MASS, YAW_MASS, BLADE_MASS = 120447.70224890654, 28740.99049474962, 82427.5
-TWR2SHFT, OVERHANG, SHFT_TILT = 4.142540706280534, -14.07711591388923, -6.0
 # Target channels along the tower and the tower section each one scores.
-# Gauge k sits at ElastoDyn node 3k, i.e. section 3k-1 of the 30 sections.
-HEIGHT_CHANNELS = ([("tower_bottom", 0)] +
-                   [(f"tower_{k}", 3 * k - 1) for k in range(1, 10)] +
-                   [("tower_top", 29)])
+HEIGHT_CHANNELS = [(stem, section) for stem, section, _ in HEIGHT_TARGETS]
 
 
 def rna_properties() -> Tuple[float, float]:

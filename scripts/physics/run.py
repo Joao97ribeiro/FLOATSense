@@ -28,6 +28,7 @@ from absl import logging
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from floatsense import constants as C  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense import Calibration  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense import PhysicsReconstruction  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense import load_tower  # noqa: E402  pylint: disable=wrong-import-position
@@ -55,28 +56,32 @@ flags.DEFINE_string("tag", None,
 flags.DEFINE_string("output_root", "outputs/physics", "Root of the outputs.")
 flags.DEFINE_string("mass_csv", None,
                     "Tower mass profile; defaults to towers/<tower>_mass.csv.")
-flags.DEFINE_float("min_time", 400.0, "Start of the scored window (s).")
-flags.DEFINE_float("max_time", 1000.0, "End of the scored window (s).")
-flags.DEFINE_float("pad_seconds", 50.0, "Margin around the scored window.")
-flags.DEFINE_integer("segment_length", 4096, "Welch segment length.")
-flags.DEFINE_list("lf_fit_band", ["0.01", "0.05"],
+flags.DEFINE_float("min_time", C.MIN_TIME, "Start of the scored window (s).")
+flags.DEFINE_float("max_time", C.MAX_TIME, "End of the scored window (s).")
+flags.DEFINE_float("pad_seconds", C.PAD_SECONDS,
+                   "Margin around the scored window.")
+flags.DEFINE_integer("segment_length", C.SEGMENT_LENGTH,
+                     "Welch segment length.")
+flags.DEFINE_list("lf_fit_band", [str(v) for v in C.LF_FIT_BAND],
                   "Bins fitting the low-frequency polynomial (Hz).")
-flags.DEFINE_float("operating_power_kw", 100.0,
+flags.DEFINE_float("operating_power_kw", C.OPERATING_POWER_KW,
                    "Power above which a sample counts as operating.")
-flags.DEFINE_float("band_hz", 3.0,
+flags.DEFINE_float("band_hz", C.BAND_HZ,
                    "Upper edge of the reconstruction band (gain is zero "
                    "above it).")
 flags.DEFINE_bool("lowpass", True,
                   "Zero-phase Butterworth low-pass of the true and "
                   "reconstructed moments before the damage metric (the "
                   "damage of these towers lies below 3 Hz).")
-flags.DEFINE_float("lowpass_hz", 3.0, "Cutoff of --lowpass [Hz].")
-flags.DEFINE_integer("lowpass_order", 4,
+flags.DEFINE_float("lowpass_hz", C.LOWPASS_HZ, "Cutoff of --lowpass [Hz].")
+flags.DEFINE_integer("lowpass_order", C.LOWPASS_ORDER,
                      "Butterworth order of one pass (sosfiltfilt runs two).")
 flags.DEFINE_integer("max_eval_sims", 0, "If > 0, cap the evaluated sims.")
-flags.DEFINE_list("sn_intercepts_log10", ["12.010", "15.350"],
+flags.DEFINE_list("sn_intercepts_log10",
+                  [str(v) for v in C.SN_INTERCEPTS_LOG10],
                   "SN curve log10 intercepts.")
-flags.DEFINE_list("sn_slopes", ["3", "5"], "SN curve slopes.")
+flags.DEFINE_list("sn_slopes", [str(v) for v in C.SN_SLOPES],
+                  "SN curve slopes.")
 
 
 def main(_):

@@ -15,20 +15,15 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from .constants import HEIGHT_TARGETS  # noqa: F401 (re-export)
+from .constants import MAX_TIME
+from .constants import MIN_TIME
+from .constants import OPERATING_POWER_KW
 from .physics import DIRECTION_CHANNELS
 from .physics import Calibration
 from .physics import band_masks
 from .physics import harmonic_windows
 from .release import ReleasedTower
-
-# Targets along the tower for the height-conditioned task: channel stem,
-# zero-based FLOATBench section scored (section_id - 1), and height of the
-# gauge above the base as a fraction of H.
-HEIGHT_TARGETS = ([("tower_bottom", 0, 0.0)] + [
-    (f"tower_{k}", 3 * k - 1, z / 149.386)
-    for k, z in zip(range(1, 10), (12.4488, 27.3874, 42.3260, 57.2646, 72.2032,
-                                   87.1418, 102.0804, 117.0190, 131.9576))
-] + [("tower_top", 29, 1.0)])
 
 DEFAULT_CONDITION_CHANNELS = ["rotor_speed", "blade_pitch", "wind_speed"]
 
@@ -55,8 +50,8 @@ class SequenceDataset(Dataset):
                  sim_ids: List[int],
                  direction: str = "fa",
                  condition_channels: Optional[List[str]] = None,
-                 min_time: float = 400.0,
-                 max_time: float = 1000.0,
+                 min_time: float = MIN_TIME,
+                 max_time: float = MAX_TIME,
                  crop_length: Optional[int] = None,
                  norm_stats: Optional[Dict[str, List[float]]] = None,
                  calibration_path: Optional[str] = None,
@@ -103,7 +98,7 @@ class SequenceDataset(Dataset):
         self.sampling_frequency = release.sampling_frequency
         self.start_index = int(round(min_time * self.sampling_frequency))
         self.stop_index = int(round(max_time * self.sampling_frequency)) + 1
-        self.operating_power_kw = 100.0
+        self.operating_power_kw = OPERATING_POWER_KW
 
         self.accel_channel = DIRECTION_CHANNELS[direction]["accel"]
         self.moment_channel = (target_channel or
@@ -252,8 +247,8 @@ class SequenceDataset(Dataset):
 def compute_norm_stats(release: ReleasedTower,
                        sim_ids: List[int],
                        channels: List[str],
-                       min_time: float = 400.0,
-                       max_time: float = 1000.0,
+                       min_time: float = MIN_TIME,
+                       max_time: float = MAX_TIME,
                        max_sims: int = 200) -> Dict[str, List[float]]:
     """Per-channel [mean, std] over a sample of training simulations.
 

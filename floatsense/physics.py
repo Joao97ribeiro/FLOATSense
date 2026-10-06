@@ -49,6 +49,17 @@ import pandas as pd
 import scipy.signal
 from tqdm import tqdm
 
+from .constants import BAND_HZ
+from .constants import HARMONIC_ORDERS
+from .constants import HEIGHT_TARGETS
+from .constants import LF_FIT_BAND
+from .constants import LOWPASS_HZ
+from .constants import LOWPASS_ORDER
+from .constants import MAX_TIME
+from .constants import MIN_TIME
+from .constants import OPERATING_POWER_KW
+from .constants import PAD_SECONDS
+from .constants import SEGMENT_LENGTH
 from .fatigue import damage_filter
 from .fatigue import lowpass  # noqa: F401  pylint: disable=unused-import
 from .release import ReleasedTower
@@ -71,7 +82,6 @@ DIRECTION_CHANNELS = {
         "sign": 1.0
     },
 }
-HARMONIC_ORDERS = (3, 6, 9)
 PSD_EPS = 1e-30
 
 
@@ -178,12 +188,11 @@ def band_masks(
     return low_mask, masks
 
 
-GAUGE_STEMS = (["tower_bottom"] + [f"tower_{k}" for k in range(1, 10)] +
-               ["tower_top"])
+GAUGE_STEMS = [stem for stem, _, _ in HEIGHT_TARGETS]
 
 
 def parked_constants(dataset_dir: str, tower: str,
-                     min_time: float = 400.0) -> pd.DataFrame:
+                     min_time: float = MIN_TIME) -> pd.DataFrame:
     """Parked C1 of one tower at the 11 gauges, per direction.
 
     C1 is the least-squares slope, with a free intercept, of the standard
@@ -230,16 +239,16 @@ class PhysicsReconstruction:
                  release: ReleasedTower,
                  output_dir: str,
                  parked_c_theta: Dict[str, float],
-                 min_time: float = 400.0,
-                 max_time: float = 1000.0,
-                 pad_seconds: float = 50.0,
-                 segment_length: int = 4096,
-                 lf_fit_band: Tuple[float, float] = (0.01, 0.05),
-                 operating_power_kw: float = 100.0,
-                 band_hz: float = 3.0,
+                 min_time: float = MIN_TIME,
+                 max_time: float = MAX_TIME,
+                 pad_seconds: float = PAD_SECONDS,
+                 segment_length: int = SEGMENT_LENGTH,
+                 lf_fit_band: Tuple[float, float] = LF_FIT_BAND,
+                 operating_power_kw: float = OPERATING_POWER_KW,
+                 band_hz: float = BAND_HZ,
                  apply_lowpass: bool = True,
-                 lowpass_hz: float = 3.0,
-                 lowpass_order: int = 4,
+                 lowpass_hz: float = LOWPASS_HZ,
+                 lowpass_order: int = LOWPASS_ORDER,
                  sn_intercepts_log10: Optional[List[float]] = None,
                  sn_slopes: Optional[List[float]] = None):
         """Initializes the baseline.

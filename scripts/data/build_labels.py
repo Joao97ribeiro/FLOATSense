@@ -41,7 +41,12 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from floatsense.data import HEIGHT_TARGETS  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.constants import HEIGHT_TARGETS  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.constants import LOWPASS_HZ  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.constants import LOWPASS_ORDER  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.constants import MAX_TIME  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.constants import MIN_TIME  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.constants import SAMPLING_FREQUENCY  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.release import TowerSections  # noqa: E402  pylint: disable=wrong-import-position
 from floatsense.fatigue import damage_filter  # noqa: E402  pylint: disable=wrong-import-position
 
@@ -59,12 +64,11 @@ flags.DEFINE_list("gauge_profile", None,
 flags.DEFINE_bool("lowpass", True,
                   "Zero-phase Butterworth low-pass of the moment before the "
                   "damage, as in the evaluation.")
-flags.DEFINE_float("lowpass_hz", 3.0, "Cutoff of --lowpass [Hz].")
-flags.DEFINE_integer("lowpass_order", 4,
+flags.DEFINE_float("lowpass_hz", LOWPASS_HZ, "Cutoff of --lowpass [Hz].")
+flags.DEFINE_integer("lowpass_order", LOWPASS_ORDER,
                      "Butterworth order of one pass (sosfiltfilt runs two).")
 
-FS, MIN_TIME, MAX_TIME = 10.0, 400.0, 1000.0
-SN_INTERCEPTS, SN_SLOPES = [12.010, 15.350], [3.0, 5.0]
+FS = SAMPLING_FREQUENCY
 METADATA_COLUMNS = [
     "sim_id", "wind_speed_id", "wind_speed", "mean_wind_speed",
     "std_wind_speed", "wave_hs_id", "wave_hs", "wave_tp_id", "wave_tp",
@@ -142,9 +146,7 @@ def _shard_damage(args):
             moment = table[f"{channel}_mfa"].to_numpy(float)[start:stop]
             moment = damage_filter(moment - moment.mean(), FS, apply_lowpass,
                                    lowpass_hz, lowpass_order)
-            damage = geometry.damage(moment,
-                                     int(section_id) - 1, SN_INTERCEPTS,
-                                     SN_SLOPES)
+            damage = geometry.damage(moment, int(section_id) - 1)
             rows.append((sim_id, int(section_id), damage))
     return rows
 

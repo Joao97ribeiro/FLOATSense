@@ -26,7 +26,11 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from .data import HEIGHT_TARGETS
+from .constants import HEIGHT_TARGETS
+from .constants import LOWPASS_HZ
+from .constants import LOWPASS_ORDER
+from .constants import MAX_TIME
+from .constants import MIN_TIME
 from .data import SequenceDataset
 from .data import compute_norm_stats
 from .metrics import summarize_damage
@@ -53,11 +57,11 @@ class SequenceModelTrainer:
                  direction: str = "fa",
                  model_name: str = "spectral",
                  condition_channels: Optional[List[str]] = None,
-                 min_time: float = 400.0,
-                 max_time: float = 1000.0,
+                 min_time: float = MIN_TIME,
+                 max_time: float = MAX_TIME,
                  apply_lowpass: bool = True,
-                 lowpass_hz: float = 3.0,
-                 lowpass_order: int = 4,
+                 lowpass_hz: float = LOWPASS_HZ,
+                 lowpass_order: int = LOWPASS_ORDER,
                  crop_length: int = 4096,
                  batch_size: int = 16,
                  learning_rate: float = 1e-3,
