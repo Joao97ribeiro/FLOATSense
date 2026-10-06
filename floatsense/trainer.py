@@ -203,7 +203,7 @@ class SequenceModelTrainer:
 
         Models trained on crops, and length-fixed models trained on the full
         window, predict it directly. A length-fixed checkpoint trained on
-        fewer samples (`_eval_length` = 6,000, release v1.0) predicts the
+        fewer samples (`_eval_length` = 6,000) predicts the
         first and the last 6,000 samples; the last samples of the second
         prediction, aligned on the overlap, complete the first.
 

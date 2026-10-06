@@ -11,7 +11,7 @@ The dataset has one directory per tower and one shared parked file:
                                     labels and lifetime weight
   <dataset_dir>/<tower>/sections.parquet  the 11 scored FLOATBench sections
   <dataset_dir>/<tower>/damage.parquet  reference damage (sim_id, section_id,
-                                    damage; radius at the gauge, from v1.1)
+                                    damage; radius at the gauge)
   <dataset_dir>/parked.parquet      the 22 parked runs of every tower
 
 Split names: `train` and `test` (the regime-aware partition, from
@@ -58,12 +58,11 @@ class TowerSections:
 
         Args:
             sections (pd.DataFrame): Rows with section_id, gauge_radius_m and
-              gauge_thickness_m (release v1.1).
+              gauge_thickness_m.
         """
         if "gauge_radius_m" not in sections:
-            raise KeyError("gauge_radius_m is not in sections.parquet "
-                           "(release v1.0); rebuild it with "
-                           "scripts/data/build_labels.py.")
+            raise KeyError("gauge_radius_m is not in sections.parquet; "
+                           "download the current dataset.")
         self.radius_gauges = np.full(NUM_SECTIONS, np.nan)
         self.thickness_gauges = np.full(NUM_SECTIONS, np.nan)
         index = sections["section_id"].to_numpy(int) - 1

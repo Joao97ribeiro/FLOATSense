@@ -217,7 +217,7 @@ FLOATSense/                          24.0 GB
 │   │                                 channel, gauge_height_m, z_over_h, gauge_radius_m,
 │   │                                 gauge_thickness_m (the 11 scored sections)
 │   └── damage.parquet                sim_id, section_id, damage (reference fore-aft damage at the
-│                                     gauge: radius at the gauge, 3 Hz Butterworth low-pass; v1.1)
+│                                     gauge: radius at the gauge, 3 Hz Butterworth low-pass)
 ├── opt1/                             same files
 ├── opt2/                             same files
 ├── parked.parquet                    the 22 parked runs (waves only) of each tower
@@ -234,14 +234,8 @@ the gauge height and the wall thickness of the section that contains it
 (`gauge_radius_m`, `gauge_thickness_m` in `sections.parquet`, written by
 `scripts/data/build_labels.py --gauge_profile` from the gauge profile of
 the OpenFAST campaign), so the stress is taken where the moment is
-recorded. Release v1.0 used the mean outer radius of that section: at the
-top of the redesigns it is 2.5 to 4% larger than at the gauge, so the v1.0
-top damage was about 27% (`opt1`) and 19% (`opt2`) low; elsewhere the two
-differ by at most 7%. The radius scales the true and the reconstructed
-damage alike, so the benchmark metrics change by at most 0.005. The
-30-section FLOATBench labels are unaffected: there the moment is
-interpolated to the mid-height of each section, where its mean radius
-applies.
+recorded. The 30-section FLOATBench labels instead interpolate the
+moment to the mid-height of each section and use its mean radius.
 
 ### Download
 

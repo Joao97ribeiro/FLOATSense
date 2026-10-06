@@ -19,12 +19,10 @@ train/test files give the split), and writes, next to the series
 
 The damage is computed as in the evaluation: the fore-aft moment of each
 gauge is cut to the scored window (400.0-1000.0 s inclusive, 6,001 samples,
-as in the evaluation and FLOATBench), its mean removed, low-passed at 3 Hz with a zero-phase
-Butterworth filter (see --lowpass), rainflow-counted and passed through the
-S-N curve with
-the outer radius at the gauge height and the wall thickness of the section
-that contains it (release v1.1; v1.0 used the mean radius of that section,
-which underestimates the top damage of the redesigns).
+as in the evaluation and FLOATBench), its mean removed, low-passed at 3 Hz
+with a zero-phase Butterworth filter (see --lowpass), rainflow-counted and
+passed through the S-N curve with the outer radius at the gauge height and
+the wall thickness of the section that contains it.
 
 Usage: python scripts/data/build_labels.py --dataset_dir=data/FLOATSense \
            --floatbench_dir=data/FLOATBench --towers=ref,opt1,opt2 \
