@@ -53,6 +53,7 @@ class TowerGauges:
     Attributes:
         channels (List[str]): Gauge names ('tower_bottom', ..., 'tower_top').
         section_ids (List[int]): FLOATBench section containing each gauge.
+        heights_gauges (np.ndarray): Gauge height above the base [m].
         z_over_h (np.ndarray): Gauge height over the tower height.
         radius_gauges (np.ndarray): Outer radius at the gauge height [m].
         thickness_gauges (np.ndarray): Thickness of the section containing
@@ -74,10 +75,11 @@ class TowerGauges:
         gauges = sections.sort_values("gauge_height_m")
         self.channels = gauges["channel"].tolist()
         self.section_ids = gauges["section_id"].astype(int).tolist()
+        self.heights_gauges = gauges["gauge_height_m"].to_numpy(float)
         self.z_over_h = gauges["z_over_h"].to_numpy(float)
         self.radius_gauges = gauges["gauge_radius_m"].to_numpy(float)
         self.thickness_gauges = gauges["gauge_thickness_m"].to_numpy(float)
-        self.height = float(gauges["gauge_height_m"].max())
+        self.height = float(self.heights_gauges[-1])
 
     def damage(self,
                moment_series: np.ndarray,

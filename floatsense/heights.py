@@ -33,9 +33,10 @@ from .constants import OVERHANG
 from .constants import SHFT_TILT
 from .constants import TWR2SHFT
 from .constants import YAW_MASS
-from .physics import PhysicsReconstruction
 from .fatigue import damage_filter
+from .physics import PhysicsReconstruction
 from .physics import parked_constants
+from .release import load_gauges
 
 
 
@@ -93,12 +94,10 @@ def calibrate_profile(dataset_dir: str,
     """
     mass = pd.read_csv(mass_csv or
                        os.path.join(TOWERS_DIR, f"{tower}_mass.csv"))
-    # Gauge heights above the base, from the released sections table; the
-    # top gauge sits at the tower top.
-    gauge_z = pd.read_parquet(
-        os.path.join(dataset_dir, tower,
-                     "sections.parquet"))["gauge_height_m"].to_numpy(float)
-    height = float(gauge_z[-1])
+    # Gauge heights above the base and tower height (top gauge), from the
+    # released sections table.
+    gauges = load_gauges(dataset_dir, tower)
+    gauge_z, height = gauges.heights_gauges, gauges.height
     s, m = mass.iloc[:, 0].values, mass.iloc[:, 1].values
     parked = parked_constants(dataset_dir, tower)
     parked_f = (parked[direction] / parked[direction].iloc[0]).values
