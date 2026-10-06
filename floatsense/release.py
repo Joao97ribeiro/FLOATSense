@@ -34,7 +34,6 @@ from .constants import LOWPASS_HZ
 from .constants import LOWPASS_ORDER
 from .constants import MAX_TIME
 from .constants import MIN_TIME
-from .constants import NUM_SECTIONS
 from .constants import SAMPLING_FREQUENCY
 from .fatigue import compute_base_damage
 from .fatigue import damage_filter
@@ -43,16 +42,16 @@ SPLITS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)),
                           "splits")
 
 
-class TowerSections:
-    """Radius and wall thickness used for the damage at the scored sections.
+class TowerGauges:
+    """Radius and wall thickness used for the damage at the 11 gauges.
 
-    Arrays are indexed by the zero-based FLOATBench section (section_id - 1);
-    only the scored sections are filled, the others are NaN. The radius is
-    the outer radius at the gauge height and the thickness that of the
-    section containing the gauge, so the stress is taken where the moment is
-    recorded.
+    Arrays are indexed by gauge, 0 (base) to 10 (top), in the order of
+    sections.parquet. The radius is the outer radius at the gauge height and
+    the thickness that of the section containing the gauge, so the stress is
+    taken where the moment is recorded.
 
     Attributes:
+        channels (List[str]): Gauge names ('tower_bottom', ..., 'tower_top').
         radius_gauges (np.ndarray): Outer radius at the gauge height [m].
         thickness_gauges (np.ndarray): Thickness of the section containing
           the gauge [m].
@@ -63,30 +62,28 @@ class TowerSections:
         """Initializes the geometry from a sections.parquet table.
 
         Args:
-            sections (pd.DataFrame): Rows with section_id, gauge_radius_m and
-              gauge_thickness_m.
+            sections (pd.DataFrame): One row per gauge, base to top, with
+              channel, gauge_height_m, gauge_radius_m and gauge_thickness_m.
         """
         if "gauge_radius_m" not in sections:
             raise KeyError("gauge_radius_m is not in sections.parquet; "
                            "download the current dataset.")
-        self.radius_gauges = np.full(NUM_SECTIONS, np.nan)
-        self.thickness_gauges = np.full(NUM_SECTIONS, np.nan)
-        index = sections["section_id"].to_numpy(int) - 1
-        self.radius_gauges[index] = sections["gauge_radius_m"]
-        self.thickness_gauges[index] = sections["gauge_thickness_m"]
-        self.height = float(sections["gauge_height_m"].max())
+        gauges = sections.sort_values("gauge_height_m")
+        self.channels = gauges["channel"].tolist()
+        self.radius_gauges = gauges["gauge_radius_m"].to_numpy(float)
+        self.thickness_gauges = gauges["gauge_thickness_m"].to_numpy(float)
+        self.height = float(gauges["gauge_height_m"].max())
 
     def damage(self,
                moment_series: np.ndarray,
-               section: int,
+               gauge: int,
                sn_intercepts_log10: Optional[List[float]] = None,
                sn_slopes: Optional[List[float]] = None) -> float:
         """Fatigue damage of a moment series (true or predicted) at a gauge.
 
         Args:
             moment_series (np.ndarray): Bending moment [kN.m] at the gauge.
-            section (int): Zero-based FLOATBench section of the gauge
-              (section_id - 1).
+            gauge (int): Gauge index, 0 (base) to 10 (top).
             sn_intercepts_log10 (List[float], optional): SN log10 intercepts.
             sn_slopes (List[float], optional): SN curve slopes.
 
@@ -97,7 +94,7 @@ class TowerSections:
                                    self,
                                    sn_intercepts_log10,
                                    sn_slopes,
-                                   section=section)
+                                   gauge=gauge)
 
 
 class ReleasedTower:
@@ -110,7 +107,7 @@ class ReleasedTower:
         sampling_frequency (float): Sampling rate [Hz].
         metadata (pd.DataFrame): metadata.parquet indexed by sim_id.
         sections (pd.DataFrame): sections.parquet, base to top.
-        geometry (TowerSections): Section properties for the damage.
+        geometry (TowerGauges): Gauge properties for the damage.
     """
 
     def __init__(self, tower_dir: str):
@@ -126,7 +123,7 @@ class ReleasedTower:
             os.path.join(tower_dir, "metadata.parquet")).set_index("sim_id")
         self.sections = pd.read_parquet(
             os.path.join(tower_dir, "sections.parquet"))
-        self.geometry = TowerSections(self.sections)
+        self.geometry = TowerGauges(self.sections)
         self._shards = sorted(
             glob.glob(os.path.join(tower_dir, "series-*.parquet")))
         if not self._shards:
@@ -251,14 +248,13 @@ class ReleasedTower:
             float: Miner damage (unitless), as in damage.parquet for the true
               moment of scored_moment.
         """
-        row = self.sections.loc[self.sections["channel"] == gauge]
-        if row.empty:
+        if gauge not in self.geometry.channels:
             raise KeyError(f"Unknown gauge '{gauge}'.")
-        section = int(row["section_id"].iloc[0]) - 1
         series = damage_filter(moment_series, self.sampling_frequency,
                                apply_lowpass, lowpass_hz, lowpass_order)
-        return self.geometry.damage(series, section, sn_intercepts_log10,
-                                    sn_slopes)
+        return self.geometry.damage(series,
+                                    self.geometry.channels.index(gauge),
+                                    sn_intercepts_log10, sn_slopes)
 
     def damage(self) -> pd.DataFrame:
         """damage.parquet as a (sim_id x section_id) table."""

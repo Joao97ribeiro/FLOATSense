@@ -6,7 +6,7 @@
 """Standalone base-section fatigue damage for sequence-model evaluation.
 
 Rainflow counting, bilinear SN curve with thickness correction and Miner's
-rule on a bending-moment series at one tower section. The same function
+rule on a bending-moment series at one gauge. The same function
 scores the physics baseline and every learned model.
 """
 
@@ -24,7 +24,7 @@ from .constants import THICKNESS_EXPONENT
 from .constants import THICKNESS_REFERENCE_MM
 
 if TYPE_CHECKING:
-    from .release import TowerSections
+    from .release import TowerGauges
 
 
 def lowpass(series: np.ndarray,
@@ -84,25 +84,25 @@ def damage_filter(series: np.ndarray,
 
 
 def compute_base_damage(moment_series: np.ndarray,
-                        tower: "TowerSections",
+                        tower: "TowerGauges",
                         sn_intercepts_log10: Optional[List[float]] = None,
                         sn_slopes: Optional[List[float]] = None,
                         thickness_reference: float = THICKNESS_REFERENCE_MM,
                         thickness_exponent: float = THICKNESS_EXPONENT,
                         fatigue_life_threshold: float = FATIGUE_LIFE_THRESHOLD,
-                        section: int = 0) -> float:
+                        gauge: int = 0) -> float:
     """Computes fatigue damage of a moment series at one tower section.
 
     Args:
         moment_series (np.ndarray): Bending moment time series [kN.m].
-        tower (TowerSections): Outer radius and wall thickness at the
+        tower (TowerGauges): Outer radius and wall thickness at the
           gauges (radius_gauges, thickness_gauges).
         sn_intercepts_log10 (List[float], optional): SN log10 intercepts.
         sn_slopes (List[float], optional): SN curve slopes.
         thickness_reference (float): Reference thickness for SN [mm].
         thickness_exponent (float): Exponent for SN thickness correction.
         fatigue_life_threshold (float): Cycle threshold for slope switch.
-        section (int): Zero-based FLOATBench section (section_id - 1).
+        gauge (int): Gauge index, 0 (base) to 10 (top).
 
     Returns:
         float: Total fatigue damage (unitless).
@@ -110,11 +110,11 @@ def compute_base_damage(moment_series: np.ndarray,
     sn_intercepts_log10 = sn_intercepts_log10 or list(SN_INTERCEPTS_LOG10)
     sn_slopes = sn_slopes or list(SN_SLOPES)
 
-    radius = tower.radius_gauges[section]
-    thickness = tower.thickness_gauges[section]
-    if not (np.isfinite(radius) and np.isfinite(thickness)):
-        raise ValueError(f"Section index {section} (section_id {section + 1}) "
-                         "is not one of the 11 scored sections.")
+    if not 0 <= gauge < len(tower.radius_gauges):
+        raise ValueError(f"Gauge index {gauge} is not one of the "
+                         f"{len(tower.radius_gauges)} gauges.")
+    radius = tower.radius_gauges[gauge]
+    thickness = tower.thickness_gauges[gauge]
     inner_radius = radius - thickness
     modulus = (np.pi / 4) * (radius**4 - inner_radius**4) / radius
 

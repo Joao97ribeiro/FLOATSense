@@ -39,13 +39,13 @@ from .models import LENGTH_FIXED_MODELS
 from .models import build_model
 from .fatigue import damage_filter
 from .release import ReleasedTower
-from .release import TowerSections
+from .release import TowerGauges
 
 
-def _damage_job(moment, section, tower: TowerSections, intercepts,
+def _damage_job(moment, gauge, tower: TowerGauges, intercepts,
                 slopes) -> float:
-    """Damage of one series at one section (picklable for the pool)."""
-    return tower.damage(moment, section, intercepts, slopes)
+    """Damage of one series at one gauge (picklable for the pool)."""
+    return tower.damage(moment, gauge, intercepts, slopes)
 
 
 class SequenceModelTrainer:
@@ -79,7 +79,7 @@ class SequenceModelTrainer:
                  calibration_path: Optional[str] = None,
                  condition_bound: float = 0.5,
                  target_channel: Optional[str] = None,
-                 damage_section: int = 0,
+                 damage_gauge: int = 0,
                  input_channels: Optional[List[str]] = None,
                  height_targets: bool = False,
                  height_factors: Optional[List[float]] = None,
@@ -125,8 +125,8 @@ class SequenceModelTrainer:
               condition-dependent correction (0 disables the bound).
             target_channel (str, optional): Overrides the target moment
               channel (e.g. an intermediate section gage 'tower_5_mfa').
-            damage_section (int): Tower section index used for the damage
-              evaluation of the target channel (0 = base).
+            damage_gauge (int): Gauge index of the target channel in the
+              single-height task, 0 (base) to 10 (top).
             input_channels (List[str], optional): Replaces the default
               [acceleration + condition channels] input stack (sensor
               ablations).
@@ -165,7 +165,7 @@ class SequenceModelTrainer:
         self.calibration_path = calibration_path
         self.condition_bound = condition_bound
         self.target_channel = target_channel
-        self.damage_section = damage_section
+        self.damage_gauge = damage_gauge
         self.input_channels = input_channels
         self.height_targets = height_targets
         self.height_factors = height_factors
@@ -571,16 +571,16 @@ class SequenceModelTrainer:
                     if section is None:
                         # Single height: columns named by the gauge.
                         stem = dataset.moment_channel.rsplit("_m", 1)[0]
-                        damage_section = self.damage_section
+                        damage_gauge = self.damage_gauge
                     else:
-                        stem, damage_section = HEIGHT_TARGETS[section][:2]
+                        stem, damage_gauge = HEIGHT_TARGETS[section][0], section
                     row[f"var_ratio_{stem}"] = float(
                         np.var(moment_rec) / np.var(moment_true))
                     # Rainflow is the bottleneck: it runs in a process pool.
                     jobs.append((index, f"damage_true_{stem}", moment_true,
-                                 damage_section))
+                                 damage_gauge))
                     jobs.append((index, f"damage_rec_{stem}", moment_rec,
-                                 damage_section))
+                                 damage_gauge))
                 rows.append(row)
         with multiprocessing.Pool(min(8, os.cpu_count() or 1)) as pool:
             damages = pool.starmap(

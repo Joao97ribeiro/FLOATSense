@@ -96,7 +96,6 @@ flags.DEFINE_float("condition_bound", 0.5,
                    "Tanh bound of the hybrid correction (0 disables it).")
 flags.DEFINE_string("target_channel", None,
                     "Overrides the target channel (e.g. tower_5_mfa).")
-flags.DEFINE_integer("damage_section", 0, "Tower section of the damage.")
 flags.DEFINE_list("input_channels", None,
                   "Replaces the default input stack (sensor ablations).")
 flags.DEFINE_bool(
@@ -151,24 +150,20 @@ def main(_):
                         "scripts/physics/run.py on the same tower and "
                         "--train_split first, or pass --calibration_dir.")
 
-    damage_section = FLAGS.damage_section
-    if FLAGS.height_targets and (FLAGS.target_channel or damage_section):
-        raise ValueError("--target_channel and --damage_section apply to the "
-                         "single-height task: add --height_targets=False.")
+    # Single-height task: the damage is scored at the gauge of the target.
+    damage_gauge = 0
+    if FLAGS.height_targets and FLAGS.target_channel:
+        raise ValueError("--target_channel applies to the single-height task: "
+                         "add --height_targets=False.")
     if FLAGS.target_channel:
-        stems = {f"{stem}_m{d}": index for stem, index, _ in HEIGHT_TARGETS
-                 for d in ("fa", "ss")}
-        if FLAGS.target_channel not in stems:
+        gauges = {f"{stem}_m{d}": gauge
+                  for gauge, (stem, _, _) in enumerate(HEIGHT_TARGETS)
+                  for d in ("fa", "ss")}
+        if FLAGS.target_channel not in gauges:
             raise ValueError(f"Unknown target channel {FLAGS.target_channel}.")
-        if damage_section and damage_section != stems[FLAGS.target_channel]:
-            raise ValueError("--damage_section does not match the section "
-                             "of --target_channel; leave it unset.")
-        damage_section = stems[FLAGS.target_channel]
-    elif damage_section:
-        raise ValueError("Without --target_channel the target is the base "
-                         "moment: --damage_section must stay 0.")
+        damage_gauge = gauges[FLAGS.target_channel]
     hybrids = [m for m in FLAGS.models if m.startswith("hybrid")]
-    if (hybrids and not FLAGS.height_targets and damage_section):
+    if hybrids and not FLAGS.height_targets and damage_gauge:
         raise ValueError("The hybrid models anchor to the physics at the "
                          "requested height only in the 11-height task.")
     source = load_tower(FLAGS.dataset_dir, FLAGS.tower)
@@ -228,7 +223,7 @@ def main(_):
                                   if model_name.startswith("hybrid") else None),
                 condition_bound=FLAGS.condition_bound,
                 target_channel=FLAGS.target_channel,
-                damage_section=damage_section,
+                damage_gauge=damage_gauge,
                 input_channels=FLAGS.input_channels,
                 height_targets=FLAGS.height_targets,
                 height_factors=height_factors.get(direction),

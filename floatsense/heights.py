@@ -38,8 +38,8 @@ from .physics import PhysicsReconstruction
 from .fatigue import damage_filter
 from .physics import parked_constants
 
-# Target channels along the tower and the tower section each one scores.
-HEIGHT_CHANNELS = [(stem, section) for stem, section, _ in HEIGHT_TARGETS]
+# Target channels along the tower, gauge index 0 (base) to 10 (top).
+HEIGHT_CHANNELS = [stem for stem, _, _ in HEIGHT_TARGETS]
 
 
 def rna_properties() -> Tuple[float, float]:
@@ -130,7 +130,8 @@ def evaluate_heights(physics: PhysicsReconstruction, sim_ids: List[int],
         data = physics.load(sim_id)
         base = physics.reconstruct(data, direction, calibration)
         row = {"sim_id": sim_id}
-        for (channel, section), factor in zip(HEIGHT_CHANNELS, factors):
+        for gauge, (channel, factor) in enumerate(
+                zip(HEIGHT_CHANNELS, factors)):
             name = f"{channel}_m{direction}"
             if name not in physics.channels:
                 continue
@@ -140,9 +141,9 @@ def evaluate_heights(physics: PhysicsReconstruction, sim_ids: List[int],
             rec = damage_filter(base * factor, fs, physics.apply_lowpass,
                                 physics.lowpass_hz, physics.lowpass_order)
             row[f"damage_true_{channel}"] = physics.tower.damage(
-                true, section, physics.sn_intercepts_log10, physics.sn_slopes)
+                true, gauge, physics.sn_intercepts_log10, physics.sn_slopes)
             row[f"damage_rec_{channel}"] = physics.tower.damage(
-                rec, section, physics.sn_intercepts_log10, physics.sn_slopes)
+                rec, gauge, physics.sn_intercepts_log10, physics.sn_slopes)
         rows.append(row)
     df = pd.DataFrame(rows)
     os.makedirs(os.path.dirname(csv_path), exist_ok=True)

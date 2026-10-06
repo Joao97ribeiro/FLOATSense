@@ -11,12 +11,12 @@ training recipe is in the trainer and the configs.
 SAMPLING_FREQUENCY = 10.0  # [Hz] of the released series
 MIN_TIME = 400.0  # start of the scored window [s]
 MAX_TIME = 1000.0  # end of the scored window [s], inclusive (6,001 samples)
-NUM_SECTIONS = 30  # FLOATBench tower sections
 
-# The 11 moment gauges, base to top: channel stem, zero-based FLOATBench
-# section scored (section_id - 1) and gauge height above the base as a
-# fraction of the tower height (model input of the 11-height task; the exact
-# heights are in sections.parquet).
+# The 11 moment gauges, base to top (gauge index 0-10): channel stem, the
+# zero-based FLOATBench section that contains the gauge (a label, section_id
+# - 1, to join FLOATBench) and the gauge height above the base as a fraction
+# of the tower height (model input of the 11-height task; the exact heights
+# are in sections.parquet).
 HEIGHT_TARGETS = ([("tower_bottom", 0, 0.0)] + [
     (f"tower_{k}", 3 * k - 1, z / 149.386)
     for k, z in zip(range(1, 10), (12.4488, 27.3874, 42.3260, 57.2646, 72.2032,
