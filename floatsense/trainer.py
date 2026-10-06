@@ -26,27 +26,25 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from .data import HEIGHT_TARGETS
+from .constants import LOWPASS_HZ
+from .constants import LOWPASS_ORDER
+from .constants import MAX_TIME
+from .constants import MIN_TIME
 from .data import SequenceDataset
 from .data import compute_norm_stats
-from .fatigue import compute_base_damage
+from .fatigue import damage_filter
 from .metrics import summarize_damage
 from .models import ACCEL_FIRST_MODELS
 from .models import LENGTH_FIXED_MODELS
 from .models import build_model
-from .physics import lowpass
 from .release import ReleasedTower
-from .release import TowerSections
+from .release import TowerGauges
 
 
-def _damage_job(moment, section, tower: TowerSections, intercepts,
+def _damage_job(moment, gauge, tower: TowerGauges, intercepts,
                 slopes) -> float:
-    """Damage of one series at one section (picklable for the pool)."""
-    return compute_base_damage(moment,
-                               tower,
-                               intercepts,
-                               slopes,
-                               section=section)
+    """Damage of one series at one gauge (picklable for the pool)."""
+    return tower.damage(moment, gauge, intercepts, slopes)
 
 
 class SequenceModelTrainer:
@@ -58,9 +56,11 @@ class SequenceModelTrainer:
                  direction: str = "fa",
                  model_name: str = "spectral",
                  condition_channels: Optional[List[str]] = None,
-                 min_time: float = 400.0,
-                 max_time: float = 1000.0,
-                 lowpass_hz: float = 3.0,
+                 min_time: float = MIN_TIME,
+                 max_time: float = MAX_TIME,
+                 apply_lowpass: bool = True,
+                 lowpass_hz: float = LOWPASS_HZ,
+                 lowpass_order: int = LOWPASS_ORDER,
                  crop_length: int = 4096,
                  batch_size: int = 16,
                  learning_rate: float = 1e-3,
@@ -78,7 +78,7 @@ class SequenceModelTrainer:
                  calibration_path: Optional[str] = None,
                  condition_bound: float = 0.5,
                  target_channel: Optional[str] = None,
-                 damage_section: int = 0,
+                 damage_gauge: int = 0,
                  input_channels: Optional[List[str]] = None,
                  height_targets: bool = False,
                  height_factors: Optional[List[float]] = None,
@@ -95,6 +95,12 @@ class SequenceModelTrainer:
             condition_channels (List[str], optional): Operating-state
               channels.
             min_time (float): Start time of the usable window [s].
+            max_time (float): End time of the usable window [s].
+            apply_lowpass (bool): Low-pass the true and the reconstructed
+              moment before the damage (on by default: the damage of these
+              towers lies below 3 Hz).
+            lowpass_hz (float): Cutoff of that low-pass [Hz].
+            lowpass_order (int): Butterworth order of one pass.
             crop_length (int): Training crop length; the length-fixed
               spectral models always train on the full window.
             batch_size (int): Training batch size.
@@ -118,8 +124,8 @@ class SequenceModelTrainer:
               condition-dependent correction (0 disables the bound).
             target_channel (str, optional): Overrides the target moment
               channel (e.g. an intermediate section gage 'tower_5_mfa').
-            damage_section (int): Tower section index used for the damage
-              evaluation of the target channel (0 = base).
+            damage_gauge (int): Gauge index of the target channel in the
+              single-height task, 0 (base) to 10 (top).
             input_channels (List[str], optional): Replaces the default
               [acceleration + condition channels] input stack (sensor
               ablations).
@@ -137,7 +143,9 @@ class SequenceModelTrainer:
         self.condition_channels = condition_channels
         self.min_time = min_time
         self.max_time = max_time
+        self.apply_lowpass = apply_lowpass
         self.lowpass_hz = lowpass_hz
+        self.lowpass_order = lowpass_order
         self.crop_length = (crop_length
                             if model_name not in LENGTH_FIXED_MODELS else None)
         self.batch_size = batch_size
@@ -156,7 +164,7 @@ class SequenceModelTrainer:
         self.calibration_path = calibration_path
         self.condition_bound = condition_bound
         self.target_channel = target_channel
-        self.damage_section = damage_section
+        self.damage_gauge = damage_gauge
         self.input_channels = input_channels
         self.height_targets = height_targets
         self.height_factors = height_factors
@@ -171,7 +179,8 @@ class SequenceModelTrainer:
             self,
             sim_ids: List[int],
             crop_length: Optional[int],
-            release: Optional[ReleasedTower] = None) -> SequenceDataset:
+            release: Optional[ReleasedTower] = None,
+            window_length: Optional[int] = None) -> SequenceDataset:
         return SequenceDataset(release=release or self.release,
                                      sim_ids=sim_ids,
                                      direction=self.direction,
@@ -184,7 +193,46 @@ class SequenceModelTrainer:
                                      target_channel=self.target_channel,
                                      input_channels=self.input_channels,
                                      height_targets=self.height_targets,
-                                     height_factors=self.height_factors)
+                                     height_factors=self.height_factors,
+                                     window_length=window_length)
+
+    def _input_length(self) -> Optional[int]:
+        """Window of a length-fixed model (None: crops or any length)."""
+        return None if self.crop_length else self._eval_length
+
+    def _predict_window(self, dataset: SequenceDataset, index: int,
+                        item: Dict[str, torch.Tensor]) -> np.ndarray:
+        """Normalized prediction over the full scored window.
+
+        Models trained on crops, and length-fixed models trained on the full
+        window, predict it directly. A length-fixed checkpoint trained on
+        fewer samples (`_eval_length` = 6,000) predicts the
+        first and the last 6,000 samples; the last samples of the second
+        prediction, aligned on the overlap, complete the first.
+
+        Args:
+            dataset (SequenceDataset): Evaluation dataset (full window).
+            index (int): Item index.
+            item (dict): dataset[index], already loaded.
+
+        Returns:
+            np.ndarray: Normalized prediction over the full window.
+        """
+        if self.crop_length or self.model_name not in LENGTH_FIXED_MODELS:
+            return self._predict(item)
+        extra = item["target"].shape[-1] - self._eval_length
+        if extra <= 0:
+            return self._predict(item)
+        dataset.window_length = self._eval_length
+        try:
+            dataset.window_offset = 0
+            first = self._predict(dataset[index])
+            dataset.window_offset = extra
+            last = self._predict(dataset[index])
+        finally:
+            dataset.window_length, dataset.window_offset = None, 0
+        shift = float(np.mean(first[extra:] - last[:-extra]))
+        return np.concatenate([first, last[-extra:] + shift])
 
     def _damage_proxy_loss(self, prediction: torch.Tensor, target: torch.Tensor,
                            freq_weights: torch.Tensor) -> torch.Tensor:
@@ -253,9 +301,14 @@ class SequenceModelTrainer:
             self.norm_stats = compute_norm_stats(self.release, train_ids,
                                                  stat_channels, self.min_time,
                                                  self.max_time)
+        # Input length of the length-fixed models: the full scored window
+        # (6,001 samples). Checkpoints trained before stored 6,000 and are
+        # scored over the full window by _predict_window.
         self._eval_length = probe[0]["inputs"].shape[-1]
 
-        dataset = self._make_dataset(train_ids, self.crop_length)
+        dataset = self._make_dataset(train_ids,
+                                     self.crop_length,
+                                     window_length=self._input_length())
         # Full batches only, unless the split is smaller than one batch.
         loader = DataLoader(dataset,
                             batch_size=self.batch_size,
@@ -288,8 +341,8 @@ class SequenceModelTrainer:
         val_loader = None
         if val_ids:
             history["val_loss"] = []
-            val_loader = DataLoader(self._make_dataset(val_ids,
-                                                       self.crop_length),
+            val_loader = DataLoader(self._make_dataset(
+                val_ids, self.crop_length, window_length=self._input_length()),
                                     batch_size=self.batch_size,
                                     shuffle=False, num_workers=0)
         val_interval = self.val_every or max(1, self.num_epochs // 10)
@@ -493,7 +546,7 @@ class SequenceModelTrainer:
         # same, whatever ran before.
         torch.manual_seed(self.seed)
         dataset = self._make_dataset(eval_ids, None, release)
-        sections = (list(range(len(HEIGHT_TARGETS)))
+        sections = (list(range(len(tower.channels)))
                     if self.height_targets else [None])
         sn_args = (tower, self.sn_intercepts_log10, self.sn_slopes)
         rows, jobs = [], []
@@ -505,25 +558,28 @@ class SequenceModelTrainer:
                 for section in sections:
                     dataset.section = section
                     item = dataset[index]
-                    moment_rec = lowpass(
-                        dataset.denormalize_target(self._predict(item)),
-                        dataset.sampling_frequency, self.lowpass_hz)
-                    moment_true = lowpass(
+                    moment_rec = damage_filter(
+                        dataset.denormalize_target(
+                            self._predict_window(dataset, index, item)),
+                        dataset.sampling_frequency, self.apply_lowpass,
+                        self.lowpass_hz, self.lowpass_order)
+                    moment_true = damage_filter(
                         dataset.denormalize_target(item["target"][0].numpy()),
-                        dataset.sampling_frequency, self.lowpass_hz)
+                        dataset.sampling_frequency, self.apply_lowpass,
+                        self.lowpass_hz, self.lowpass_order)
                     if section is None:
                         # Single height: columns named by the gauge.
                         stem = dataset.moment_channel.rsplit("_m", 1)[0]
-                        damage_section = self.damage_section
+                        damage_gauge = self.damage_gauge
                     else:
-                        stem, damage_section = HEIGHT_TARGETS[section][:2]
+                        stem, damage_gauge = tower.channels[section], section
                     row[f"var_ratio_{stem}"] = float(
                         np.var(moment_rec) / np.var(moment_true))
                     # Rainflow is the bottleneck: it runs in a process pool.
                     jobs.append((index, f"damage_true_{stem}", moment_true,
-                                 damage_section))
+                                 damage_gauge))
                     jobs.append((index, f"damage_rec_{stem}", moment_rec,
-                                 damage_section))
+                                 damage_gauge))
                 rows.append(row)
         with multiprocessing.Pool(min(8, os.cpu_count() or 1)) as pool:
             damages = pool.starmap(
@@ -540,7 +596,7 @@ class SequenceModelTrainer:
                                f"damage_comparison_{stem}.csv"),
                   index=False)
 
-        key = ("tower_bottom" if self.height_targets else
+        key = (tower.channels[0] if self.height_targets else
                dataset.moment_channel.rsplit("_m", 1)[0])
         scores = summarize_damage(df[f"damage_true_{key}"].values,
                                   df[f"damage_rec_{key}"].values)

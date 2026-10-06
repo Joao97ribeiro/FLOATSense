@@ -1,3 +1,4 @@
+# pylint: disable=wrong-import-position
 """Trains and evaluates sequence models on one tower (within tower), with
 optional zero-shot evaluation on the other towers and few-shot adaptation.
 
@@ -30,12 +31,12 @@ from absl import logging
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from floatsense import SequenceModelTrainer  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense import load_tower  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.data import HEIGHT_TARGETS  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.models import LENGTH_FIXED_MODELS  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.release import split_tag  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.heights import calibrate_profile  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense import constants as C
+from floatsense import SequenceModelTrainer
+from floatsense import load_tower
+from floatsense.models import LENGTH_FIXED_MODELS
+from floatsense.release import split_tag
+from floatsense.heights import calibrate_profile
 
 FLAGS = flags.FLAGS
 
@@ -62,11 +63,15 @@ flags.DEFINE_bool("deterministic", True,
 flags.DEFINE_integer("max_train_sims", 0, "If > 0, cap the training sims.")
 flags.DEFINE_integer("max_eval_sims", 0, "If > 0, cap the evaluated sims.")
 
-flags.DEFINE_float("min_time", 400.0, "Start of the scored window (s).")
-flags.DEFINE_float("max_time", 1000.0, "End of the scored window (s).")
-flags.DEFINE_float(
-    "lowpass_hz", 3.0, "Low-pass on true and reconstructed moments before the "
-    "damage metric (0 disables).")
+flags.DEFINE_float("min_time", C.MIN_TIME, "Start of the scored window (s).")
+flags.DEFINE_float("max_time", C.MAX_TIME, "End of the scored window (s).")
+flags.DEFINE_bool("lowpass", True,
+                  "Zero-phase Butterworth low-pass of the true and "
+                  "reconstructed moments before the damage metric (the "
+                  "damage of these towers lies below 3 Hz).")
+flags.DEFINE_float("lowpass_hz", C.LOWPASS_HZ, "Cutoff of --lowpass [Hz].")
+flags.DEFINE_integer("lowpass_order", C.LOWPASS_ORDER,
+                     "Butterworth order of one pass (sosfiltfilt runs two).")
 flags.DEFINE_integer("crop_length", 4096, "Training crop length.")
 flags.DEFINE_integer("batch_size", 16, "Training batch size.")
 flags.DEFINE_float("learning_rate", 1e-3, "Adam learning rate.")
@@ -91,7 +96,6 @@ flags.DEFINE_float("condition_bound", 0.5,
                    "Tanh bound of the hybrid correction (0 disables it).")
 flags.DEFINE_string("target_channel", None,
                     "Overrides the target channel (e.g. tower_5_mfa).")
-flags.DEFINE_integer("damage_section", 0, "Tower section of the damage.")
 flags.DEFINE_list("input_channels", None,
                   "Replaces the default input stack (sensor ablations).")
 flags.DEFINE_bool(
@@ -100,9 +104,11 @@ flags.DEFINE_bool(
     "moment at the 11 instrumented heights.")
 flags.DEFINE_enum("loss", "mse", ["mse", "damage"], "Training loss.")
 flags.DEFINE_float("damage_loss_weight", 1.0, "Weight of the damage term.")
-flags.DEFINE_list("sn_intercepts_log10", ["12.010", "15.350"],
+flags.DEFINE_list("sn_intercepts_log10",
+                  [str(v) for v in C.SN_INTERCEPTS_LOG10],
                   "SN curve log10 intercepts.")
-flags.DEFINE_list("sn_slopes", ["3", "5"], "SN curve slopes.")
+flags.DEFINE_list("sn_slopes", [str(v) for v in C.SN_SLOPES],
+                  "SN curve slopes.")
 
 def floats(values: List[str]) -> List[float]:
     """Converts a list of strings to floats."""
@@ -144,27 +150,23 @@ def main(_):
                         "scripts/physics/run.py on the same tower and "
                         "--train_split first, or pass --calibration_dir.")
 
-    damage_section = FLAGS.damage_section
-    if FLAGS.height_targets and (FLAGS.target_channel or damage_section):
-        raise ValueError("--target_channel and --damage_section apply to the "
-                         "single-height task: add --height_targets=False.")
+    source = load_tower(FLAGS.dataset_dir, FLAGS.tower)
+    # Single-height task: the damage is scored at the gauge of the target.
+    damage_gauge = 0
+    if FLAGS.height_targets and FLAGS.target_channel:
+        raise ValueError("--target_channel applies to the single-height task: "
+                         "add --height_targets=False.")
     if FLAGS.target_channel:
-        stems = {f"{stem}_m{d}": index for stem, index, _ in HEIGHT_TARGETS
-                 for d in ("fa", "ss")}
-        if FLAGS.target_channel not in stems:
+        gauges = {f"{stem}_m{d}": gauge
+                  for gauge, stem in enumerate(source.geometry.channels)
+                  for d in ("fa", "ss")}
+        if FLAGS.target_channel not in gauges:
             raise ValueError(f"Unknown target channel {FLAGS.target_channel}.")
-        if damage_section and damage_section != stems[FLAGS.target_channel]:
-            raise ValueError("--damage_section does not match the section "
-                             "of --target_channel; leave it unset.")
-        damage_section = stems[FLAGS.target_channel]
-    elif damage_section:
-        raise ValueError("Without --target_channel the target is the base "
-                         "moment: --damage_section must stay 0.")
+        damage_gauge = gauges[FLAGS.target_channel]
     hybrids = [m for m in FLAGS.models if m.startswith("hybrid")]
-    if (hybrids and not FLAGS.height_targets and damage_section):
+    if hybrids and not FLAGS.height_targets and damage_gauge:
         raise ValueError("The hybrid models anchor to the physics at the "
                          "requested height only in the 11-height task.")
-    source = load_tower(FLAGS.dataset_dir, FLAGS.tower)
     train_ids = source.split_ids(FLAGS.train_split)
     test_ids = source.split_ids(FLAGS.test_split)
     if FLAGS.max_train_sims:
@@ -199,7 +201,9 @@ def main(_):
                 model_name=model_name,
                 min_time=FLAGS.min_time,
                 max_time=FLAGS.max_time,
+                apply_lowpass=FLAGS.lowpass,
                 lowpass_hz=FLAGS.lowpass_hz,
+                lowpass_order=FLAGS.lowpass_order,
                 crop_length=crop_length,
                 batch_size=FLAGS.batch_size,
                 learning_rate=FLAGS.learning_rate,
@@ -219,7 +223,7 @@ def main(_):
                                   if model_name.startswith("hybrid") else None),
                 condition_bound=FLAGS.condition_bound,
                 target_channel=FLAGS.target_channel,
-                damage_section=damage_section,
+                damage_gauge=damage_gauge,
                 input_channels=FLAGS.input_channels,
                 height_targets=FLAGS.height_targets,
                 height_factors=height_factors.get(direction),

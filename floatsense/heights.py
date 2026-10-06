@@ -25,26 +25,19 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import brentq
 
-from .fatigue import compute_base_damage
+from .constants import BLADE_MASS
+from .constants import HUB_MASS
+from .constants import NAC_CM_Z
+from .constants import NAC_MASS
+from .constants import OVERHANG
+from .constants import SHFT_TILT
+from .constants import TWR2SHFT
+from .constants import YAW_MASS
+from .fatigue import damage_filter
 from .physics import PhysicsReconstruction
-from .physics import lowpass
 from .physics import parked_constants
+from .release import load_gauges
 
-BASE_Z, TOP_Z = 15.0, 164.386
-HEIGHT = TOP_Z - BASE_Z
-# Rotor-nacelle assembly of the IEA 22 MW (ElastoDyn inputs).
-NAC_MASS, NAC_CM_Z = 821239.8004933242, 4.2647901842947595
-HUB_MASS, YAW_MASS, BLADE_MASS = 120447.70224890654, 28740.99049474962, 82427.5
-TWR2SHFT, OVERHANG, SHFT_TILT = 4.142540706280534, -14.07711591388923, -6.0
-# Target channels along the tower and the tower section each one scores.
-# Gauge k sits at ElastoDyn node 3k, i.e. section 3k-1 of the 30 sections.
-HEIGHT_CHANNELS = ([("tower_bottom", 0)] +
-                   [(f"tower_{k}", 3 * k - 1) for k in range(1, 10)] +
-                   [("tower_top", 29)])
-GAUGE_Z = np.array([
-    0.0, 12.4488, 27.3874, 42.3260, 57.2646, 72.2032, 87.1418, 102.0804,
-    117.0190, 131.9576, HEIGHT
-])
 
 
 def rna_properties() -> Tuple[float, float]:
@@ -56,8 +49,11 @@ def rna_properties() -> Tuple[float, float]:
 
 
 def height_factor(z: np.ndarray, s: np.ndarray, m: np.ndarray, h_rna: float,
-                  mass_rna: float) -> np.ndarray:
-    """f(z) = M(z)/M(0) of the inertial model, tower mass included."""
+                  mass_rna: float, height: float) -> np.ndarray:
+    """f(z) = M(z)/M(0) of the inertial model, tower mass included.
+
+    `height` is the tower height [m]; z and s are heights above the base.
+    """
 
     def upper(power):
         weight = m * s**power
@@ -68,8 +64,8 @@ def height_factor(z: np.ndarray, s: np.ndarray, m: np.ndarray, h_rna: float,
 
     def moment(zz):
         return (
-            mass_rna * (1 + h_rna / HEIGHT) * (HEIGHT + h_rna - zz) +
-            (np.interp(zz, s, second) - zz * np.interp(zz, s, first)) / HEIGHT)
+            mass_rna * (1 + h_rna / height) * (height + h_rna - zz) +
+            (np.interp(zz, s, second) - zz * np.interp(zz, s, first)) / height)
 
     return moment(np.asarray(z, float)) / moment(0.0)
 
@@ -85,7 +81,8 @@ def calibrate_profile(dataset_dir: str,
     """Height factors of a tower from its mass and parked profile.
 
     Args:
-        dataset_dir (str): Released dataset directory (parked runs).
+        dataset_dir (str): Released dataset directory (parked runs and
+          <tower>/sections.parquet).
         tower (str): Tower name.
         direction (str): 'fa' or 'ss'.
         mass_csv (str, optional): Two-column CSV (height above the base [m],
@@ -97,20 +94,25 @@ def calibrate_profile(dataset_dir: str,
     """
     mass = pd.read_csv(mass_csv or
                        os.path.join(TOWERS_DIR, f"{tower}_mass.csv"))
+    # Gauge heights above the base and tower height (top gauge), from the
+    # released sections table.
+    gauges = load_gauges(dataset_dir, tower)
+    gauge_z, height = gauges.heights_gauges, gauges.height
     s, m = mass.iloc[:, 0].values, mass.iloc[:, 1].values
     parked = parked_constants(dataset_dir, tower)
     parked_f = (parked[direction] / parked[direction].iloc[0]).values
     anchor = len(parked_f) - 1
     mass_rna, h_nominal = rna_properties()
     h_eff = brentq(
-        lambda hh: height_factor(GAUGE_Z[anchor], s, m, hh, mass_rna) -
+        lambda hh: height_factor(gauge_z[anchor], s, m, hh, mass_rna, height) -
         parked_f[anchor], -100.0, 5000.0)
     return {
         "h_rna_nominal": float(h_nominal),
         "h_rna_effective": float(h_eff),
-        "factors": height_factor(GAUGE_Z, s, m, h_eff, mass_rna).tolist(),
+        "factors": height_factor(gauge_z, s, m, h_eff, mass_rna,
+                                 height).tolist(),
         "parked_factors": parked_f.tolist(),
-        "heights": GAUGE_Z.tolist(),
+        "heights": gauge_z.tolist(),
     }
 
 
@@ -124,24 +126,20 @@ def evaluate_heights(physics: PhysicsReconstruction, sim_ids: List[int],
         data = physics.load(sim_id)
         base = physics.reconstruct(data, direction, calibration)
         row = {"sim_id": sim_id}
-        for (channel, section), factor in zip(HEIGHT_CHANNELS, factors):
+        for gauge, (channel, factor) in enumerate(
+                zip(physics.tower.channels, factors)):
             name = f"{channel}_m{direction}"
             if name not in physics.channels:
                 continue
-            true = lowpass(physics.scored(data, name), fs, physics.lowpass_hz)
-            rec = base * factor
-            row[f"damage_true_{channel}"] = compute_base_damage(
-                true,
-                physics.tower,
-                physics.sn_intercepts_log10,
-                physics.sn_slopes,
-                section=section)
-            row[f"damage_rec_{channel}"] = compute_base_damage(
-                rec,
-                physics.tower,
-                physics.sn_intercepts_log10,
-                physics.sn_slopes,
-                section=section)
+            true = damage_filter(physics.scored(data, name), fs,
+                                 physics.apply_lowpass, physics.lowpass_hz,
+                                 physics.lowpass_order)
+            rec = damage_filter(base * factor, fs, physics.apply_lowpass,
+                                physics.lowpass_hz, physics.lowpass_order)
+            row[f"damage_true_{channel}"] = physics.tower.damage(
+                true, gauge, physics.sn_intercepts_log10, physics.sn_slopes)
+            row[f"damage_rec_{channel}"] = physics.tower.damage(
+                rec, gauge, physics.sn_intercepts_log10, physics.sn_slopes)
         rows.append(row)
     df = pd.DataFrame(rows)
     os.makedirs(os.path.dirname(csv_path), exist_ok=True)

@@ -69,11 +69,16 @@ accelerometer axis improves the top at every budget.
   (the parked runs by tower and run name).
 - **Task.** From the gravity-corrected fore-aft tower-top acceleration,
   rotor speed, blade pitch, hub wind speed and a height $z/H$,
-  reconstruct the fore-aft moment at that height over 400 to 1,000 s.
+  reconstruct the fore-aft moment at that height over 400 to 1,000 s
+  (scored window: 6,001 samples, 400.0 to 1,000.0 s, as in FLOATBench).
   One model serves the whole tower.
 - **Damage-based scoring.** True and reconstructed moments pass through
-  the pipeline that generated the FLOATBench labels (3 Hz low-pass,
-  rainflow, DNV-RP-C203 S-N curve, Miner's rule). Five metrics: $R^2$
+  the pipeline that generated the FLOATBench labels (rainflow,
+  DNV-RP-C203 S-N curve, Miner's rule), after a 3 Hz zero-phase
+  Butterworth low-pass (order 4, forward and backward): the fatigue
+  damage of these towers lies below 3 Hz (filtered and unfiltered true
+  damage agree within 1% in 99.8% of the gauge-simulation pairs). Five
+  metrics: $R^2$
   of $\log_{10}$ damage, median damage ratio, fraction within a factor
   of two, mean relative error, and within-condition correlation over
   the six realizations of an operating point.
@@ -101,6 +106,8 @@ scripts/           Pipeline entry points — see "Scripts" below
 splits/            Model-selection and few-shot splits (lists of sim_id, same on every tower)
 towers/            ElastoDyn tower mass density of each tower (physics height factor)
 docs/              Figures used in this README
+tests/             Damage-metric tests (python -m unittest discover tests;
+                   FLOATSENSE_DATA=data/FLOATSense also checks the labels)
 environment.yml    Conda environment (Python 3.11 + GPU PyTorch)
 requirements.txt   Pinned runtime dependencies
 ```
@@ -114,7 +121,7 @@ models.py      the floor and the 20 learned models
 trainer.py     training recipe and damage evaluation
 physics.py     band-gain physics baseline and its parked calibration
 heights.py     physics height factor along the tower
-fatigue.py     rainflow, S-N curve and Miner's rule
+fatigue.py     damage metric: 3 Hz zero-phase low-pass, rainflow, S-N curve, Miner's rule
 metrics.py     damage metrics and cluster bootstrap
 ```
 
@@ -207,8 +214,10 @@ FLOATSense/                          24.0 GB
 │   │                                 wave_hs_id, wave_hs, wave_tp_id, wave_tp, wind_seed_id,
 │   │                                 split, wind_group, wave_group, damage_weight
 │   ├── sections.parquet              section_id, section_height_m, section_radius_m, section_thickness_m,
-│   │                                 channel, gauge_height_m, z_over_h (the 11 scored sections)
-│   └── damage.parquet                sim_id, section_id, damage (reference fore-aft damage)
+│   │                                 channel, gauge_height_m, z_over_h, gauge_radius_m,
+│   │                                 gauge_thickness_m (the 11 scored sections)
+│   └── damage.parquet                sim_id, section_id, damage (reference fore-aft damage at the
+│                                     gauge: radius at the gauge, 3 Hz Butterworth low-pass)
 ├── opt1/                             same files
 ├── opt2/                             same files
 ├── parked.parquet                    the 22 parked runs (waves only) of each tower
@@ -218,8 +227,15 @@ FLOATSense/                          24.0 GB
 
 Column names and order follow FLOATBench, so a run joins its FLOATBench
 rows on `sim_id` (and `section_id`). The 11 gauges are FLOATBench
-sections 1, 3, 6, ..., 27, 30; each is scored with the mean outer radius
-and wall thickness of that section.
+sections 1, 3, 6, ..., 27, 30.
+
+**Radius of the damage.** The stress at a gauge uses the outer radius at
+the gauge height and the wall thickness of the section that contains it
+(`gauge_radius_m`, `gauge_thickness_m` in `sections.parquet`, written by
+`scripts/data/build_labels.py --gauge_profile` from the gauge profile of
+the OpenFAST campaign), so the stress is taken where the moment is
+recorded. The 30-section FLOATBench labels instead interpolate the
+moment to the mid-height of each section and use its mean radius.
 
 ### Download
 
@@ -230,6 +246,19 @@ hf download DeCoDELab/FLOATSense --repo-type=dataset --local-dir=data/FLOATSense
 # Check the download: read one simulation from Python
 python -c "from floatsense import load_tower; \
   t = load_tower('data/FLOATSense', 'opt2'); print(t.load(1).shape, t.channels[:4])"
+```
+
+**Damage of a series.** The same code scores the true moment and any
+prediction at a gauge (3 Hz zero-phase low-pass, radius at the gauge
+height, DNV-RP-C203 S-N curve,
+Miner's rule):
+
+```python
+from floatsense import load_tower
+tower = load_tower("data/FLOATSense", "opt2")
+true = tower.scored_moment(sim_id=1, gauge="tower_top")  # 400-1,000 s, 6,001 samples
+tower.gauge_damage(true, "tower_top")       # = tower.damage().loc[1, 30]
+tower.gauge_damage(predicted, "tower_top")  # any reconstructed series
 ```
 
 The configs expect the dataset at `data/FLOATSense` (for a copy elsewhere:
@@ -419,13 +448,11 @@ print(ci)
 
 ## Reproducibility
 
-- The reference damage in `damage.parquet` is computed on the even
-  6,000-sample window 400.0–999.9 s, as in the evaluation of the learned
-  models, and matches it to $10^{-6}$. The physics baseline scores its
-  own truth on the inclusive 400–1,000 s window (6,001 samples), as in
-  the paper; the two true damages differ by a median of $2 \times 10^{-4}$
-  (99th percentile about 1%, up to about 10% on a few low-damage
-  simulations).
+- The reference damage in `damage.parquet` is computed on the inclusive
+  400–1,000 s window (6,001 samples), the window of the evaluation of
+  every model, of the physics baseline and of FLOATBench;
+  `gauge_damage(scored_moment(...))` reproduces it exactly
+  (`tests/test_damage.py`).
 - The parked constant C1 is recomputed from `parked.parquet` and
   rounded to 0.1 MN s², as in the paper; the physics baseline reproduces
   the paper to $10^{-7}$.

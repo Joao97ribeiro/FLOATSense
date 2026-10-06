@@ -15,20 +15,14 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from .constants import MAX_TIME
+from .constants import MIN_TIME
+from .constants import OPERATING_POWER_KW
 from .physics import DIRECTION_CHANNELS
 from .physics import Calibration
 from .physics import band_masks
 from .physics import harmonic_windows
 from .release import ReleasedTower
-
-# Targets along the tower for the height-conditioned task: channel stem,
-# zero-based FLOATBench section scored (section_id - 1), and height of the
-# gauge above the base as a fraction of H.
-HEIGHT_TARGETS = ([("tower_bottom", 0, 0.0)] + [
-    (f"tower_{k}", 3 * k - 1, z / 149.386)
-    for k, z in zip(range(1, 10), (12.4488, 27.3874, 42.3260, 57.2646, 72.2032,
-                                   87.1418, 102.0804, 117.0190, 131.9576))
-] + [("tower_top", 29, 1.0)])
 
 DEFAULT_CONDITION_CHANNELS = ["rotor_speed", "blade_pitch", "wind_speed"]
 
@@ -55,15 +49,16 @@ class SequenceDataset(Dataset):
                  sim_ids: List[int],
                  direction: str = "fa",
                  condition_channels: Optional[List[str]] = None,
-                 min_time: float = 400.0,
-                 max_time: float = 1000.0,
+                 min_time: float = MIN_TIME,
+                 max_time: float = MAX_TIME,
                  crop_length: Optional[int] = None,
                  norm_stats: Optional[Dict[str, List[float]]] = None,
                  calibration_path: Optional[str] = None,
                  target_channel: Optional[str] = None,
                  input_channels: Optional[List[str]] = None,
                  height_targets: bool = False,
-                 height_factors: Optional[List[float]] = None):
+                 height_factors: Optional[List[float]] = None,
+                 window_length: Optional[int] = None):
         """Initializes the dataset.
 
         Args:
@@ -76,8 +71,8 @@ class SequenceDataset(Dataset):
             min_time (float): Start of the usable window [s].
             max_time (float): End of the usable window [s], inclusive.
             crop_length (int, optional): If set, a random crop of this many
-              samples is returned (training); otherwise the full window,
-              trimmed to an even length (evaluation).
+              samples is returned (training); otherwise the full scored
+              window (6,001 samples, 400.0-1,000.0 s, as FLOATBench).
             norm_stats (dict, optional): Mapping channel -> [mean, std].
             calibration_path (str, optional): Physics calibration JSON that
               adds the per-simulation 'physics_gain' item.
@@ -102,7 +97,7 @@ class SequenceDataset(Dataset):
         self.sampling_frequency = release.sampling_frequency
         self.start_index = int(round(min_time * self.sampling_frequency))
         self.stop_index = int(round(max_time * self.sampling_frequency)) + 1
-        self.operating_power_kw = 100.0
+        self.operating_power_kw = OPERATING_POWER_KW
 
         self.accel_channel = DIRECTION_CHANNELS[direction]["accel"]
         self.moment_channel = (target_channel or
@@ -115,11 +110,16 @@ class SequenceDataset(Dataset):
         self.height_targets = height_targets
         self.height_factors = height_factors
         self.section = None
+        # Length-fixed models see `window_length` samples from
+        # `window_offset` (their input size); None keeps the full window.
+        self.window_length = window_length
+        self.window_offset = 0
         if height_targets:
             self.input_channels = self.input_channels + ["height"]
             self.height_channels = [
-                f"{stem}_m{direction}" for stem, _, _ in HEIGHT_TARGETS
+                f"{stem}_m{direction}" for stem in release.geometry.channels
             ]
+            self.height_z_over_h = release.geometry.z_over_h
         # Field-SCADA channels 'stat:<channel>:<mean|std|min|max>' read the
         # released per-window statistics (series_stats.parquet); the series
         # of that channel is never touched.
@@ -177,15 +177,16 @@ class SequenceDataset(Dataset):
             max_start = window.shape[0] - self.crop_length
             offset = int(np.random.randint(0, max_start + 1))
             window = window[offset:offset + self.crop_length]
-        else:
-            window = window[:2 * (window.shape[0] // 2)]
+        elif self.window_length:
+            window = window[self.window_offset:self.window_offset +
+                            self.window_length]
 
         section, height = None, 0.0
         if self.height_targets:
             section = (self.section if self.section is not None else int(
-                np.random.randint(len(HEIGHT_TARGETS))))
+                np.random.randint(len(self.height_channels))))
             self.moment_channel = self.height_channels[section]
-            height = HEIGHT_TARGETS[section][2]
+            height = float(self.height_z_over_h[section])
         inputs = [
             np.full(window.shape[0], height) if channel == "height" else
             np.full(window.shape[0], stats[channel]) if channel in stats else
@@ -246,8 +247,8 @@ class SequenceDataset(Dataset):
 def compute_norm_stats(release: ReleasedTower,
                        sim_ids: List[int],
                        channels: List[str],
-                       min_time: float = 400.0,
-                       max_time: float = 1000.0,
+                       min_time: float = MIN_TIME,
+                       max_time: float = MAX_TIME,
                        max_sims: int = 200) -> Dict[str, List[float]]:
     """Per-channel [mean, std] over a sample of training simulations.
 
