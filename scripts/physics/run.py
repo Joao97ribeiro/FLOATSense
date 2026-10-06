@@ -1,3 +1,4 @@
+# pylint: disable=wrong-import-position
 """Calibrates the physics baseline and scores it at the 11 gauges.
 
 C1 comes from the parked runs of the tower; the other five constants are
@@ -28,15 +29,15 @@ from absl import logging
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from floatsense import constants as C  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense import Calibration  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense import PhysicsReconstruction  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense import load_tower  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense import parked_c_theta  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.heights import calibrate_profile  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.heights import evaluate_heights  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.metrics import summarize_damage  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.release import split_tag  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense import constants as C
+from floatsense import Calibration
+from floatsense import PhysicsReconstruction
+from floatsense import load_tower
+from floatsense import parked_c_theta
+from floatsense.heights import calibrate_profile
+from floatsense.heights import evaluate_heights
+from floatsense.metrics import summarize_damage
+from floatsense.release import split_tag
 
 FLAGS = flags.FLAGS
 

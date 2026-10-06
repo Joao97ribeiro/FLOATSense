@@ -1,3 +1,4 @@
+# pylint: disable=wrong-import-position
 """Tests of the damage metric.
 
 Run from the repository root with `python -m unittest discover tests`.
@@ -12,8 +13,8 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from floatsense.fatigue import damage_filter  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.fatigue import lowpass  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.fatigue import damage_filter
+from floatsense.fatigue import lowpass
 
 FS = 10.0
 

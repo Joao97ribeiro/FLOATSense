@@ -1,4 +1,5 @@
 # pylint: disable=too-many-locals
+# pylint: disable=wrong-import-position
 """Scores every run under an output tree at the 11 gauges.
 
 Reads the per-simulation damage CSVs written by scripts/train/run.py
@@ -27,11 +28,11 @@ import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from floatsense import load_tower  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense import summarize_by_group  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.metrics import condition_key  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.metrics import mean_relative_error  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.metrics import within_condition_correlation  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense import load_tower
+from floatsense import summarize_by_group
+from floatsense.metrics import condition_key
+from floatsense.metrics import mean_relative_error
+from floatsense.metrics import within_condition_correlation
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("dataset_dir", None, "Released FLOATSense dataset.")

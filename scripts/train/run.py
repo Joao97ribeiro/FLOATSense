@@ -1,3 +1,4 @@
+# pylint: disable=wrong-import-position
 """Trains and evaluates sequence models on one tower (within tower), with
 optional zero-shot evaluation on the other towers and few-shot adaptation.
 
@@ -30,12 +31,12 @@ from absl import logging
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from floatsense import constants as C  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense import SequenceModelTrainer  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense import load_tower  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.models import LENGTH_FIXED_MODELS  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.release import split_tag  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.heights import calibrate_profile  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense import constants as C
+from floatsense import SequenceModelTrainer
+from floatsense import load_tower
+from floatsense.models import LENGTH_FIXED_MODELS
+from floatsense.release import split_tag
+from floatsense.heights import calibrate_profile
 
 FLAGS = flags.FLAGS
 

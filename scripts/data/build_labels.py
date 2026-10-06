@@ -1,3 +1,4 @@
+# pylint: disable=wrong-import-position
 """Writes the label and metadata files of the released dataset.
 
 Maintainers only: the released files already contain the labels. The gauge
@@ -40,13 +41,13 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from floatsense.constants import LOWPASS_HZ  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.constants import LOWPASS_ORDER  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.constants import MAX_TIME  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.constants import MIN_TIME  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.constants import SAMPLING_FREQUENCY  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.release import TowerGauges  # noqa: E402  pylint: disable=wrong-import-position
-from floatsense.fatigue import damage_filter  # noqa: E402  pylint: disable=wrong-import-position
+from floatsense.constants import LOWPASS_HZ
+from floatsense.constants import LOWPASS_ORDER
+from floatsense.constants import MAX_TIME
+from floatsense.constants import MIN_TIME
+from floatsense.constants import SAMPLING_FREQUENCY
+from floatsense.release import TowerGauges
+from floatsense.fatigue import damage_filter
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("dataset_dir", None, "Released dataset, one folder per tower.")
