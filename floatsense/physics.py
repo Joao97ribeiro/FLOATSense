@@ -60,7 +60,6 @@ from .constants import OPERATING_POWER_KW
 from .constants import PAD_SECONDS
 from .constants import SEGMENT_LENGTH
 from .fatigue import damage_filter
-from .fatigue import lowpass  # noqa: F401  pylint: disable=unused-import
 from .release import ReleasedTower
 from .release import load_gauges
 from .release import load_parked
