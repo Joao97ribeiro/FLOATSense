@@ -144,7 +144,8 @@ def main(_):
     scores = evaluate_heights(physics, test_ids, calibration,
                               profile["factors"], FLAGS.direction,
                               os.path.join(output_dir, "damage_heights.csv"))
-    for height in ("tower_bottom", "tower_top"):
+    for height in (release.geometry.channels[0],
+                   release.geometry.channels[-1]):  # base and top
         if f"damage_true_{height}" in scores:
             s = summarize_damage(scores[f"damage_true_{height}"].to_numpy(),
                                  scores[f"damage_rec_{height}"].to_numpy())

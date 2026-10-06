@@ -596,7 +596,7 @@ class SequenceModelTrainer:
                                f"damage_comparison_{stem}.csv"),
                   index=False)
 
-        key = ("tower_bottom" if self.height_targets else
+        key = (tower.channels[0] if self.height_targets else
                dataset.moment_channel.rsplit("_m", 1)[0])
         scores = summarize_damage(df[f"damage_true_{key}"].values,
                                   df[f"damage_rec_{key}"].values)
