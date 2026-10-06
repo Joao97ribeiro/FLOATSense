@@ -249,7 +249,8 @@ python -c "from floatsense import load_tower; \
 ```
 
 **Damage of a series.** The same code scores the true moment and any
-prediction at a gauge (radius at the gauge height, DNV-RP-C203 S-N curve,
+prediction at a gauge (3 Hz zero-phase low-pass, radius at the gauge
+height, DNV-RP-C203 S-N curve,
 Miner's rule):
 
 ```python
