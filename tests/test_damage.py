@@ -13,6 +13,7 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from floatsense import load_tower
 from floatsense.fatigue import damage_filter
 from floatsense.fatigue import lowpass
 
@@ -51,7 +52,6 @@ class ReleasedDamageTest(unittest.TestCase):
 
     def test_gauge_damage_matches_damage_parquet(self):
         """gauge_damage(scored_moment) equals damage.parquet."""
-        from floatsense import load_tower  # pylint: disable=import-outside-toplevel
         tower = load_tower(os.environ["FLOATSENSE_DATA"], "opt2")
         damage = tower.damage()
         for sim_id in tower.sim_ids[:5]:

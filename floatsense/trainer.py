@@ -32,11 +32,11 @@ from .constants import MAX_TIME
 from .constants import MIN_TIME
 from .data import SequenceDataset
 from .data import compute_norm_stats
+from .fatigue import damage_filter
 from .metrics import summarize_damage
 from .models import ACCEL_FIRST_MODELS
 from .models import LENGTH_FIXED_MODELS
 from .models import build_model
-from .fatigue import damage_filter
 from .release import ReleasedTower
 from .release import TowerGauges
 

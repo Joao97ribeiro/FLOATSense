@@ -12,7 +12,7 @@ train/test files give the split), and writes, next to the series
                     sim_id, wind_speed_id, wind_speed, mean_wind_speed,
                     std_wind_speed, wave_hs_id, wave_hs, wave_tp_id, wave_tp,
                     wind_seed_id, split, wind_group, wave_group, damage_weight
-  sections.parquet  the 11 scored FLOATBench sections: section_id,
+  sections.parquet  the 11 gauges, base to top: section_id,
                     section_height_m, section_radius_m, section_thickness_m
                     (as in FLOATBench), channel, gauge_height_m, z_over_h,
                     gauge_radius_m, gauge_thickness_m (at the gauge height)
@@ -46,8 +46,8 @@ from floatsense.constants import LOWPASS_ORDER
 from floatsense.constants import MAX_TIME
 from floatsense.constants import MIN_TIME
 from floatsense.constants import SAMPLING_FREQUENCY
-from floatsense.release import TowerGauges
 from floatsense.fatigue import damage_filter
+from floatsense.release import TowerGauges
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("dataset_dir", None, "Released dataset, one folder per tower.")
@@ -56,11 +56,10 @@ flags.DEFINE_list("towers", ["ref", "opt1", "opt2"], "Towers to process.")
 flags.DEFINE_integer("workers", 8, "Worker processes for the damage.")
 flags.DEFINE_list("gauge_profile", None,
                   "<tower>:<path> of the gauge profile of the OpenFAST "
-                  "campaign, one per tower (CSV with gauge_id, gauge, "
-                  "section_id, z [m], radius [m], thickness [m], bottom to "
-                  "top: the outer "
-                  "radius at each gauge height and the thickness of the "
-                  "section containing it).")
+                  "campaign, one per tower: CSV with gauge_id, gauge, "
+                  "section_id, z [m], radius [m] (outer radius at the gauge "
+                  "height) and thickness [m] (section containing the gauge), "
+                  "base to top.")
 flags.DEFINE_bool("lowpass", True,
                   "Zero-phase Butterworth low-pass of the moment before the "
                   "damage, as in the evaluation.")
@@ -96,14 +95,14 @@ def build_metadata(floatbench: pd.DataFrame) -> pd.DataFrame:
 
 def build_sections(floatbench: pd.DataFrame,
                    gauge_profile: pd.DataFrame) -> pd.DataFrame:
-    """Geometry of the 11 scored FLOATBench sections and their gauges.
+    """Geometry of the 11 gauges and of the FLOATBench sections they sit in.
 
     Args:
         floatbench (pd.DataFrame): FLOATBench rows of the tower.
         gauge_profile (pd.DataFrame): Gauge profile (see --gauge_profile).
 
     Returns:
-        pd.DataFrame: One row per scored section, base to top.
+        pd.DataFrame: One row per gauge, base to top.
     """
     # Every gauge property comes from the gauge profile of the OpenFAST
     # campaign: name, FLOATBench section, height, radius and thickness.
@@ -130,7 +129,7 @@ def build_sections(floatbench: pd.DataFrame,
 
 
 def _shard_damage(args):
-    """Damage at the 11 sections of every simulation of one shard."""
+    """Damage at the 11 gauges of every simulation of one shard."""
     path, sections, apply_lowpass, lowpass_hz, lowpass_order = args
     geometry = TowerGauges(sections)
     # The scored window, inclusive: 400.0 to 1000.0 s (6,001 samples).

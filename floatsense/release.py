@@ -11,7 +11,7 @@ The dataset has one directory per tower and one shared parked file:
                                     scored window
   <dataset_dir>/<tower>/metadata.parquet  operating point, split, regime
                                     labels and lifetime weight
-  <dataset_dir>/<tower>/sections.parquet  the 11 scored FLOATBench sections
+  <dataset_dir>/<tower>/sections.parquet  the 11 gauges
   <dataset_dir>/<tower>/damage.parquet  reference damage (sim_id, section_id,
                                     damage; radius at the gauge)
   <dataset_dir>/parked.parquet      the 22 parked runs of every tower

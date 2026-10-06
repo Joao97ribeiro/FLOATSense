@@ -2,9 +2,8 @@
 
 Every module and the defaults of the script flags read these values; the
 configs in scripts/*/config.cfg repeat them as the record of a run. The
-gauges of each tower (name, FLOATBench section, height, radius,
-thickness) and its mass per length are data: sections.parquet and
-towers/; the
+gauges of each tower (name, FLOATBench section, height, radius, thickness)
+and its mass per length are data (sections.parquet and towers/); the
 training recipe is in the trainer and the configs.
 """
 

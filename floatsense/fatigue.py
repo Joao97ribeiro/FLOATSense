@@ -91,7 +91,7 @@ def compute_base_damage(moment_series: np.ndarray,
                         thickness_exponent: float = THICKNESS_EXPONENT,
                         fatigue_life_threshold: float = FATIGUE_LIFE_THRESHOLD,
                         gauge: int = 0) -> float:
-    """Computes fatigue damage of a moment series at one tower section.
+    """Computes fatigue damage of a moment series at one gauge.
 
     Args:
         moment_series (np.ndarray): Bending moment time series [kN.m].
