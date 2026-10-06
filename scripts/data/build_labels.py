@@ -196,7 +196,7 @@ def main(_) -> None:
         damage.to_parquet(os.path.join(tower_dir, "damage.parquet"),
                           index=False)
         print(f"{tower}: {len(metadata)} simulations, {len(sections)} "
-              f"sections, {len(damage)} damage rows", flush=True)
+              f"gauges, {len(damage)} damage rows", flush=True)
 
 
 if __name__ == "__main__":
