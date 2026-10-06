@@ -255,7 +255,7 @@ Miner's rule):
 ```python
 from floatsense import load_tower
 tower = load_tower("data/FLOATSense", "opt2")
-true = tower.scored_moment(sim_id=1, gauge="tower_top")  # 400-1,000 s, 6,000 samples
+true = tower.scored_moment(sim_id=1, gauge="tower_top")  # 400-1,000 s, 6,001 samples
 tower.gauge_damage(true, "tower_top")       # = tower.damage().loc[1, 30]
 tower.gauge_damage(predicted, "tower_top")  # any reconstructed series
 ```
@@ -447,13 +447,11 @@ print(ci)
 
 ## Reproducibility
 
-- The reference damage in `damage.parquet` is computed on the even
-  6,000-sample window 400.0–999.9 s, as in the evaluation of the learned
-  models, and matches it to $10^{-6}$. The physics baseline scores its
-  own truth on the inclusive 400–1,000 s window (6,001 samples), as in
-  the paper; the two true damages differ by a median of $2 \times 10^{-4}$
-  (99th percentile about 1%, up to about 10% on a few low-damage
-  simulations).
+- The reference damage in `damage.parquet` is computed on the inclusive
+  400–1,000 s window (6,001 samples), the window of the evaluation of
+  every model, of the physics baseline and of FLOATBench;
+  `gauge_damage(scored_moment(...))` reproduces it exactly
+  (`tests/test_damage.py`).
 - The parked constant C1 is recomputed from `parked.parquet` and
   rounded to 0.1 MN s², as in the paper; the physics baseline reproduces
   the paper to $10^{-7}$.
