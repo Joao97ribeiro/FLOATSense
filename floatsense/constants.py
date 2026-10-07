@@ -11,11 +11,10 @@ training recipe is in the trainer and the configs.
 SAMPLING_FREQUENCY = 10.0  # [Hz] of the released series
 MIN_TIME = 400.0  # start of the scored window [s]
 MAX_TIME = 1000.0  # end of the scored window [s], inclusive (6,001 samples)
-# Input length of the length-sensitive models at evaluation (PatchTST,
-# TimesNet, U-Net): the length the paper checkpoints were scored at and a
-# multiple of their patch and pooling sizes; the 6,001-sample window is
-# predicted from the inputs at offsets 0 and 1, stitched
-# (see Trainer._predict_window).
+# Input length of every crop-trained model at evaluation: the length the
+# paper checkpoints were scored at (a multiple of the PatchTST and U-Net patch
+# and pooling sizes); the 6,001-sample window is predicted from the inputs at
+# offsets 0 and 1, stitched (see Trainer._predict_window).
 INPUT_LENGTH = 6000
 
 # --- Damage metric ---------------------------------------------------------

@@ -61,6 +61,17 @@ class Recorder(nn.Module):
         return inputs[:, :1]
 
 
+class VarianceRecorder(Recorder):
+    """Recorder with a zero log-variance channel (unit sigma)."""
+
+    predicts_variance = True
+
+    def forward(self, inputs: torch.Tensor,
+                condition: torch.Tensor) -> torch.Tensor:
+        mean = super().forward(inputs, condition)
+        return torch.cat([mean, torch.zeros_like(mean)], dim=1)
+
+
 def make_trainer(model_name: str,
                  model: nn.Module,
                  eval_length: int,
@@ -85,10 +96,9 @@ def predict(trainer: SequenceModelTrainer, dataset: WindowDataset):
 class PredictWindowTest(unittest.TestCase):
     """Which input lengths each kind of model sees at evaluation."""
 
-    def test_length_sensitive_models_see_input_length(self):
-        """A crop-trained length-sensitive model gets two 6,000-sample
-        inputs, either eval length stored in its checkpoint, and returns the
-        full window."""
+    def test_crop_trained_models_see_input_length(self):
+        """A crop-trained model gets two 6,000-sample inputs, either eval
+        length stored in its checkpoint, and returns the full window."""
         for eval_length in (INPUT_LENGTH, WINDOW):
             dataset = WindowDataset()
             trainer = make_trainer("transformer", Recorder(), eval_length)
@@ -101,14 +111,19 @@ class PredictWindowTest(unittest.TestCase):
             self.assertIsNone(dataset.window_length)
             self.assertEqual(dataset.window_offset, 0)
 
-    def test_other_crop_models_predict_directly(self):
-        """A crop-trained model that does not depend on the input length
-        (here the TCN) predicts the full window in one pass."""
-        for eval_length in (INPUT_LENGTH, WINDOW):
-            trainer = make_trainer("tcn", Recorder(), eval_length)
-            output = predict(trainer, WindowDataset())
-            self.assertEqual(trainer.model.lengths, [WINDOW])
-            self.assertEqual(output.shape, (WINDOW,))
+    def test_variance_head_is_sampled_once(self):
+        """A Prob-TCN style variance head is stitched before sampling: one
+        noise draw over the 6,001 samples, as from a direct prediction."""
+        dataset = WindowDataset()
+        trainer = make_trainer("prob_tcn", VarianceRecorder(), WINDOW)
+        torch.manual_seed(0)
+        output = predict(trainer, dataset)
+        self.assertEqual(trainer.model.lengths, [INPUT_LENGTH] * 2)
+        torch.manual_seed(0)
+        noise = torch.randn(WINDOW).numpy()
+        np.testing.assert_allclose(output,
+                                   dataset.inputs[0].numpy() + noise,
+                                   atol=1e-5)
 
     def test_length_fixed_models_keep_their_size(self):
         """A length-fixed model trained on the full window is predicted
