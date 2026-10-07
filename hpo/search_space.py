@@ -19,9 +19,7 @@ last epoch of each run. Phase 2 confirms the top-2 configurations of each
 (model, tower) over N_SEEDS seeds (winner = highest median over the seeds);
 phase 3 retrains the winner on the full training split and opens the test
 split once. The search has no enqueued published configuration; PUBLISHED
-below only records the fixed-budget values (all inside the grids) for the
-post-hoc guard that compares each winner with the fixed-budget validation
-score.
+below only records the fixed-budget values (all inside the grids).
 """
 
 # A parameter ceiling, so that "more capacity" cannot be bought indefinitely
@@ -122,9 +120,8 @@ SPACE = {
 LEARNED = tuple(SPACE)  # the 20 ranked entries
 PRETRAINED = ("chronos", "moment", "moment_ft", "timesfm", "timesfm_ft")
 
-# The fixed-budget (paper) optimizer values. Not enqueued in the search; used
-# only to check that every published value lies inside its grid and for the
-# post-hoc guard (winner vs fixed-budget validation score).
+# The fixed-budget (paper) optimizer values. Not enqueued in the search; kept
+# to check that every published value lies inside its grid.
 FIXED_RECIPE = dict(lr=1e-3, use_wd=False, schedule="constant")
 # The FULL published configuration per model (models.py defaults, README);
 # Mamba was published at lr 3e-4. Not enqueued (independent search).
@@ -207,11 +204,30 @@ MAX_FREE_RETRIES = 10  # preemptions and hardware faults (not counted)
 STALE_MINUTES = 15  # a unit whose heartbeat is older belongs to a dead worker
 DIVERGED_FALLBACK = -1.0  # score of a diverged trial before any completes
 
-# --- Decision rule (analyze.py) ----------------------------------------------
-TAU_AGREE = 0.50  # lower 95% bound of tau-b above: the ranking holds
-TAU_ARTIFACT = 0.35  # upper 95% bound below: the ranking is an artifact
-N_BOOT = 1000
-TOP_K = {3: 2, 5: 4}  # top-k overlap counted as consistent from this many
+# --- Leaderboard (analyze.py) -----------------------------------------------
+# The eight families of the paper (best model of each is reported).
+FAMILIES = {
+    "tcn": "convolutional",
+    "prob_tcn": "convolutional",
+    "unet": "convolutional",
+    "dlinear": "convolutional",
+    "lstm": "recurrent",
+    "transformer": "attention",
+    "itransformer": "attention",
+    "s4": "state-space",
+    "mamba": "state-space",
+    "spectral": "spectral",
+    "fits": "spectral",
+    "fno": "spectral",
+    "timesnet": "period-folding",
+    "chronos": "pretrained",
+    "moment": "pretrained",
+    "moment_ft": "pretrained",
+    "timesfm": "pretrained",
+    "timesfm_ft": "pretrained",
+    "hybrid": "physics-anchored",
+    "hybrid_tcn": "physics-anchored",
+}
 
 
 def suggest(trial, model):

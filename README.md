@@ -463,10 +463,10 @@ print(ci)
 ## Validation-tuned track
 
 The benchmark trains every model with one fixed recipe (Adam, learning
-rate 1e-3, 50 epochs). The validation-tuned track asks whether the
-ranking of the 20 learned models survives giving each of them the same
-tuning effort and a longer training. It uses only the validation split
-(`splits/val`) to choose, and opens the test split once, at the end.
+rate 1e-3, 50 epochs). The validation-tuned track is a second
+leaderboard: each of the 20 learned models gets the same tuning effort
+and a longer training. It uses only the validation split (`splits/val`)
+to choose, and opens the test split once, at the end.
 Every number of the protocol is in
 [`hpo/search_space.py`](./hpo/search_space.py).
 
@@ -490,14 +490,14 @@ Every number of the protocol is in
    on the full training split with several seeds and scored once on the
    test split, at the last epoch and at the median best validation epoch
    of the confirmation, into a sealed directory.
-4. **Decision rule** ([`hpo/analyze.py`](./hpo/analyze.py)): Kendall's
-   tau-b between the fixed-recipe and the tuned rankings, at the top
-   gauge and for the mean of the 11 gauges, with a bootstrap over
-   operating points and seeds. A lower bound above the agreement
-   threshold says the ranking holds; an upper bound below the artifact
-   threshold says it does not. Top-3 and top-5 overlaps and a guard
-   (a winner that validates below the fixed recipe is flagged) are
-   reported with it.
+4. **Leaderboard** ([`hpo/analyze.py`](./hpo/analyze.py)): the sealed
+   runs are scored by the benchmark scorer (`scripts/benchmark/run.py`);
+   per model, every metric at the base, z/H 0.78, the top and the mean
+   of the 11 gauges (median over the seeds per tower, then mean over the
+   towers), overall and per regime cell, the top three per criterion and
+   the best model of each family. The selected configuration of each
+   model and tower and the best validation score against the number of
+   trials of each study are written next to it.
 
 The trainer options of the track are plain flags of
 `scripts/train/run.py`, off by default so the benchmark runs are
@@ -516,7 +516,7 @@ python hpo/confirm.py --model=tcn --tower=opt2 --freeze   # then without --freez
 python hpo/confirm.py --model=tcn --tower=opt2 --summarize
 python hpo/final.py --model=tcn --tower=opt2              # every model and tower
 python hpo/final.py --open_test                           # once, at the end
-python hpo/analyze.py --paper_root=outputs/within --tuned_root=outputs/hpo/sealed/last
+python hpo/analyze.py --root=outputs/hpo --dataset_dir=data/FLOATSense
 ```
 
 A crashed run (out of memory included) is resumed from its checkpoint a

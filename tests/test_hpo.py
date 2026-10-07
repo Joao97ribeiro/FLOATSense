@@ -18,6 +18,7 @@ import unittest
 from unittest import mock
 
 import numpy as np
+import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from floatsense import constants as C
@@ -311,39 +312,51 @@ class DriversTest(unittest.TestCase):
 
 
 class AnalyzeTest(unittest.TestCase):
-    """The decision rule on synthetic rankings."""
+    """The leaderboard of the track on synthetic sealed runs."""
 
-    def test_kendall_b_with_ties(self):
-        """Matches scipy's tau-b, ties included."""
-        from scipy import stats  # pylint: disable=import-outside-toplevel
-        rng = np.random.default_rng(0)
-        for _ in range(20):
-            x = rng.integers(0, 6, 20).astype(float)
-            y = x + rng.integers(-3, 4, 20)
-            self.assertAlmostEqual(
-                analyze.kendall_b(x[None], y[None])[0],
-                stats.kendalltau(x, y).statistic)
+    def test_families(self):
+        """Every learned model has one of the eight families."""
+        self.assertEqual(set(S.FAMILIES), set(S.LEARNED))
+        self.assertEqual(len(set(S.FAMILIES.values())), 8)
 
-    def test_verdict(self):
-        """Thresholds of the rule."""
-        self.assertEqual(analyze.verdict(S.TAU_AGREE + 0.01, 0.9), "holds")
-        self.assertEqual(analyze.verdict(0.0, S.TAU_ARTIFACT - 0.01),
-                         "artifact")
-        self.assertEqual(analyze.verdict(0.3, 0.6), "inconclusive")
-
-    def test_synthetic_rankings(self):
-        """An agreeing tuned ranking holds; a permuted one is an artifact."""
+    def test_synthetic_leaderboard(self):
+        """Medians over seeds, means over towers, rankings and configs."""
         with tempfile.TemporaryDirectory() as out:
-            results = analyze.main(
-                ["--dry_run", f"--out={out}", "--n_boot=200"])
-        for metric in analyze.METRICS:
-            agree = results["agree"]["metrics"][metric]["all"]
-            permuted = results["permuted"]["metrics"][metric]["all"]
-            self.assertEqual(agree["verdict"], "holds")
-            self.assertEqual(permuted["verdict"], "artifact")
-            self.assertTrue(agree["top3_consistent"])
-            self.assertLessEqual(agree["low"], agree["tau_b"])
-            self.assertEqual(agree["n"], 20)
+            boards = analyze.main(
+                ["--dry_run", f"--out={out}", "--num_resamples=0"])
+            board = boards["last"]
+            self.assertEqual(set(boards), set(analyze.VARIANTS))
+            self.assertEqual(set(board["model"]),
+                             set(S.LEARNED) | {analyze.FLOOR})
+            for column in ("r2_log_damage_base", "r2_log_damage_z078",
+                           "r2_log_damage_top", "r2_log_damage_mean11",
+                           "fraction_within_factor2_mean11",
+                           "within_condition_correlation_top"):
+                self.assertIn(column, board.columns)
+            # The synthetic noise grows along LEARNED: tcn is the best.
+            self.assertEqual(board.iloc[0]["model"], S.LEARNED[0])
+            folder = os.path.join(out, "last")
+            towers = pd.read_csv(os.path.join(folder, "per_tower.csv"))
+            scores = pd.read_csv(os.path.join(folder, "scores.csv"))
+            subset = scores[(scores["model"] == "fits") &
+                            (scores["gauge"] == "tower_top") &
+                            (scores["group"] == "all")]
+            medians = subset.groupby("tower")["r2_log_damage"].median()
+            expected = towers[(towers["model"] == "fits") &
+                              (towers["position"] == "top")].set_index(
+                                  "tower")["r2_log_damage"]
+            np.testing.assert_allclose(medians.sort_index(),
+                                       expected.sort_index())
+            row = board.set_index("model").loc["fits"]
+            self.assertAlmostEqual(row["r2_log_damage_top"], medians.mean())
+            top3 = pd.read_csv(os.path.join(folder, "top3.csv"))
+            self.assertEqual(len(top3), 3 * len(analyze.CRITERIA))
+            families = pd.read_csv(os.path.join(folder, "families.csv"))
+            self.assertEqual(len(families), 8 * len(analyze.CRITERIA))
+            self.assertTrue(os.path.exists(os.path.join(folder,
+                                                        "by_group.csv")))
+            configs = pd.read_csv(os.path.join(out, "configs.csv"))
+            self.assertEqual(len(configs), 20 * 3)
 
 
 if __name__ == "__main__":
