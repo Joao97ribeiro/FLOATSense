@@ -43,3 +43,8 @@ BLADE_MASS = 82427.5  # one blade [kg]
 TWR2SHFT = 4.142540706280534  # tower top to shaft [m]
 OVERHANG = -14.07711591388923  # [m]
 SHFT_TILT = -6.0  # shaft tilt [deg]
+
+# --- Training runs (validation-tuned track) --------------------------------
+CHECKPOINT_SECONDS = 300.0  # resume state at least this often [s wall time]
+EXIT_DIVERGED = 3  # exit code: non-finite loss or validation prediction
+EXIT_TOO_LARGE = 4  # exit code: more trainable parameters than --max_params_m

@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 # pylint: disable=too-many-arguments
 # pylint: disable=too-many-locals
 # pylint: disable=too-many-positional-arguments
@@ -16,8 +17,11 @@ columns as the physics baseline.
 """
 
 import json
+import math
 import multiprocessing
 import os
+import random
+import time
 
 # cuBLAS needs this before its first call to run deterministically.
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
@@ -29,11 +33,14 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from .constants import CHECKPOINT_SECONDS
 from .constants import INPUT_LENGTH
 from .constants import LOWPASS_HZ
 from .constants import LOWPASS_ORDER
 from .constants import MAX_TIME
 from .constants import MIN_TIME
+from .constants import SN_INTERCEPTS_LOG10
+from .constants import SN_SLOPES
 from .data import SequenceDataset
 from .data import compute_norm_stats
 from .fatigue import damage_filter
@@ -41,6 +48,7 @@ from .metrics import summarize_damage
 from .models import ACCEL_FIRST_MODELS
 from .models import LENGTH_FIXED_MODELS
 from .models import build_model
+from .models import count_parameters
 from .release import ReleasedTower
 from .release import TowerGauges
 
@@ -48,6 +56,67 @@ from .release import TowerGauges
 def _damage_job(moment, gauge, tower: TowerGauges, intercepts, slopes) -> float:
     """Damage of one series at one gauge (picklable for the pool)."""
     return tower.damage(moment, gauge, intercepts, slopes)
+
+
+class DivergedError(RuntimeError):
+    """The training loss or a validation prediction is not finite."""
+
+
+class ModelTooLargeError(RuntimeError):
+    """The model has more trainable parameters than allowed."""
+
+
+def lr_factor(step: int, total_steps: int, warmup_steps: int,
+              schedule: str) -> float:
+    """Learning-rate multiplier of an optimizer step.
+
+    A linear warm-up over `warmup_steps` (from 1/warmup_steps to 1), then
+    constant or a cosine decay to zero at `total_steps`.
+
+    Args:
+        step (int): Optimizer step, from 0.
+        total_steps (int): Steps of the whole run.
+        warmup_steps (int): Steps of the linear warm-up (0 = none).
+        schedule (str): 'constant' or 'cosine'.
+
+    Returns:
+        float: The multiplier of the base learning rate.
+    """
+    if step < warmup_steps:
+        return (step + 1) / warmup_steps
+    if schedule == "constant":
+        return 1.0
+    progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+    return 0.5 * (1.0 + math.cos(math.pi * min(1.0, progress)))
+
+
+def _rng_state() -> Dict:
+    """Every random stream a run draws from."""
+    return {
+        "torch": torch.get_rng_state(),
+        "cuda": (torch.cuda.get_rng_state_all()
+                 if torch.cuda.is_available() else None),
+        "numpy": np.random.get_state(),
+        "python": random.getstate(),
+    }
+
+
+def _set_rng_state(state: Dict) -> None:
+    """Restores the streams saved by `_rng_state`."""
+    torch.set_rng_state(state["torch"])
+    if state["cuda"] is not None and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(state["cuda"])
+    np.random.set_state(state["numpy"])
+    random.setstate(state["python"])
+
+
+def _atomic_save(obj, path: str) -> None:
+    """torch.save through a temporary file and a rename (never half
+    written, even if the job is killed)."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = f"{path}.tmp.{os.getpid()}"
+    torch.save(obj, tmp)
+    os.replace(tmp, path)
 
 
 class SequenceModelTrainer:
@@ -87,7 +156,16 @@ class SequenceModelTrainer:
                  height_factors: Optional[List[float]] = None,
                  seed: int = 0,
                  deterministic: bool = True,
-                 device: Optional[str] = None):
+                 device: Optional[str] = None,
+                 weight_decay: Optional[float] = None,
+                 schedule: str = "constant",
+                 warmup_epochs: int = 0,
+                 grad_clip: float = 0.0,
+                 model_kwargs: Optional[Dict] = None,
+                 val_score: str = "loss",
+                 resume: bool = False,
+                 max_params_m: float = 0.0,
+                 save_epochs: Optional[List[int]] = None):
         """Initializes the trainer.
 
         Args:
@@ -138,6 +216,23 @@ class SequenceModelTrainer:
               that a rerun of the same seed on the same GPU type is
               identical (the paper runs used False).
             device (str, optional): Torch device (default: cuda if available).
+            weight_decay (float, optional): AdamW weight decay; None keeps
+              Adam (the published recipe).
+            schedule (str): 'constant' or 'cosine' (decay to zero at the
+              last step of the run).
+            warmup_epochs (int): Linear learning-rate warm-up (0 = none).
+            grad_clip (float): Maximum gradient norm (0 = no clipping).
+            model_kwargs (dict, optional): Architecture knobs passed to
+              `build_model` (a 'condition_bound' entry sets the bound).
+            val_score (str): Validation score, 'loss' (squared error on
+              normalized crops) or 'damage' (R^2 of log10 damage over the
+              11 gauges, the benchmark metric).
+            resume (bool): Keep a resume state (at every validation and
+              every CHECKPOINT_SECONDS) and continue from it if present.
+            max_params_m (float): Refuse a model with more trainable
+              parameters, in millions (0 = no limit).
+            save_epochs (List[int], optional): Epochs whose weights are also
+              kept as <model>_<direction>_epoch<e>.pt.
         """
         self.release = release
         self.output_dir = output_dir
@@ -165,7 +260,6 @@ class SequenceModelTrainer:
         self.damage_freq_exponent = damage_freq_exponent
         self.init_checkpoint = init_checkpoint
         self.calibration_path = calibration_path
-        self.condition_bound = condition_bound
         self.target_channel = target_channel
         self.damage_gauge = damage_gauge
         self.input_channels = input_channels
@@ -174,9 +268,26 @@ class SequenceModelTrainer:
         self.seed = seed
         self.deterministic = deterministic
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.weight_decay = weight_decay
+        self.schedule = schedule
+        self.warmup_epochs = warmup_epochs
+        self.grad_clip = grad_clip
+        self.model_kwargs = dict(model_kwargs or {})
+        # The bound is a constructor argument of its own (hybrids).
+        self.condition_bound = self.model_kwargs.pop("condition_bound",
+                                                     condition_bound)
+        if val_score not in ("loss", "damage"):
+            raise ValueError(f"Unknown val_score '{val_score}'.")
+        if schedule not in ("constant", "cosine"):
+            raise ValueError(f"Unknown schedule '{schedule}'.")
+        self.val_score = val_score
+        self.resume = resume
+        self.max_params_m = max_params_m
+        self.save_epochs = set(save_epochs or [])
         self.model = None
         self.norm_stats = None
         self._eval_length = None
+        self._val_true = None
 
     def _make_dataset(self,
                       sim_ids: List[int],
@@ -266,13 +377,14 @@ class SequenceModelTrainer:
 
         Args:
             train_ids (List[int]): Training simulation IDs.
-            val_ids (List[int], optional): Held-out simulations on which the
-              training loss (squared error on normalized crops) is also
-              reported every few epochs; it never influences training.
+            val_ids (List[int], optional): Held-out simulations scored every
+              few epochs (`val_score`); the score never influences training
+              except through early stopping.
 
         Returns:
             dict: Per-epoch mean training loss under 'train_loss' and, with
-            `val_ids`, the validation loss under 'val_loss' (epoch, value).
+            `val_ids`, the validation loss under 'val_loss' (epoch, value)
+            or the damage scores under 'val_r2' (one dict per validation).
         """
         if self.deterministic:
             # Same seed, same GPU type -> same weights: deterministic cuDNN
@@ -296,6 +408,12 @@ class SequenceModelTrainer:
             raise ValueError(f"{self.model_name} reads the first input channel "
                              f"as the acceleration: put {probe.accel_channel} "
                              "first in --input_channels.")
+        resume_state = self._load_resume()
+        if resume_state is not None and resume_state.get("completed"):
+            # Finished before: the final checkpoint is the result.
+            self.load_checkpoint()
+            self._print_val_history(resume_state["history"])
+            return resume_state["history"]
         stat_channels = list(
             dict.fromkeys([
                 c.split(":")[1] if c.startswith("stat:") else c
@@ -310,6 +428,10 @@ class SequenceModelTrainer:
                                     weights_only=False)
             self._check_setup(init_state, probe)
             self.norm_stats = init_state["norm_stats"]
+            self.model_kwargs = (self.model_kwargs or
+                                 init_state.get("model_kwargs", {}))
+        elif resume_state is not None:
+            self.norm_stats = resume_state["norm_stats"]
         else:
             self.norm_stats = compute_norm_stats(self.release, train_ids,
                                                  stat_channels, self.min_time,
@@ -330,17 +452,12 @@ class SequenceModelTrainer:
                             drop_last=len(dataset) > self.batch_size)
 
         num_samples = self.crop_length or self._eval_length
-        self.model = build_model(self.model_name,
-                                 num_samples=num_samples,
-                                 input_channels=len(dataset.input_channels),
-                                 condition_dim=len(dataset.condition_channels) +
-                                 int(self.height_targets),
-                                 condition_bound=self.condition_bound).to(
-                                     self.device)
+        self.model = self._build_model(num_samples, len(dataset.input_channels),
+                                       len(dataset.condition_channels))
         if init_state is not None:
             self.model.load_state_dict(init_state["state_dict"])
-        optimizer = torch.optim.Adam(self.model.parameters(),
-                                     lr=self.learning_rate)
+        optimizer = self._optimizer()
+        scheduler = self._scheduler(optimizer, len(loader))
 
         freqs = torch.fft.rfftfreq(num_samples,
                                    d=1.0 / dataset.sampling_frequency).to(
@@ -351,17 +468,42 @@ class SequenceModelTrainer:
             raise ValueError("early_stopping_patience needs a validation "
                              "split (val_split).")
         history = {"train_loss": []}
-        val_loader = None
-        if val_ids:
+        val_loader, val_dataset = None, None
+        if val_ids and self.val_score == "damage":
+            history["val_r2"] = []
+            val_dataset = self._damage_dataset(val_ids)
+        elif val_ids:
             history["val_loss"] = []
             val_loader = DataLoader(self._make_dataset(
                 val_ids, self.crop_length, window_length=self._input_length()),
                                     batch_size=self.batch_size,
                                     shuffle=False,
                                     num_workers=0)
+        maximize = self.val_score == "damage"
         val_interval = self.val_every or max(1, self.num_epochs // 10)
-        best_val, best_epoch, best_state = float("inf"), 0, None
-        for epoch in range(self.num_epochs):
+        best_val = -float("inf") if maximize else float("inf")
+        best_epoch, best_state, start_epoch = 0, None, 0
+        if resume_state is not None:
+            if resume_state["model_kwargs"] != self.model_kwargs:
+                raise ValueError(
+                    f"Resume state of {resume_state['model_kwargs']}"
+                    f", run configured with {self.model_kwargs}.")
+            self.model.load_state_dict(resume_state["state_dict"])
+            optimizer.load_state_dict(resume_state["optimizer"])
+            if scheduler is not None:
+                scheduler.load_state_dict(resume_state["scheduler"])
+            history = resume_state["history"]
+            best_val, best_epoch = resume_state["best"]
+            best_state = resume_state["best_state"]
+            start_epoch = resume_state["epoch"]
+            _set_rng_state(resume_state["rng"])
+            print(
+                f"[{self.model_name}/{self.direction}] resumed at epoch "
+                f"{start_epoch}",
+                flush=True)
+            self._print_val_history(history)
+        last_save = time.monotonic()
+        for epoch in range(start_epoch, self.num_epochs):
             self.model.train()
             losses = []
             for batch in loader:
@@ -388,48 +530,319 @@ class SequenceModelTrainer:
                                                 target[:, 0, :], freq_weights))
                 optimizer.zero_grad()
                 loss.backward()
+                if self.grad_clip:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(),
+                                                   self.grad_clip)
                 optimizer.step()
+                if scheduler is not None:
+                    scheduler.step()
                 losses.append(float(loss.detach()))
+                if not math.isfinite(losses[-1]):
+                    raise DivergedError(f"Training loss {losses[-1]} at "
+                                        f"epoch {epoch + 1}.")
             history["train_loss"].append(float(np.mean(losses)))
             log_now = (epoch + 1) % max(1, self.num_epochs // 10) == 0
-            val_now = (val_loader is not None and
+            val_now = ((val_loader is not None or val_dataset is not None) and
                        (epoch + 1) % val_interval == 0)
-            if val_now:
+            if val_now and val_dataset is not None:
+                scores = self._damage_scores(val_dataset)
+                history["val_r2"].append({"epoch": epoch + 1, **scores})
+                self._print_val(history["val_r2"][-1])
+                val_loss = scores["r2_mean"]
+            elif val_now:
                 val_loss = self._validation_loss(val_loader)
                 history["val_loss"].append((epoch + 1, val_loss))
-                if val_loss < best_val:
-                    best_val, best_epoch = val_loss, epoch + 1
-                    if self.early_stopping_patience:
-                        best_state = {
-                            k: v.detach().clone().cpu()
-                            for k, v in self.model.state_dict().items()
-                        }
+            if val_now and (val_loss > best_val
+                            if maximize else val_loss < best_val):
+                best_val, best_epoch = val_loss, epoch + 1
+                if self.early_stopping_patience:
+                    best_state = {
+                        k: v.detach().clone().cpu()
+                        for k, v in self.model.state_dict().items()
+                    }
             if log_now or val_now:
                 line = (f"[{self.model_name}/{self.direction}] "
                         f"epoch {epoch + 1}/{self.num_epochs} "
                         f"loss {history['train_loss'][-1]:.5f}")
                 if val_now:
-                    line += f" val_loss {val_loss:.5f}"
+                    line += (f" val_r2 {val_loss:.5f}"
+                             if maximize else f" val_loss {val_loss:.5f}")
                 print(line)
+            if epoch + 1 in self.save_epochs:
+                self.save_checkpoint(self.checkpoint_path(epoch + 1))
+            if self.resume and (val_now or time.monotonic() - last_save
+                                >= CHECKPOINT_SECONDS):
+                self._save_resume(epoch + 1, optimizer, scheduler, history,
+                                  (best_val, best_epoch), best_state)
+                last_save = time.monotonic()
             if (self.early_stopping_patience and best_epoch and
                     epoch + 1 - best_epoch
                     >= self.early_stopping_patience * val_interval):
                 print(f"[{self.model_name}/{self.direction}] early stop at "
                       f"epoch {epoch + 1}, best {best_epoch} "
-                      f"(val_loss {best_val:.5f})")
+                      f"({'val_r2' if maximize else 'val_loss'} "
+                      f"{best_val:.5f})")
                 break
 
-        if self.early_stopping_patience and best_state is not None:
+        restore = self.early_stopping_patience and best_state is not None
+        if restore:
             self.model.load_state_dict(best_state)
+        if restore or (maximize and best_epoch):
             history["best_epoch"] = best_epoch
-            history["best_val_loss"] = best_val
+            history["best_val_r2" if maximize else "best_val_loss"] = best_val
         self.save_checkpoint()
         os.makedirs(self.output_dir, exist_ok=True)
         name = f"history_{self.model_name}_{self.direction}.json"
         with open(os.path.join(self.output_dir, name), "w",
                   encoding="utf-8") as file:
             json.dump(history, file)
+        if self.resume:
+            # The weights are in the final checkpoint; keep only the record.
+            _atomic_save({
+                "completed": True,
+                "history": history
+            }, self.resume_path())
         return history
+
+    def _build_model(self, num_samples: int, num_inputs: int,
+                     num_conditions: int) -> torch.nn.Module:
+        """Builds the model, prints its size and enforces max_params_m."""
+        model = build_model(self.model_name,
+                            num_samples=num_samples,
+                            input_channels=num_inputs,
+                            condition_dim=num_conditions +
+                            int(self.height_targets),
+                            condition_bound=self.condition_bound,
+                            **self.model_kwargs).to(self.device)
+        trainable = count_parameters(model)
+        print(
+            f"PARAMS trainable={trainable} "
+            f"total={count_parameters(model, trainable=False)}",
+            flush=True)
+        if self.max_params_m and trainable > self.max_params_m * 1e6:
+            raise ModelTooLargeError(
+                f"{self.model_name} {self.model_kwargs}: {trainable / 1e6:.2f}"
+                f" M trainable parameters > {self.max_params_m} M.")
+        return model
+
+    def _optimizer(self) -> torch.optim.Optimizer:
+        """Adam (published) or, with a weight decay, AdamW."""
+        if self.weight_decay is None:
+            return torch.optim.Adam(self.model.parameters(),
+                                    lr=self.learning_rate)
+        return torch.optim.AdamW(self.model.parameters(),
+                                 lr=self.learning_rate,
+                                 weight_decay=self.weight_decay)
+
+    def _scheduler(self, optimizer: torch.optim.Optimizer,
+                   steps_per_epoch: int):
+        """Per-step learning-rate schedule (None: constant, no warm-up)."""
+        if self.schedule == "constant" and not self.warmup_epochs:
+            return None
+        total = self.num_epochs * steps_per_epoch
+        warmup = self.warmup_epochs * steps_per_epoch
+        return torch.optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lambda step: lr_factor(step, total, warmup, self.schedule))
+
+    def resume_path(self) -> str:
+        """Path of the resume state of this model/direction."""
+        return os.path.join(self.output_dir,
+                            f"{self.model_name}_{self.direction}_resume.pt")
+
+    def _load_resume(self) -> Optional[Dict]:
+        """The resume state, if `resume` is on and one was saved."""
+        if not self.resume or not os.path.exists(self.resume_path()):
+            return None
+        return torch.load(self.resume_path(),
+                          map_location=self.device,
+                          weights_only=False)
+
+    def _save_resume(self, epoch: int, optimizer, scheduler, history: Dict,
+                     best: tuple, best_state: Optional[Dict]) -> None:
+        """Everything needed to continue after `epoch` as if never stopped."""
+        _atomic_save(
+            {
+                "epoch": epoch,
+                "state_dict": self.model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "scheduler":
+                    (scheduler.state_dict() if scheduler is not None else None),
+                "history": history,
+                "best": best,
+                "best_state": best_state,
+                "norm_stats": self.norm_stats,
+                "model_kwargs": self.model_kwargs,
+                "rng": _rng_state(),
+            }, self.resume_path())
+
+    @staticmethod
+    def _print_val(entry: Dict) -> None:
+        """One parsable validation line (read by the hpo drivers)."""
+        gauges = ",".join(f"{v:.6f}" for v in entry["r2_gauges"])
+        print(
+            f"VAL epoch={entry['epoch']} r2_mean={entry['r2_mean']:.6f} "
+            f"r2_top={entry['r2_top']:.6f} r2_base={entry['r2_base']:.6f} "
+            f"r2_gauges={gauges}",
+            flush=True)
+
+    def _print_val_history(self, history: Dict) -> None:
+        """Repeats the VAL lines of a resumed run."""
+        for entry in history.get("val_r2", []):
+            self._print_val(entry)
+
+    def _damage_dataset(self, sim_ids: List[int]) -> SequenceDataset:
+        """Full-window dataset of the damage validation; each simulation is
+        read once for its 11 gauges and two inputs."""
+        if not self.height_targets:
+            raise ValueError("val_score='damage' scores the 11 gauges of the "
+                             "height task (height_targets).")
+        dataset = self._make_dataset(sim_ids, None)
+        load, cache = dataset.load_window, {}
+
+        def load_once(sim_id: int) -> np.ndarray:
+            if sim_id not in cache:
+                cache.clear()
+                cache[sim_id] = load(sim_id)
+            return cache[sim_id]
+
+        dataset.load_window = load_once
+        return dataset
+
+    def _metric_is_released(self) -> bool:
+        """Whether damage.parquet holds the true damage of this metric."""
+        return (self.apply_lowpass and self.lowpass_hz == LOWPASS_HZ and
+                self.lowpass_order == LOWPASS_ORDER and
+                self.min_time == MIN_TIME and self.max_time == MAX_TIME and
+                list(self.sn_intercepts_log10 or
+                     SN_INTERCEPTS_LOG10) == list(SN_INTERCEPTS_LOG10) and
+                list(self.sn_slopes or SN_SLOPES) == list(SN_SLOPES))
+
+    def _predict_batch(self, items: List[Dict[str, torch.Tensor]],
+                       sample: bool) -> np.ndarray:
+        """`_predict` of several items in one forward pass: (batch, length),
+        or (batch, 2, length) for an unsampled variance head."""
+        inputs = torch.stack([i["inputs"] for i in items]).to(self.device)
+        condition = torch.stack([i["condition"] for i in items]).to(self.device)
+        if getattr(self.model, "needs_physics_gain", False):
+            gain = torch.stack([i["physics_gain"] for i in items])
+            return self.model(inputs, condition,
+                              gain.to(self.device))[:, 0].cpu().numpy()
+        output = self.model(inputs, condition)
+        if getattr(self.model, "predicts_variance", False):
+            if sample:
+                return np.stack([self._sample(o) for o in output])
+            return output.cpu().numpy()
+        return output[:, 0].cpu().numpy()
+
+    def _predict_gauges(self, dataset: SequenceDataset, index: int,
+                        gauges: List[int]) -> np.ndarray:
+        """`_predict_window` of the gauges of one simulation, batched.
+
+        Returns:
+            np.ndarray: (gauges, window) normalized predictions.
+        """
+
+        def items(length=None, offset=0):
+            dataset.window_length, dataset.window_offset = length, offset
+            out = []
+            for gauge in gauges:
+                dataset.section = gauge
+                out.append(dataset[index])
+            return out
+
+        length = INPUT_LENGTH if self.crop_length else self._eval_length
+        window = dataset.stop_index - dataset.start_index
+        extra = window - length
+        try:
+            if extra <= 0:
+                return self._predict_batch(items(), sample=True)
+            first = self._predict_batch(items(length, 0), sample=False)
+            last = self._predict_batch(items(length, extra), sample=False)
+        finally:
+            dataset.window_length, dataset.window_offset = None, 0
+        # As _predict_window: the mean channel of the second prediction is
+        # shifted onto the first over the overlap; log-variance as it is.
+        if first.ndim == 2:
+            first, last = first[:, None], last[:, None]
+        shift = np.mean(first[:, 0, extra:] - last[:, 0, :-extra], axis=-1)
+        tail = last[:, :, -extra:].copy()
+        tail[:, 0] += shift[:, None]
+        stitched = np.concatenate([first, tail], axis=-1)
+        if stitched.shape[1] == 1:
+            return stitched[:, 0]
+        return np.stack([
+            self._sample(torch.from_numpy(s).to(self.device)) for s in stitched
+        ])
+
+    def _damage_scores(self, dataset: SequenceDataset) -> Dict:
+        """R^2 of log10 damage at each gauge over the dataset simulations.
+
+        The metric of `evaluate` (same filter, window, stitching and S-N
+        curve), with the forward passes batched over the 11 gauges, the
+        true damage read once from damage.parquet and no file written. The
+        random streams and the train mode are restored, so validating does
+        not change the training run.
+
+        Returns:
+            dict: r2_gauges (base to top), r2_mean, r2_top and r2_base.
+        """
+        rng = _rng_state()
+        torch.manual_seed(self.seed)  # fixed noise of a variance head
+        self.model.eval()
+        tower = dataset.release.geometry
+        gauges = list(range(len(tower.channels)))
+        sn_args = (tower, self.sn_intercepts_log10, self.sn_slopes)
+        jobs = []
+        try:
+            with torch.no_grad():
+                for index, _ in enumerate(dataset.sim_ids):
+                    predictions = self._predict_gauges(dataset, index, gauges)
+                    if not np.all(np.isfinite(predictions)):
+                        raise DivergedError("Non-finite validation prediction.")
+                    for gauge, prediction in zip(gauges, predictions):
+                        dataset.moment_channel = dataset.height_channels[gauge]
+                        jobs.append((damage_filter(
+                            dataset.denormalize_target(prediction),
+                            dataset.sampling_frequency, self.apply_lowpass,
+                            self.lowpass_hz, self.lowpass_order), gauge))
+                        if self._val_true is None and \
+                                not self._metric_is_released():
+                            dataset.section = gauge
+                            true = dataset.denormalize_target(
+                                dataset[index]["target"][0].numpy())
+                            jobs.append(
+                                (damage_filter(true, dataset.sampling_frequency,
+                                               self.apply_lowpass,
+                                               self.lowpass_hz,
+                                               self.lowpass_order), gauge))
+        finally:
+            dataset.section = None
+            _set_rng_state(rng)
+            self.model.train()
+        with multiprocessing.Pool(min(8, os.cpu_count() or 1)) as pool:
+            damages = np.array(
+                pool.starmap(_damage_job, [(m, g, *sn_args) for m, g in jobs],
+                             chunksize=64))
+        if self._val_true is None:
+            if self._metric_is_released():
+                table = dataset.release.damage()
+                self._val_true = table.loc[dataset.sim_ids,
+                                           tower.section_ids].to_numpy(float)
+            else:
+                pairs = np.reshape(damages, (len(dataset), len(gauges), 2))
+                damages, self._val_true = pairs[..., 0], pairs[..., 1]
+        rec = np.reshape(damages, (len(dataset), len(gauges)))
+        r2 = [
+            summarize_damage(self._val_true[:, g], rec[:, g])["r2_log_damage"]
+            for g in gauges
+        ]
+        return {
+            "r2_gauges": r2,
+            "r2_mean": float(np.mean(r2)),
+            "r2_top": r2[-1],
+            "r2_base": r2[0],
+        }
 
     def _validation_loss(self, loader: DataLoader) -> float:
         """Mean squared error on normalized crops of the validation sims.
@@ -461,15 +874,16 @@ class SequenceModelTrainer:
         self.model.train()
         return total / max(count, 1)
 
-    def checkpoint_path(self) -> str:
-        """Returns the checkpoint path for this model/direction."""
+    def checkpoint_path(self, epoch: Optional[int] = None) -> str:
+        """Returns the checkpoint path for this model/direction (with
+        `epoch`, the weights kept at that epoch by `save_epochs`)."""
+        suffix = f"_epoch{epoch}" if epoch else ""
         return os.path.join(self.output_dir,
-                            f"{self.model_name}_{self.direction}.pt")
+                            f"{self.model_name}_{self.direction}{suffix}.pt")
 
-    def save_checkpoint(self) -> None:
+    def save_checkpoint(self, path: Optional[str] = None) -> None:
         """Saves model weights, normalization stats and settings."""
-        os.makedirs(self.output_dir, exist_ok=True)
-        torch.save(
+        _atomic_save(
             {
                 "state_dict": self.model.state_dict(),
                 "norm_stats": self.norm_stats,
@@ -479,9 +893,10 @@ class SequenceModelTrainer:
                 "crop_length": self.crop_length,
                 "loss_name": self.loss_name,
                 "condition_bound": self.condition_bound,
+                "model_kwargs": self.model_kwargs,
                 "seed": self.seed,
                 "setup": self._setup(self._make_dataset([], None)),
-            }, self.checkpoint_path())
+            }, path or self.checkpoint_path())
 
     def _setup(self, probe: SequenceDataset) -> Dict:
         """Channel setup a checkpoint was trained with."""
@@ -508,9 +923,11 @@ class SequenceModelTrainer:
             raise ValueError(f"Checkpoint trained with {saved}, "
                              f"run configured with {current}.")
 
-    def load_checkpoint(self) -> None:
-        """Loads a previously trained checkpoint."""
-        checkpoint = torch.load(self.checkpoint_path(),
+    def load_checkpoint(self, path: Optional[str] = None) -> None:
+        """Loads a previously trained checkpoint (by default the final one
+        of this model/direction); the architecture knobs it was trained with
+        are rebuilt."""
+        checkpoint = torch.load(path or self.checkpoint_path(),
                                 map_location=self.device,
                                 weights_only=False)
         self.norm_stats = checkpoint["norm_stats"]
@@ -518,13 +935,15 @@ class SequenceModelTrainer:
         probe = self._make_dataset([], None)
         self._check_setup(checkpoint, probe)
         num_samples = checkpoint["crop_length"] or self._eval_length
+        self.model_kwargs = checkpoint.get("model_kwargs", {})
         self.model = build_model(self.model_name,
                                  num_samples=num_samples,
                                  input_channels=len(probe.input_channels),
                                  condition_dim=len(probe.condition_channels) +
                                  int(self.height_targets),
                                  condition_bound=checkpoint.get(
-                                     "condition_bound", 0.5)).to(self.device)
+                                     "condition_bound", 0.5),
+                                 **self.model_kwargs).to(self.device)
         self.model.load_state_dict(checkpoint["state_dict"])
 
     @staticmethod
