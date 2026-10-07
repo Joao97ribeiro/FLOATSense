@@ -11,6 +11,10 @@ training recipe is in the trainer and the configs.
 SAMPLING_FREQUENCY = 10.0  # [Hz] of the released series
 MIN_TIME = 400.0  # start of the scored window [s]
 MAX_TIME = 1000.0  # end of the scored window [s], inclusive (6,001 samples)
+# Samples per model input at evaluation: the scored window is predicted from
+# the inputs at offsets 0 and 1, stitched (a multiple of 16 and of the
+# periods 1 to 6, as the training crops; see Trainer._predict_window).
+INPUT_LENGTH = 6000
 
 # --- Damage metric ---------------------------------------------------------
 LOWPASS_HZ = 3.0  # zero-phase Butterworth cutoff on true and predicted [Hz]

@@ -3,6 +3,9 @@
 # pylint: disable=too-many-positional-arguments
 # pylint: disable=too-many-instance-attributes
 # pylint: disable=not-callable
+# pylint: disable=wrong-import-position
+# pylint: disable=too-many-branches
+# pylint: disable=too-many-statements
 """Training and damage-based evaluation of moment reconstruction models.
 
 Trains a sequence model on the released time series of a train split and
@@ -26,6 +29,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from .constants import INPUT_LENGTH
 from .constants import LOWPASS_HZ
 from .constants import LOWPASS_ORDER
 from .constants import MAX_TIME
@@ -204,11 +208,14 @@ class SequenceModelTrainer:
                         item: Dict[str, torch.Tensor]) -> np.ndarray:
         """Normalized prediction over the full scored window.
 
-        Models trained on crops, and length-fixed models trained on the full
-        window, predict it directly. A length-fixed checkpoint trained on
-        fewer samples (`_eval_length` = 6,000) predicts the
-        first and the last 6,000 samples; the last samples of the second
-        prediction, aligned on the overlap, complete the first.
+        Every model sees `INPUT_LENGTH` (6,000) samples per forward pass and
+        predicts the first and the last 6,000 samples of the scored window;
+        the last samples of the second prediction, aligned on the overlap,
+        complete the first. Models whose padding or folding depends on the
+        input length (PatchTST, TimesNet, U-Net) thus see a length they
+        handle exactly. A length-fixed model keeps its own input size
+        (`_eval_length`) and is predicted directly when trained on the full
+        window.
 
         Args:
             dataset (SequenceDataset): Evaluation dataset (full window).
@@ -218,12 +225,13 @@ class SequenceModelTrainer:
         Returns:
             np.ndarray: Normalized prediction over the full window.
         """
-        if self.crop_length or self.model_name not in LENGTH_FIXED_MODELS:
-            return self._predict(item)
-        extra = item["target"].shape[-1] - self._eval_length
+        length = (self._eval_length
+                  if self.model_name in LENGTH_FIXED_MODELS and
+                  not self.crop_length else INPUT_LENGTH)
+        extra = item["target"].shape[-1] - length
         if extra <= 0:
             return self._predict(item)
-        dataset.window_length = self._eval_length
+        dataset.window_length = length
         try:
             dataset.window_offset = 0
             first = self._predict(dataset[index])
@@ -409,9 +417,9 @@ class SequenceModelTrainer:
             history["best_val_loss"] = best_val
         self.save_checkpoint()
         os.makedirs(self.output_dir, exist_ok=True)
-        with open(os.path.join(self.output_dir,
-                               f"history_{self.model_name}_{self.direction}.json"),
-                  "w", encoding="utf-8") as file:
+        name = f"history_{self.model_name}_{self.direction}.json"
+        with open(os.path.join(self.output_dir, name), "w",
+                  encoding="utf-8") as file:
             json.dump(history, file)
         return history
 
