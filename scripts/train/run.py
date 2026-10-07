@@ -41,6 +41,7 @@ from floatsense.models import LENGTH_FIXED_MODELS
 from floatsense.models import parse_model_kwargs
 from floatsense.trainer import DivergedError
 from floatsense.trainer import ModelTooLargeError
+from floatsense.trainer import StoppedError
 from floatsense.release import split_tag
 from floatsense.heights import calibrate_profile
 
@@ -99,7 +100,8 @@ flags.DEFINE_enum(
     "damage (R^2 of log10 damage over the 11 gauges, printed as VAL lines).")
 flags.DEFINE_bool(
     "resume", False, "Keep a resume state (every validation and every "
-    "5 minutes) and continue from it if present.")
+    "5 minutes) and continue from it if present; SIGUSR1 saves it at the "
+    "end of the epoch and exits with code 5.")
 flags.DEFINE_float(
     "max_params_m", 0.0, "Exit (code 4) if the model has more trainable "
     "parameters, in millions (0 = no limit).")
@@ -291,6 +293,9 @@ def main(_):
                 except ModelTooLargeError as error:
                     logging.error("Too large: %s", error)
                     sys.exit(C.EXIT_TOO_LARGE)
+                except StoppedError as error:
+                    logging.warning("Stopped: %s", error)
+                    sys.exit(C.EXIT_STOPPED)
             else:
                 trainer.load_checkpoint()
             if not FLAGS.run_evaluation:

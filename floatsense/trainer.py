@@ -21,6 +21,8 @@ import math
 import multiprocessing
 import os
 import random
+import signal
+import threading
 import time
 
 # cuBLAS needs this before its first call to run deterministically.
@@ -64,6 +66,20 @@ class DivergedError(RuntimeError):
 
 class ModelTooLargeError(RuntimeError):
     """The model has more trainable parameters than allowed."""
+
+
+class StoppedError(RuntimeError):
+    """Stopped on request (SIGUSR1) after saving the resume state."""
+
+
+# Set by SIGUSR1 in a resumable run: finish the epoch, save, stop.
+STOP_REQUESTED = threading.Event()
+
+
+def _request_stop(signum, frame) -> None:
+    """SIGUSR1 handler of a resumable run."""
+    del signum, frame
+    STOP_REQUESTED.set()
 
 
 def lr_factor(step: int, total_steps: int, warmup_steps: int,
@@ -228,7 +244,9 @@ class SequenceModelTrainer:
               normalized crops) or 'damage' (R^2 of log10 damage over the
               11 gauges, the benchmark metric).
             resume (bool): Keep a resume state (at every validation and
-              every CHECKPOINT_SECONDS) and continue from it if present.
+              every CHECKPOINT_SECONDS) and continue from it if present;
+              SIGUSR1 saves it at the end of the epoch and raises
+              StoppedError.
             max_params_m (float): Refuse a model with more trainable
               parameters, in millions (0 = no limit).
             save_epochs (List[int], optional): Epochs whose weights are also
@@ -503,6 +521,9 @@ class SequenceModelTrainer:
                 flush=True)
             self._print_val_history(history)
         last_save = time.monotonic()
+        if (self.resume and
+                threading.current_thread() is threading.main_thread()):
+            signal.signal(signal.SIGUSR1, _request_stop)
         for epoch in range(start_epoch, self.num_epochs):
             self.model.train()
             losses = []
@@ -570,11 +591,14 @@ class SequenceModelTrainer:
                 print(line)
             if epoch + 1 in self.save_epochs:
                 self.save_checkpoint(self.checkpoint_path(epoch + 1))
-            if self.resume and (val_now or time.monotonic() - last_save
-                                >= CHECKPOINT_SECONDS):
+            stop_now = self.resume and STOP_REQUESTED.is_set()
+            if self.resume and (val_now or stop_now or time.monotonic() -
+                                last_save >= CHECKPOINT_SECONDS):
                 self._save_resume(epoch + 1, optimizer, scheduler, history,
                                   (best_val, best_epoch), best_state)
                 last_save = time.monotonic()
+            if stop_now and epoch + 1 < self.num_epochs:
+                raise StoppedError(f"Stopped after epoch {epoch + 1}.")
             if (self.early_stopping_patience and best_epoch and
                     epoch + 1 - best_epoch
                     >= self.early_stopping_patience * val_interval):

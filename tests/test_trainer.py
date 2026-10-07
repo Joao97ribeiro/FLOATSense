@@ -31,6 +31,8 @@ from floatsense import load_tower
 from floatsense.metrics import summarize_damage
 from floatsense.trainer import DivergedError
 from floatsense.trainer import ModelTooLargeError
+from floatsense.trainer import STOP_REQUESTED
+from floatsense.trainer import StoppedError
 from floatsense.trainer import SequenceModelTrainer
 from floatsense.trainer import lr_factor
 
@@ -245,6 +247,22 @@ class TunedRunTest(unittest.TestCase):
         trainer, history, epoch = self.resumed(0.0)
         self.assertEqual(epoch, 1)
         self.assert_same_run(trainer, history)
+
+    def test_stop_request_saves_and_resumes(self):
+        """SIGUSR1: the epoch ends, the state is saved, the run stops; the
+        resumed run is identical."""
+        out = tempfile.mkdtemp(dir=self.out.name)
+        STOP_REQUESTED.set()
+        try:
+            with mock.patch("floatsense.trainer.CHECKPOINT_SECONDS", 1e9):
+                with self.assertRaises(StoppedError):
+                    tuned(out).train(*ids())
+        finally:
+            STOP_REQUESTED.clear()
+        saved = torch.load(tuned(out).resume_path(), weights_only=False)
+        self.assertEqual(saved["epoch"], 1)
+        trainer = tuned(out)
+        self.assert_same_run(trainer, trainer.train(*ids()))
 
     def test_completed_run_is_not_retrained(self):
         """A finished run, launched again, returns its history."""
