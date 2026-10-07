@@ -301,6 +301,17 @@ likelihood. The hybrid models read the physics calibrated on the same
 split (`outputs/physics/<tower>` for `train`, `<tower>_fs10_draw0` for
 `fewshot/train_10_draw0`), so run the physics on that split first.
 
+**Evaluation input**: models trained on crops predict the 6,001-sample
+scored window in one pass, except PatchTST, TimesNet and U-Net, whose
+zero padding to a patch multiple, period folding or pooling depend on the
+input length: they see 6,000-sample inputs (`INPUT_LENGTH` in
+`floatsense/constants.py`), the length the paper checkpoints were scored at.
+The window is predicted from the inputs starting at its first and at its
+second sample; the last sample of the second prediction, shifted by the
+mean difference over the overlap, completes the first. Only input from
+inside the scored window is used. Length-fixed models trained on 6,000
+samples are predicted the same way; trained on the full window, directly.
+
 Training is deterministic by default (`--deterministic=True`): a rerun
 of a seed on the same GPU type gives identical numbers. It makes cuDNN
 training about three times slower (TCN: ~7 instead of ~2.5 min of
