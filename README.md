@@ -103,10 +103,11 @@ accelerometer axis improves the top at every budget.
 ```
 floatsense/        Python package (data reader, models, training, physics baseline, metrics)
 scripts/           Pipeline entry points — see "Scripts" below
+hpo/               Validation-tuned track: search, confirmation, test, decision rule
 splits/            Model-selection and few-shot splits (lists of sim_id, same on every tower)
 towers/            ElastoDyn tower mass density of each tower (physics height factor)
 docs/              Figures used in this README
-tests/             Damage-metric tests (python -m unittest discover tests;
+tests/             CPU tests (python -m unittest discover tests;
                    FLOATSENSE_DATA=data/FLOATSense also checks the labels)
 environment.yml    Conda environment (Python 3.11 + GPU PyTorch)
 requirements.txt   Pinned runtime dependencies
@@ -458,6 +459,69 @@ ci = cluster_bootstrap(df.damage_true_tower_top.values,
                        condition_key(meta).values)
 print(ci)
 ```
+
+## Validation-tuned track
+
+The benchmark trains every model with one fixed recipe (Adam, learning
+rate 1e-3, 50 epochs). The validation-tuned track asks whether the
+ranking of the 20 learned models survives giving each of them the same
+tuning effort and a longer training. It uses only the validation split
+(`splits/val`) to choose, and opens the test split once, at the end.
+Every number of the protocol is in
+[`hpo/search_space.py`](./hpo/search_space.py).
+
+1. **Search** ([`hpo/search.py`](./hpo/search.py)): one Optuna study
+   per model and tower, the same number of trials for every model, the
+   first ones random, then TPE. A trial trains on `val/train` and is
+   scored by the validation R² of log10 damage (mean of the 11 gauges,
+   the benchmark metric) at its last epoch; a median rule stops poor
+   trials early. Searched: the learning rate, weight decay (on/off and
+   its value), a constant or cosine schedule with warm-up, and a few
+   architecture knobs per model. Fixed for every model: AdamW, gradient
+   clipping, the batch size, the crops, the loss, the inputs and the
+   targets. Models above a parameter cap are rejected before training.
+   If a study's best trial comes late, the three studies of that model
+   get more trials.
+2. **Confirmation** ([`hpo/confirm.py`](./hpo/confirm.py)): the best
+   configurations of each study, frozen once, are retrained with several
+   seeds and the full epoch budget; the winner has the highest median
+   validation score over the seeds.
+3. **Test** ([`hpo/final.py`](./hpo/final.py)): each winner is retrained
+   on the full training split with several seeds and scored once on the
+   test split, at the last epoch and at the median best validation epoch
+   of the confirmation, into a sealed directory.
+4. **Decision rule** ([`hpo/analyze.py`](./hpo/analyze.py)): Kendall's
+   tau-b between the fixed-recipe and the tuned rankings, at the top
+   gauge and for the mean of the 11 gauges, with a bootstrap over
+   operating points and seeds. A lower bound above the agreement
+   threshold says the ranking holds; an upper bound below the artifact
+   threshold says it does not. Top-3 and top-5 overlaps and a guard
+   (a winner that validates below the fixed recipe is flagged) are
+   reported with it.
+
+The trainer options of the track are plain flags of
+`scripts/train/run.py`, off by default so the benchmark runs are
+unchanged: `--weight_decay` (AdamW), `--schedule` and `--warmup_epochs`,
+`--grad_clip`, `--model_kwargs` (e.g.
+`hidden_channels=96,num_levels=7,dropout=0.1`; stored in the checkpoint),
+`--val_score=damage` (prints `VAL epoch=... r2_mean=... r2_top=...
+r2_base=...` lines), `--resume` (a resume state at every validation and
+every five minutes), `--max_params_m` and `--save_epochs`. A run that
+diverges exits with code 3, a model above the cap with code 4. The
+drivers need `optuna>=4`; `--dry_run` runs each of them on a CPU stub:
+
+```bash
+python hpo/search.py --model=tcn --tower=opt2 --dataset_dir=data/FLOATSense
+python hpo/confirm.py --model=tcn --tower=opt2 --freeze   # then without --freeze
+python hpo/confirm.py --model=tcn --tower=opt2 --summarize
+python hpo/final.py --model=tcn --tower=opt2              # every model and tower
+python hpo/final.py --open_test                           # once, at the end
+python hpo/analyze.py --paper_root=outputs/within --tuned_root=outputs/hpo/sealed/last
+```
+
+A crashed run (out of memory included) is resumed from its checkpoint a
+few times and then parked with an alert record in `outputs/hpo/alerts/`;
+preemptions and hardware faults resume without counting.
 
 ## Reproducibility
 
