@@ -1292,10 +1292,6 @@ class UNetModel(nn.Module):
 # scored on the full window instead of random crops.
 LENGTH_FIXED_MODELS = ("spectral", "hybrid", "hybrid_tcn", "fits",
                        "itransformer")
-# Models whose padding or period folding depends on the input length: their
-# evaluation input is held at INPUT_LENGTH (see Trainer._predict_window).
-LENGTH_SENSITIVE_MODELS = ("transformer", "timesnet", "unet")
-
 # Models that read the first input channel as the tower-top acceleration.
 ACCEL_FIRST_MODELS = ("naive", "spectral", "hybrid", "hybrid_tcn", "chronos",
                       "moment", "moment_ft", "timesfm", "timesfm_ft")

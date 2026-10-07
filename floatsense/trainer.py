@@ -40,14 +40,12 @@ from .fatigue import damage_filter
 from .metrics import summarize_damage
 from .models import ACCEL_FIRST_MODELS
 from .models import LENGTH_FIXED_MODELS
-from .models import LENGTH_SENSITIVE_MODELS
 from .models import build_model
 from .release import ReleasedTower
 from .release import TowerGauges
 
 
-def _damage_job(moment, gauge, tower: TowerGauges, intercepts,
-                slopes) -> float:
+def _damage_job(moment, gauge, tower: TowerGauges, intercepts, slopes) -> float:
     """Damage of one series at one gauge (picklable for the pool)."""
     return tower.damage(moment, gauge, intercepts, slopes)
 
@@ -180,26 +178,25 @@ class SequenceModelTrainer:
         self.norm_stats = None
         self._eval_length = None
 
-    def _make_dataset(
-            self,
-            sim_ids: List[int],
-            crop_length: Optional[int],
-            release: Optional[ReleasedTower] = None,
-            window_length: Optional[int] = None) -> SequenceDataset:
+    def _make_dataset(self,
+                      sim_ids: List[int],
+                      crop_length: Optional[int],
+                      release: Optional[ReleasedTower] = None,
+                      window_length: Optional[int] = None) -> SequenceDataset:
         return SequenceDataset(release=release or self.release,
-                                     sim_ids=sim_ids,
-                                     direction=self.direction,
-                                     condition_channels=self.condition_channels,
-                                     min_time=self.min_time,
-                                     max_time=self.max_time,
-                                     crop_length=crop_length,
-                                     norm_stats=self.norm_stats,
-                                     calibration_path=self.calibration_path,
-                                     target_channel=self.target_channel,
-                                     input_channels=self.input_channels,
-                                     height_targets=self.height_targets,
-                                     height_factors=self.height_factors,
-                                     window_length=window_length)
+                               sim_ids=sim_ids,
+                               direction=self.direction,
+                               condition_channels=self.condition_channels,
+                               min_time=self.min_time,
+                               max_time=self.max_time,
+                               crop_length=crop_length,
+                               norm_stats=self.norm_stats,
+                               calibration_path=self.calibration_path,
+                               target_channel=self.target_channel,
+                               input_channels=self.input_channels,
+                               height_targets=self.height_targets,
+                               height_factors=self.height_factors,
+                               window_length=window_length)
 
     def _input_length(self) -> Optional[int]:
         """Window of a length-fixed model (None: crops or any length)."""
@@ -209,16 +206,14 @@ class SequenceModelTrainer:
                         item: Dict[str, torch.Tensor]) -> np.ndarray:
         """Normalized prediction over the full scored window.
 
-        Models trained on crops predict it directly, except the
-        length-sensitive ones (PatchTST, TimesNet, U-Net: zero padding to a
-        patch multiple, period folding or pooling depend on the input length),
-        which see `INPUT_LENGTH` (6,000) samples, the length the paper
-        checkpoints were scored at and a multiple of their patch and pooling
-        sizes. A length-fixed checkpoint trained on fewer samples than the
-        window (`_eval_length` = 6,000) is treated the same way; one trained on
-        the full window predicts it directly. Stitching: the first and the
-        last `length` samples are predicted, and the last samples of the
-        second prediction, aligned on the overlap, complete the first.
+        Every model trained on crops sees `INPUT_LENGTH` (6,000) samples per
+        forward pass, the length the paper checkpoints were scored at (and a
+        multiple of the patch and pooling sizes of PatchTST and U-Net); a
+        length-fixed model sees its own input size (`_eval_length`). When
+        that is shorter than the window, the first and the last `length`
+        samples are predicted and the last samples of the second prediction,
+        aligned on the overlap, complete the first. A variance head (Prob-TCN)
+        is stitched before sampling, so one noise draw covers the window.
 
         Args:
             dataset (SequenceDataset): Evaluation dataset (full window).
@@ -228,25 +223,28 @@ class SequenceModelTrainer:
         Returns:
             np.ndarray: Normalized prediction over the full window.
         """
-        if self.crop_length:
-            if self.model_name not in LENGTH_SENSITIVE_MODELS:
-                return self._predict(item)
-            length = INPUT_LENGTH
-        else:
-            length = self._eval_length
+        length = INPUT_LENGTH if self.crop_length else self._eval_length
         extra = item["target"].shape[-1] - length
         if extra <= 0:
             return self._predict(item)
         dataset.window_length = length
         try:
             dataset.window_offset = 0
-            first = self._predict(dataset[index])
+            first = self._predict(dataset[index], sample=False)
             dataset.window_offset = extra
-            last = self._predict(dataset[index])
+            last = self._predict(dataset[index], sample=False)
         finally:
             dataset.window_length, dataset.window_offset = None, 0
-        shift = float(np.mean(first[extra:] - last[:-extra]))
-        return np.concatenate([first, last[-extra:] + shift])
+        # Channel 0 is the mean, shifted onto the first prediction over the
+        # overlap; a log-variance channel (Prob-TCN) is appended as it is.
+        first, last = np.atleast_2d(first), np.atleast_2d(last)
+        shift = float(np.mean(first[0, extra:] - last[0, :-extra]))
+        tail = last[:, -extra:].copy()
+        tail[0] += shift
+        stitched = np.concatenate([first, tail], axis=-1)
+        if stitched.shape[0] == 1:
+            return stitched[0]
+        return self._sample(torch.from_numpy(stitched).to(self.device))
 
     def _damage_proxy_loss(self, prediction: torch.Tensor, target: torch.Tensor,
                            freq_weights: torch.Tensor) -> torch.Tensor:
@@ -261,7 +259,8 @@ class SequenceModelTrainer:
                                                               1e-12)
         return torch.mean(log_ratio**2)
 
-    def train(self, train_ids: List[int],
+    def train(self,
+              train_ids: List[int],
               val_ids: Optional[List[int]] = None) -> Dict[str, List[float]]:
         """Trains the model on the given simulations.
 
@@ -283,27 +282,27 @@ class SequenceModelTrainer:
             torch.use_deterministic_algorithms(True, warn_only=True)
         torch.manual_seed(self.seed)
         np.random.seed(self.seed)
-        probe = SequenceDataset(
-            release=self.release,
-            sim_ids=train_ids[:1],
-            direction=self.direction,
-            condition_channels=self.condition_channels,
-            min_time=self.min_time,
-            max_time=self.max_time,
-            target_channel=self.target_channel,
-            input_channels=self.input_channels,
-            height_targets=self.height_targets)
+        probe = SequenceDataset(release=self.release,
+                                sim_ids=train_ids[:1],
+                                direction=self.direction,
+                                condition_channels=self.condition_channels,
+                                min_time=self.min_time,
+                                max_time=self.max_time,
+                                target_channel=self.target_channel,
+                                input_channels=self.input_channels,
+                                height_targets=self.height_targets)
         if (self.model_name in ACCEL_FIRST_MODELS and
                 probe.input_channels[0] != probe.accel_channel):
             raise ValueError(f"{self.model_name} reads the first input channel "
                              f"as the acceleration: put {probe.accel_channel} "
                              "first in --input_channels.")
         stat_channels = list(
-            dict.fromkeys(
-                [c.split(":")[1] if c.startswith("stat:") else c
-                 for c in probe.input_channels if c != "height"] +
-                probe.condition_channels + [probe.moment_channel] +
-                (probe.height_channels if self.height_targets else [])))
+            dict.fromkeys([
+                c.split(":")[1] if c.startswith("stat:") else c
+                for c in probe.input_channels
+                if c != "height"
+            ] + probe.condition_channels + [probe.moment_channel] + (
+                probe.height_channels if self.height_targets else [])))
         init_state = None
         if self.init_checkpoint:
             init_state = torch.load(self.init_checkpoint,
@@ -358,7 +357,8 @@ class SequenceModelTrainer:
             val_loader = DataLoader(self._make_dataset(
                 val_ids, self.crop_length, window_length=self._input_length()),
                                     batch_size=self.batch_size,
-                                    shuffle=False, num_workers=0)
+                                    shuffle=False,
+                                    num_workers=0)
         val_interval = self.val_every or max(1, self.num_epochs // 10)
         best_val, best_epoch, best_state = float("inf"), 0, None
         for epoch in range(self.num_epochs):
@@ -400,8 +400,10 @@ class SequenceModelTrainer:
                 if val_loss < best_val:
                     best_val, best_epoch = val_loss, epoch + 1
                     if self.early_stopping_patience:
-                        best_state = {k: v.detach().clone().cpu() for k, v
-                                      in self.model.state_dict().items()}
+                        best_state = {
+                            k: v.detach().clone().cpu()
+                            for k, v in self.model.state_dict().items()
+                        }
             if log_now or val_now:
                 line = (f"[{self.model_name}/{self.direction}] "
                         f"epoch {epoch + 1}/{self.num_epochs} "
@@ -410,8 +412,8 @@ class SequenceModelTrainer:
                     line += f" val_loss {val_loss:.5f}"
                 print(line)
             if (self.early_stopping_patience and best_epoch and
-                    epoch + 1 - best_epoch >=
-                    self.early_stopping_patience * val_interval):
+                    epoch + 1 - best_epoch
+                    >= self.early_stopping_patience * val_interval):
                 print(f"[{self.model_name}/{self.direction}] early stop at "
                       f"epoch {epoch + 1}, best {best_epoch} "
                       f"(val_loss {best_val:.5f})")
@@ -483,11 +485,13 @@ class SequenceModelTrainer:
 
     def _setup(self, probe: SequenceDataset) -> Dict:
         """Channel setup a checkpoint was trained with."""
-        return {"direction": self.direction,
-                "input_channels": list(probe.input_channels),
-                "condition_channels": list(probe.condition_channels),
-                "target_channel": probe.moment_channel,
-                "height_targets": bool(self.height_targets)}
+        return {
+            "direction": self.direction,
+            "input_channels": list(probe.input_channels),
+            "condition_channels": list(probe.condition_channels),
+            "target_channel": probe.moment_channel,
+            "height_targets": bool(self.height_targets)
+        }
 
     def _check_setup(self, checkpoint: Dict, probe: SequenceDataset) -> None:
         """Refuses a checkpoint trained with other channels (checkpoints
@@ -523,8 +527,26 @@ class SequenceModelTrainer:
                                      "condition_bound", 0.5)).to(self.device)
         self.model.load_state_dict(checkpoint["state_dict"])
 
-    def _predict(self, item: Dict[str, torch.Tensor]) -> np.ndarray:
-        """Normalized prediction of one item (sampling the variance head)."""
+    @staticmethod
+    def _sample(output: torch.Tensor) -> np.ndarray:
+        """One draw of a (mean, log-variance) prediction."""
+        sigma = torch.exp(0.5 * output[1])
+        return (output[0] + sigma * torch.randn_like(sigma)).cpu().numpy()
+
+    def _predict(self,
+                 item: Dict[str, torch.Tensor],
+                 sample: bool = True) -> np.ndarray:
+        """Normalized prediction of one item.
+
+        Args:
+            item (dict): Dataset item.
+            sample (bool): Draw from a variance head; False returns its
+              (mean, log-variance) channels instead.
+
+        Returns:
+            np.ndarray: (length,) prediction, or (2, length) when a variance
+              head is not sampled.
+        """
         inputs = item["inputs"][None].to(self.device)
         condition = item["condition"][None].to(self.device)
         if getattr(self.model, "needs_physics_gain", False):
@@ -532,8 +554,7 @@ class SequenceModelTrainer:
                 self.device))[0, 0].cpu().numpy()
         if getattr(self.model, "predicts_variance", False):
             output = self.model(inputs, condition)[0]
-            sigma = torch.exp(0.5 * output[1])
-            return (output[0] + sigma * torch.randn_like(sigma)).cpu().numpy()
+            return self._sample(output) if sample else output.cpu().numpy()
         return self.model(inputs, condition)[0, 0].cpu().numpy()
 
     def evaluate(self,
@@ -592,8 +613,8 @@ class SequenceModelTrainer:
                     # Rainflow is the bottleneck: it runs in a process pool.
                     jobs.append((index, f"damage_true_{stem}", moment_true,
                                  damage_gauge))
-                    jobs.append((index, f"damage_rec_{stem}", moment_rec,
-                                 damage_gauge))
+                    jobs.append(
+                        (index, f"damage_rec_{stem}", moment_rec, damage_gauge))
                 rows.append(row)
         with multiprocessing.Pool(min(8, os.cpu_count() or 1)) as pool:
             damages = pool.starmap(

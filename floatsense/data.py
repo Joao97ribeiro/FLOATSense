@@ -110,7 +110,7 @@ class SequenceDataset(Dataset):
         self.height_targets = height_targets
         self.height_factors = height_factors
         self.section = None
-        # Stitched evaluation (length-fixed and length-sensitive models) sees
+        # Stitched evaluation (a model input shorter than the window) sees
         # `window_length` samples from `window_offset`; None: the full window.
         self.window_length = window_length
         self.window_offset = 0
