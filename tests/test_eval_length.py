@@ -85,9 +85,10 @@ def predict(trainer: SequenceModelTrainer, dataset: WindowDataset):
 class PredictWindowTest(unittest.TestCase):
     """Which input lengths each kind of model sees at evaluation."""
 
-    def test_crop_trained_models_see_input_length(self):
-        """A crop-trained model gets two 6,000-sample inputs, either eval
-        length stored in its checkpoint, and returns the full window."""
+    def test_length_sensitive_models_see_input_length(self):
+        """A crop-trained length-sensitive model gets two 6,000-sample
+        inputs, either eval length stored in its checkpoint, and returns the
+        full window."""
         for eval_length in (INPUT_LENGTH, WINDOW):
             dataset = WindowDataset()
             trainer = make_trainer("transformer", Recorder(), eval_length)
@@ -99,6 +100,15 @@ class PredictWindowTest(unittest.TestCase):
                                        atol=1e-6)
             self.assertIsNone(dataset.window_length)
             self.assertEqual(dataset.window_offset, 0)
+
+    def test_other_crop_models_predict_directly(self):
+        """A crop-trained model that does not depend on the input length
+        (here the TCN) predicts the full window in one pass."""
+        for eval_length in (INPUT_LENGTH, WINDOW):
+            trainer = make_trainer("tcn", Recorder(), eval_length)
+            output = predict(trainer, WindowDataset())
+            self.assertEqual(trainer.model.lengths, [WINDOW])
+            self.assertEqual(output.shape, (WINDOW,))
 
     def test_length_fixed_models_keep_their_size(self):
         """A length-fixed model trained on the full window is predicted

@@ -40,6 +40,7 @@ from .fatigue import damage_filter
 from .metrics import summarize_damage
 from .models import ACCEL_FIRST_MODELS
 from .models import LENGTH_FIXED_MODELS
+from .models import LENGTH_SENSITIVE_MODELS
 from .models import build_model
 from .release import ReleasedTower
 from .release import TowerGauges
@@ -208,14 +209,16 @@ class SequenceModelTrainer:
                         item: Dict[str, torch.Tensor]) -> np.ndarray:
         """Normalized prediction over the full scored window.
 
-        Every model sees `INPUT_LENGTH` (6,000) samples per forward pass and
-        predicts the first and the last 6,000 samples of the scored window;
-        the last samples of the second prediction, aligned on the overlap,
-        complete the first. Models whose padding or folding depends on the
-        input length (PatchTST, TimesNet, U-Net) thus see a length they
-        handle exactly. A length-fixed model keeps its own input size
-        (`_eval_length`) and is predicted directly when trained on the full
-        window.
+        Models trained on crops predict it directly, except the
+        length-sensitive ones (PatchTST, TimesNet, U-Net: zero padding to a
+        patch multiple, period folding or pooling depend on the input length),
+        which see `INPUT_LENGTH` (6,000) samples, the length the paper
+        checkpoints were scored at and a multiple of their patch and pooling
+        sizes. A length-fixed checkpoint trained on fewer samples than the
+        window (`_eval_length` = 6,000) is treated the same way; one trained on
+        the full window predicts it directly. Stitching: the first and the
+        last `length` samples are predicted, and the last samples of the
+        second prediction, aligned on the overlap, complete the first.
 
         Args:
             dataset (SequenceDataset): Evaluation dataset (full window).
@@ -225,9 +228,12 @@ class SequenceModelTrainer:
         Returns:
             np.ndarray: Normalized prediction over the full window.
         """
-        length = (self._eval_length
-                  if self.model_name in LENGTH_FIXED_MODELS and
-                  not self.crop_length else INPUT_LENGTH)
+        if self.crop_length:
+            if self.model_name not in LENGTH_SENSITIVE_MODELS:
+                return self._predict(item)
+            length = INPUT_LENGTH
+        else:
+            length = self._eval_length
         extra = item["target"].shape[-1] - length
         if extra <= 0:
             return self._predict(item)
