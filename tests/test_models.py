@@ -141,6 +141,18 @@ class DefaultsTest(unittest.TestCase):
             with self.subTest(model=name):
                 self.assertEqual(fingerprint(name, **kwargs), fingerprint(name))
 
+    def test_default_tcn_blocks_have_published_modules(self):
+        """Without dropout, a TCN block holds the published submodules
+        only: the same state_dict metadata, so the same checkpoint bytes."""
+        for name in ("tcn", "prob_tcn"):
+            with self.subTest(model=name):
+                model = build_model(name, LENGTH, CHANNELS, CONDITION)
+                self.assertEqual(
+                    [n for n, _ in model.blocks[0].named_children()],
+                    ["conv1", "conv2", "activation"])
+                metadata = model.state_dict()._metadata  # pylint: disable=protected-access
+                self.assertFalse(any("dropout" in k for k in metadata))
+
     def test_unknown_kwarg_raises(self):
         """A misspelt knob is an error, not silently ignored."""
         with self.assertRaises(TypeError):

@@ -145,8 +145,10 @@ flags.DEFINE_integer(
 flags.DEFINE_integer("num_workers", 4, "DataLoader workers.")
 flags.DEFINE_bool("run_training", True, "Train (otherwise load checkpoint).")
 flags.DEFINE_bool("run_evaluation", True, "Evaluate on the test split.")
-flags.DEFINE_string("init_checkpoint_dir", None,
-                    "Directory with <model>_<direction>.pt to fine-tune from.")
+flags.DEFINE_string(
+    "init_checkpoint_dir", None,
+    "Directory with <model>_<direction>.pt to fine-tune from; another "
+    "directory than --output_dir (exits with code 1 otherwise).")
 flags.DEFINE_string(
     "calibration_dir", None,
     "Directory with the physics calibration_<direction>.json "
@@ -217,6 +219,14 @@ def train_and_evaluate():
                         f"--init_checkpoint_dir: {path} not found. Train the "
                         "source model first (e.g. the within-tower run of the "
                         "source tower) or point the flag to its folder.")
+                if FLAGS.run_training and os.path.realpath(
+                        path) == os.path.realpath(
+                            os.path.join(output_dir,
+                                         f"{model_name}_{direction}.pt")):
+                    raise SystemExit(
+                        f"--init_checkpoint_dir: {path} is the checkpoint "
+                        "this run writes; fine-tune into another "
+                        "--output_dir.")
             if model_name.startswith("hybrid"):
                 path = os.path.join(calibration_dir(direction),
                                     f"calibration_{direction}.json")

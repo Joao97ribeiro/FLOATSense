@@ -13,9 +13,10 @@ handles failures:
   - NaN or divergence (exit code EXIT_DIVERGED) and a model above the
     parameter cap (EXIT_TOO_LARGE) are returned to the caller;
   - out of memory ('oom': "CUDA out of memory", OutOfMemoryError, "out of
-    memory" in the last lines) is returned to the caller (a search trial:
-    the configuration does not fit), or with `oom_ends=False` (a fixed
-    configuration of phases 2 and 3) resumed as a crash;
+    memory" in the last lines) is resumed once as a crash (another process
+    may have held the GPU), then returned to the caller (a search trial:
+    the configuration does not fit); with `oom_ends=False` (a fixed
+    configuration of phases 2 and 3) it is always resumed as a crash;
   - a resume state of another configuration (EXIT_CONFIG_MISMATCH) is
     returned as 'config_mismatch' with an alert and a CONFIG_MISMATCH
     marker in the run directory; the unit is not parked, and no worker
@@ -44,7 +45,9 @@ still ours (`owned`), merged by attempt with the file (`save_attempts`).
 A parked unit is retried once (`retry_unit`, called by hpo/pick.py
 RETRY_SHELVED_AFTER after its parking) with its failure counts reset; a
 second parking is final, and so is every parking once the test is ready
-(`test_frozen`). An operator retries a unit by removing its PARKED marker.
+(`test_frozen`). An operator retries a unit at any time with
+`python hpo/pick.py --retry=<unit>` (never by removing the marker alone:
+the failure counts would stay).
 
 Every file the drivers share is written atomically (temporary file and
 rename), and the files that fix a decision (plans, sealed test results)
@@ -274,12 +277,27 @@ def _process() -> str:
     return f"{socket.gethostname()}:{os.getpid()}"
 
 
+def dead_process(process: str) -> bool:
+    """A '<host>:<pid>' of this host whose process no longer exists: its
+    lock or claim is stale at once."""
+    host, _, pid = process.rpartition(":")
+    if host != socket.gethostname():
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return True
+    except (OSError, ValueError):
+        return False
+    return False
+
+
 def claim(run_dir: str) -> bool:
     """Claims a unit for this worker (another live worker keeps it).
 
-    A claim whose heartbeat is stale is taken over: the old claim is
-    renamed away first, and only one worker can rename it. The claim holds
-    '<OWNER>|<host>:<pid>'.
+    A claim whose heartbeat is stale, or whose process of this host is
+    dead, is taken over: the old claim is renamed away first, and only one
+    worker can rename it. The claim holds '<OWNER>|<host>:<pid>'.
     """
     os.makedirs(run_dir, exist_ok=True)
     path = os.path.join(run_dir, "claim")
@@ -288,7 +306,9 @@ def claim(run_dir: str) -> bool:
         try:
             handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
-            if not is_stale(run_dir):
+            holder = claim_holder(run_dir) or ""
+            if not (is_stale(run_dir) or
+                    dead_process(holder.rpartition("|")[2])):
                 return False
             try:
                 os.rename(path, f"{path}.stale.{os.getpid()}.{time.time()}")
@@ -332,12 +352,17 @@ def release(run_dir: str, owner: Optional[str] = None) -> bool:
     return True
 
 
-def busy(run_dir: str) -> bool:
-    """A unit claimed by another live process (not stale)."""
+def busy(run_dir: str, owner: Optional[str] = None) -> bool:
+    """A unit claimed by another live process (not stale, not a dead
+    process of this host), and not by `owner` (any incarnation)."""
     holder = claim_holder(run_dir)
     if holder is None:
         return False
-    return holder.rpartition("|")[2] != _process() and not is_stale(run_dir)
+    name, _, process = holder.rpartition("|")
+    if owner and name == owner:
+        return False
+    return (process != _process() and not is_stale(run_dir) and
+            not dead_process(process))
 
 
 def owns_claim(run_dir: str) -> bool:
@@ -478,7 +503,7 @@ def history_path(run_dir: str, model: str) -> str:
     return os.path.join(run_dir, f"history_{model}_fa.json")
 
 
-class _Heartbeat:
+class Heartbeat:
     """Touches the heartbeat of a unit while its run is alive (and calls
     `on_beat`, e.g. to update the open attempt record)."""
 
@@ -655,8 +680,10 @@ def check_progress(root: str, name: str, run_dir: str, record: Dict) -> bool:
 
 def park(root: str, name: str, run_dir: str, reason: str, record: Dict,
          details: Dict) -> str:
-    """Parks a unit: alert record and PARKED marker. Returns the alert
-    path."""
+    """Parks a unit: alert record and PARKED marker ('early': none of its
+    last MAX_ATTEMPTS attempts saved a resume state, i.e. each failed
+    before its first validation or resume save; hpo/worker.py counts these
+    toward a broken machine). Returns the alert path."""
     path = alert(root, name, f"shelved after {reason}", {
         "run_dir": run_dir,
         "attempts": record,
@@ -665,10 +692,17 @@ def park(root: str, name: str, run_dir: str, reason: str, record: Dict,
     write_json(
         os.path.join(run_dir, "PARKED"),
         {
-            "time": now(),
-            "reason": reason,
-            "host": socket.gethostname(),
-            "alert": path,
+            "time":
+                now(),
+            "reason":
+                reason,
+            "host":
+                socket.gethostname(),
+            "alert":
+                path,
+            "early":
+                not any(
+                    e.get("saved") for e in record["events"][-C.MAX_ATTEMPTS:]),
             "id":
                 uuid.uuid4().hex  # tells two parkings apart
         })
@@ -701,16 +735,17 @@ def retry_due(run_dir: str, frozen: bool = False) -> bool:
             marker_age(path) >= C.RETRY_SHELVED_AFTER)
 
 
-def retry_unit(root: str, name: str, run_dir: str) -> bool:
-    """Retries a parked unit once (the caller checked `retry_due`): its
-    failure counts reset, its PARKED marker renamed away, an alert.
+def retry_unit(root: str, name: str, run_dir: str, force: bool = False) -> bool:
+    """Retries a parked unit once (the caller checked `retry_due`; `force`:
+    an operator, even after a final parking): its failure counts reset, its
+    PARKED marker renamed away, an alert.
 
     Returns:
         bool: True if the unit was retried.
     """
     marker = read_json(os.path.join(run_dir, "PARKED"))
     record = read_attempts(run_dir)
-    if marker is None or park_final(run_dir):
+    if marker is None or (park_final(run_dir) and not force):
         return False
     record["retried"] = {"time": now(), "parked": marker}
     record["crashes"] = record["free"] = 0
@@ -764,9 +799,9 @@ def _attempt(cmd: List[str], run_dir: str, env: Optional[Dict[str, str]],
     """
     tail: List[str] = []
     stopped, params = False, None
-    with _Heartbeat(run_dir, on_beat), open(os.path.join(run_dir, "log.txt"),
-                                            "a",
-                                            encoding="utf-8") as log:
+    with Heartbeat(run_dir, on_beat), open(os.path.join(run_dir, "log.txt"),
+                                           "a",
+                                           encoding="utf-8") as log:
         log.write(f"=== {now()} {' '.join(cmd)}\n")
         with subprocess.Popen(cmd,
                               stdout=subprocess.PIPE,
@@ -821,8 +856,8 @@ def run_unit(name: str,
         owned (callable, optional): False once the unit is no longer ours
           (lock or claim taken over): its attempts record is then left
           alone.
-        oom_ends (bool): Out of memory ends the unit ('oom'); if False it
-          is resumed and counted as a crash.
+        oom_ends (bool): Out of memory ends the unit ('oom') after one
+          resume; if False it is always resumed and counted as a crash.
 
     Returns:
         dict: 'status' ('ok', 'pruned', 'diverged', 'too_large', 'oom',
@@ -861,8 +896,14 @@ def run_unit(name: str,
         close_attempt(event, start, status, returncode, _mtime(resume))
         check_progress(root, name, run_dir, record)
         result = {"status": status, "params": params, "tail": text}
+        # A first out-of-memory is resumed once as a crash (a transient
+        # OOM: another process on the GPU).
+        first_oom = (status == "oom" and oom_ends and
+                     not record.get("oom_resumed"))
+        record["oom_resumed"] = record.get("oom_resumed") or first_oom
         ends = ("ok", "pruned", "diverged", "too_large", "stopped",
-                "config_mismatch") + (("oom",) if oom_ends else ())
+                "config_mismatch") + (
+                    ("oom",) if oom_ends and not first_oom else ())
         if status in ends or (owned is not None and not owned()):
             save_attempts(run_dir, record, owned)
             if status == "ok":

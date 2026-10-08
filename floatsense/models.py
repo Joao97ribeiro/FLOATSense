@@ -169,12 +169,15 @@ class _TCNBlock(nn.Module):
                                padding=padding,
                                dilation=dilation)
         self.activation = nn.GELU()
-        # Identity at 0 (no parameters, no random draw): the published block.
-        self.dropout = nn.Dropout(dropout) if dropout else nn.Identity()
+        # No module at 0 (no random draw, and the state_dict metadata, so
+        # the saved checkpoint bytes, of the published block).
+        self.dropout = nn.Dropout(dropout) if dropout else None
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """Applies the residual block to (batch, channels, length) inputs."""
-        hidden = self.dropout(self.activation(self.conv1(inputs)))
+        hidden = self.activation(self.conv1(inputs))
+        if self.dropout is not None:
+            hidden = self.dropout(hidden)
         hidden = self.conv2(hidden)
         return self.activation(inputs + hidden)
 

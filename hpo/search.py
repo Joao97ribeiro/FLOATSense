@@ -29,17 +29,20 @@ and recorded as FAIL with the user attribute over_cap (not counted, and
 not seen by TPE, whose startup counts completed and pruned trials only);
 the next trial draws again at once (an over-cap draw does not count toward
 --max_new). A trial out of memory is FAIL with the user attribute oom (not
-counted, not retried). A crash is resumed up to MAX_ATTEMPTS times
-(common.run_unit), then the trial is FAIL with the user attribute parked.
-The study stops drawing (`capped`) after MAX_OVER_CAP over-cap draws,
-MAX_OOM trials out of memory or PARK_STUDY_AFTER parked trials (since its
-retry); hpo/pick.py then parks it, or freezes its plan if it has its
-N_TRIALS counted trials. A trial whose resume state belongs to another
+counted; it is resumed once as a crash first, common.run_unit). A crash
+is resumed up to MAX_ATTEMPTS times (common.run_unit), then the trial is
+FAIL with the user attribute parked. The study stops drawing (`capped`)
+after MAX_OVER_CAP over-cap draws, MAX_OOM trials out of memory or
+PARK_STUDY_AFTER parked trials (the last two since its retry);
+hpo/pick.py then parks it, or freezes its plan if it has its N_TRIALS
+counted trials. A trial whose resume state belongs to another
 configuration stays RUNNING, held for an operator (common.hold). A trial
 left RUNNING by a dead worker (stale heartbeat) is requeued with the same
 configuration and resumes from its checkpoint; a worker that holds the
 lock of the study (hpo/pick.py, --exclusive) is its only writer, so every
-RUNNING trial it finds is requeued at once. A trial stopped on request
+RUNNING trial it finds is requeued at once. A journal line torn by a kill
+or power loss is cut off when the study is opened for writing
+(`repair_journal`). A trial stopped on request
 (common.request_stop) stays RUNNING for the next worker to resume. A
 worker whose lock was taken over (`owned` returns False) drops its result
 instead of telling it.
@@ -101,6 +104,31 @@ def sampler(seed: int) -> optuna.samplers.BaseSampler:
     return optuna.samplers.TPESampler(n_startup_trials=C.N_STARTUP, seed=seed)
 
 
+def repair_journal(root: str, path: str) -> int:
+    """Cuts a torn last line (an append cut by a kill or power loss) off a
+    journal, which a later append would make unreadable; the cut bytes are
+    kept in <path>.torn.<time>, with an alert. The caller is the only
+    writer (it holds the lock of the study). Returns the bytes cut."""
+    try:
+        with open(path, "rb") as file:
+            data = file.read()
+    except FileNotFoundError:
+        return 0
+    keep = data.rfind(b"\n") + 1
+    if keep == len(data):
+        return 0
+    backup = f"{path}.torn.{datetime.datetime.now():%Y%m%d-%H%M%S}"
+    with open(backup, "wb") as file:
+        file.write(data[keep:])
+    with open(path, "r+b") as file:
+        file.truncate(keep)
+    common.alert(root, os.path.basename(path), "journal: torn last line cut", {
+        "bytes": len(data) - keep,
+        "backup": backup
+    })
+    return len(data) - keep
+
+
 def open_study(root: str,
                model: str,
                tower: str,
@@ -116,6 +144,8 @@ def open_study(root: str,
     if not create and not os.path.exists(path):
         return None
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    if create:
+        repair_journal(root, path)
     storage = JournalStorage(
         JournalFileBackend(path, lock_obj=JournalFileOpenLock(path)))
     if not create:
@@ -242,14 +272,14 @@ def retried_path(root: str, model: str, tower: str) -> str:
 
 def failed_draws(root: str, model: str, tower: str, trials) -> Dict[str, int]:
     """Over-cap draws, trials out of memory and parked trials of a study
-    (parked ones since its retry, if it was retried)."""
+    (the last two since its retry, if it was retried)."""
     retried = common.read_json(retried_path(root, model, tower))
     after = retried["after_trial"] if retried else -1
     return {
         "over_cap":
             sum(over_cap(t) for t in trials),
         "oom":
-            sum(oom(t) for t in trials),
+            sum(oom(t) and t.number > after for t in trials),
         "parked_trials":
             sum(
                 bool(t.user_attrs.get("parked")) and t.number > after

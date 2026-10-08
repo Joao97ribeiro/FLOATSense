@@ -29,6 +29,7 @@ import math
 import multiprocessing
 import os
 import random
+import shutil
 import signal
 import socket
 import threading
@@ -144,23 +145,31 @@ def _set_rng_state(state: Dict) -> None:
 
 
 def _atomic_save(obj, path: str) -> None:
-    """torch.save through a temporary file and a rename (never half
+    """torch.save through a temporary directory and a rename (never half
     written, even if the job is killed).
 
-    The temporary is <path>.tmp.<host>.<pid>.<uuid8>, unique across the
-    hosts that share a file system (see `_temporary_in_flight`).
+    The file is written as <path>.tmp.<host>.<pid>.<uuid8>/<name of path>,
+    a directory unique across the hosts that share a file system (see
+    `_temporary_in_flight`). torch names the root folder of the archive
+    after the file name, so the archive holds the same names (and bytes) as
+    a direct torch.save to `path`, without the host name or the pid.
     """
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = (f"{path}.tmp.{socket.gethostname()}.{os.getpid()}."
            f"{uuid.uuid4().hex[:8]}")
-    torch.save(obj, tmp)
-    os.replace(tmp, path)
+    os.mkdir(tmp)
+    try:
+        written = os.path.join(tmp, os.path.basename(path))
+        torch.save(obj, written)
+        os.replace(written, path)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _temporary_writer(path: str) -> Optional[tuple]:
-    """(host, pid) of a temporary file of `_atomic_save`, None if the name
-    does not follow its pattern. The older <path>.tmp.<pid> pattern counts
-    as written on this host."""
+    """(host, pid) of a temporary of `_atomic_save`, None if the name does
+    not follow its pattern. The older <path>.tmp.<pid> pattern counts as
+    written on this host."""
     suffix = path.rsplit(".tmp.", 1)[-1]
     if suffix.isdigit():
         return socket.gethostname(), int(suffix)
@@ -172,22 +181,36 @@ def _temporary_writer(path: str) -> Optional[tuple]:
     return None
 
 
+def _temporary_mtime(path: str) -> float:
+    """Last modification of a temporary of `_atomic_save`: of the file, or
+    of the directory and the file being written in it."""
+    mtime = os.path.getmtime(path)
+    if os.path.isdir(path):
+        for entry in os.scandir(path):
+            mtime = max(mtime, entry.stat(follow_symlinks=False).st_mtime)
+    return mtime
+
+
 def _temporary_in_flight(path: str, max_age: float) -> bool:
-    """Whether a temporary file of `_atomic_save` may be the save in flight
-    of a concurrent writer: written on this host by another live process (a
-    process of another user counts as alive) and modified less than
-    `max_age` seconds ago. A pid seen from another host means nothing, and
-    an old temporary of a live pid is a leak of a reused pid."""
+    """Whether a temporary (directory, or file of the older pattern) of
+    `_atomic_save` may be the save in flight of a concurrent writer: it was
+    modified less than `max_age` seconds ago and, if written on this host,
+    by another live process (a process of another user counts as alive). A
+    pid seen from another host means nothing, so a temporary of another
+    host is judged on its age alone; an old temporary of a live pid is a
+    leak of a reused pid."""
     writer = _temporary_writer(path)
-    if writer is None or writer[0] != socket.gethostname():
+    if writer is None:
         return False
-    pid = writer[1]
-    if pid in (0, os.getpid()):
+    host, pid = writer
+    local = host == socket.gethostname()
+    if local and pid in (0, os.getpid()):
         return False
     try:
-        if time.time() - os.path.getmtime(path) >= max_age:
+        if time.time() - _temporary_mtime(path) >= max_age:
             return False
-        os.kill(pid, 0)
+        if local:
+            os.kill(pid, 0)
     except (ProcessLookupError, FileNotFoundError, OverflowError):
         return False
     except PermissionError:
@@ -293,6 +316,7 @@ class SequenceModelTrainer:
             init_checkpoint (str, optional): Checkpoint to fine-tune from.
               Training starts from its weights and keeps its normalization
               stats (so the model stays consistent with the source domain).
+              It must not be the checkpoint this run writes.
             calibration_path (str, optional): Physics calibration JSON for
               models that consume the per-simulation physics gain (hybrid).
             condition_bound (float): Tanh bound of the hybrid model's
@@ -491,9 +515,10 @@ class SequenceModelTrainer:
             dict: Per-epoch mean training loss under 'train_loss' and, with
             `val_ids`, the validation loss under 'val_loss' (epoch, value)
             or the damage scores under 'val_r2' (one dict per validation).
-            A SIGUSR1 during the last epoch saves the state and lets the
-            run complete; `stop_requested` is then True, and the caller
-            should stop before its next run.
+            A SIGUSR1 during the last epoch (or the epoch that stops it
+            early) saves the state and lets the run complete;
+            `stop_requested` is then True, and the caller should stop before
+            its next run.
 
         Raises:
             DivergedError: A training loss or a damage-validation prediction
@@ -502,7 +527,11 @@ class SequenceModelTrainer:
               default flags differ from it only for runs that diverge.
             ModelTooLargeError: More trainable parameters than
               `max_params_m`.
-            StoppedError: SIGUSR1 in a resumable run (state saved).
+            StoppedError: SIGUSR1 in a resumable run (state saved). A
+              request in the epoch where early stopping ends the run lets
+              it complete, as in the last epoch.
+            ValueError: `init_checkpoint` is the checkpoint this run
+              writes (among other invalid settings).
             ConfigMismatchError: The resume state of the output directory
               was written with another run configuration (another
               `num_epochs` or `model_kwargs` included: a longer run needs a
@@ -546,8 +575,15 @@ class SequenceModelTrainer:
             raise ValueError(f"{self.model_name} reads the first input channel "
                              f"as the acceleration: put {probe.accel_channel} "
                              "first in --input_channels.")
+        if (self.init_checkpoint and os.path.realpath(self.init_checkpoint)
+                == os.path.realpath(self.checkpoint_path())):
+            raise ValueError(
+                f"init_checkpoint {self.init_checkpoint} is the checkpoint "
+                "this run writes: fine-tune into another output directory.")
         self._remove_stale_temporaries()
-        self._config = self._run_config(train_ids, val_ids)
+        # Read only by a resume state (no work for a run without one).
+        self._config = (self._run_config(train_ids, val_ids)
+                        if self.resume else None)
         resume_state = self._load_resume()
         if resume_state is not None:
             self._check_run_config(resume_state)
@@ -726,11 +762,14 @@ class SequenceModelTrainer:
                 self._save_resume(epoch + 1, optimizer, scheduler, history,
                                   (best_val, best_epoch), best_state)
                 last_save = time.monotonic()
-            if stop_now and epoch + 1 < self.num_epochs:
+            early_stop = bool(self.early_stopping_patience and best_epoch and
+                              epoch + 1 - best_epoch
+                              >= self.early_stopping_patience * val_interval)
+            # A run that ends here (last epoch or early stop) completes, and
+            # the request is read by the caller in `stop_requested`.
+            if stop_now and epoch + 1 < self.num_epochs and not early_stop:
                 raise StoppedError(f"Stopped after epoch {epoch + 1}.")
-            if (self.early_stopping_patience and best_epoch and
-                    epoch + 1 - best_epoch
-                    >= self.early_stopping_patience * val_interval):
+            if early_stop:
                 print(f"[{self.model_name}/{self.direction}] early stop at "
                       f"epoch {epoch + 1}, best {best_epoch} "
                       f"({'val_r2' if maximize else 'val_loss'} "
@@ -826,8 +865,9 @@ class SequenceModelTrainer:
         recipe and the training simulations. The number of epochs is one of
         them, so a finished or interrupted run is never extended in place:
         a longer run goes to a new output directory. The calibration and
-        the initial checkpoint are stored by real path and by the sha256 of
-        their contents (read once per run).
+        the initial checkpoint are stored by real path, for information, and
+        by the sha256 of their contents, which is compared (read once per
+        run, only by a run with `resume`).
         """
 
         def as_list(values) -> Optional[List]:
@@ -884,15 +924,22 @@ class SequenceModelTrainer:
         configuration (see `_run_config`). States written before the
         configuration was stored are not checked, and only the settings a
         state stored are compared (a state written before a setting was
-        added keeps resuming)."""
+        added keeps resuming). The calibration and the initial checkpoint
+        are compared by contents (a moved file with the same contents
+        resumes), or by real path in states written before the digest."""
         saved = resume_state.get("config")
         if saved is None:
             return
         current = self._config
         saved = dict(saved)
-        for key in ("calibration_path", "init_checkpoint"):
-            # States written before the real path was stored.
-            if saved.get(key) is not None:
+        for key, digest in (("calibration_path", "calibration_sha256"),
+                            ("init_checkpoint", "init_checkpoint_sha256")):
+            if digest in saved:
+                # Same contents, same run: the file may have moved.
+                saved.pop(key, None)
+            elif saved.get(key) is not None:
+                # States written before the digest (and the real path) were
+                # stored.
                 saved[key] = os.path.realpath(saved[key])
         changed = sorted(k for k in saved if saved[k] != current.get(k))
         if changed:
@@ -909,11 +956,12 @@ class SequenceModelTrainer:
                 if self.checkpoint_seconds is None else self.checkpoint_seconds)
 
     def _remove_stale_temporaries(self) -> None:
-        """Removes the temporaries left by a killed `_atomic_save` of the
-        files this run writes (only those, only in its directory). A
-        temporary of another live process on this host, younger than
-        max(3 checkpoint intervals, 1 h), is kept: it may be the save in
-        flight of a concurrent writer (see `_temporary_in_flight`)."""
+        """Removes the temporaries (directories, and files of the older
+        pattern) left by a killed `_atomic_save` of the files this run
+        writes (only those, only in its directory). A temporary younger than
+        max(3 checkpoint intervals, 1 h), of another live process on this
+        host or of another host, is kept: it may be the save in flight of a
+        concurrent writer (see `_temporary_in_flight`)."""
         max_age = max(3.0 * self._checkpoint_interval(), 3600.0)
         stems = [self.checkpoint_path(), self.resume_path()]
         patterns = [glob.escape(stem) + ".tmp.*" for stem in stems]
@@ -924,8 +972,11 @@ class SequenceModelTrainer:
             "[0-9]*.pt.tmp.*")
         for pattern in patterns:
             for path in glob.glob(pattern):
-                if (os.path.isfile(path) and
-                        not _temporary_in_flight(path, max_age)):
+                if os.path.islink(path) or _temporary_in_flight(path, max_age):
+                    continue
+                if os.path.isdir(path):
+                    shutil.rmtree(path, ignore_errors=True)
+                elif os.path.isfile(path):
                     os.remove(path)
 
     def _save_resume(self, epoch: int, optimizer, scheduler, history: Dict,
@@ -1155,21 +1206,28 @@ class SequenceModelTrainer:
                             f"{self.model_name}_{self.direction}{suffix}.pt")
 
     def save_checkpoint(self, path: Optional[str] = None) -> None:
-        """Saves model weights, normalization stats and settings."""
-        _atomic_save(
-            {
-                "state_dict": self.model.state_dict(),
-                "norm_stats": self.norm_stats,
-                "model_name": self.model_name,
-                "direction": self.direction,
-                "eval_length": self._eval_length,
-                "crop_length": self.crop_length,
-                "loss_name": self.loss_name,
-                "condition_bound": self.condition_bound,
-                "model_kwargs": self.model_kwargs,
-                "seed": self.seed,
-                "setup": self._setup(self._make_dataset([], None)),
-            }, path or self.checkpoint_path())
+        """Saves model weights, normalization stats and settings.
+
+        The architecture knobs are stored only when set, so a checkpoint of
+        the published recipe holds the bytes of the published trainer (a
+        checkpoint without them loads with the published architecture).
+        """
+        checkpoint = {
+            "state_dict": self.model.state_dict(),
+            "norm_stats": self.norm_stats,
+            "model_name": self.model_name,
+            "direction": self.direction,
+            "eval_length": self._eval_length,
+            "crop_length": self.crop_length,
+            "loss_name": self.loss_name,
+            "condition_bound": self.condition_bound,
+            "model_kwargs": self.model_kwargs,
+            "seed": self.seed,
+            "setup": self._setup(self._make_dataset([], None)),
+        }
+        if not self.model_kwargs:
+            del checkpoint["model_kwargs"]
+        _atomic_save(checkpoint, path or self.checkpoint_path())
 
     def _setup(self, probe: SequenceDataset) -> Dict:
         """Channel setup a checkpoint was trained with."""

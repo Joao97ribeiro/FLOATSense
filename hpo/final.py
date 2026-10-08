@@ -24,7 +24,10 @@ skipped; the skipped seeds, and the pairs whose seeds all diverged
 (missing towers of the leaderboard), are listed in
 <root>/sealed/SKIPPED.json. The inference runs of the test are recorded in
 <root>/test_runs/<model>_<tower>/<variant>_s<k>/attempts.json (phase
-'test' of gpu_hours.csv). Two variants are scored:
+'test' of gpu_hours.csv; open while they run), their logs appended to
+log_<model>.txt; a failed scoring is listed in
+<root>/sealed/TEST_FAILURES.json (with an alert) and left without a
+marker, to be scored again by a new --open_test. Two variants are scored:
 
   primary_last     PRIMARY: the weights of the last epoch (the headline);
   secondary_best   SECONDARY: the weights of the median best validation
@@ -151,13 +154,41 @@ def test_run_dir(root: str, model: str, tower: str, variant: str,
                         f"{variant}_s{seed}")
 
 
-def record_test(run_dir: str, start: float, code: int) -> None:
-    """Appends one test inference run (started at `start`, exit `code`) to
-    the attempts record of `run_dir`."""
+def run_test(run_dir: str, cmd: List[str], log_path: str) -> int:
+    """Runs one test inference (its log appended to `log_path`), recorded
+    in the attempts record of `run_dir`: open ('running', its end moved by
+    a heartbeat) while it runs, so a killed run still counts its
+    GPU-hours. Returns its exit code."""
     record = common.read_attempts(run_dir)
-    common.add_attempt(record, start, "ok" if code == 0 else "crash", code,
-                       common.gpu_name())
-    common.write_json(common.attempts_path(run_dir), record)
+    common.close_killed(record)
+    start = time.time()
+    event = common.open_attempt(record, start, common.gpu_name())
+    common.save_attempts(run_dir, record)
+
+    def beat():
+        common.update_attempt(event, start)
+        common.save_attempts(run_dir, record)
+
+    with common.Heartbeat(run_dir, beat), open(log_path, "a",
+                                               encoding="utf-8") as log:
+        code = subprocess.call(cmd,
+                               stdout=log,
+                               stderr=subprocess.STDOUT,
+                               cwd=common.REPO)
+    common.close_attempt(event, start, "ok" if code == 0 else "crash", code)
+    common.save_attempts(run_dir, record)
+    return code
+
+
+def record_failure(root: str, name: str, cmd: List[str], code: int) -> None:
+    """A failed test scoring: an alert and an entry of
+    <root>/sealed/TEST_FAILURES.json (hpo/analyze.py then stops on its
+    missing SEALED marker)."""
+    common.alert(root, name, "test scoring failed", {"command": cmd})
+    path = os.path.join(root, "sealed", "TEST_FAILURES.json")
+    failures = common.read_json(path) or []
+    failures.append({"unit": name, "exit": code, "time": common.now()})
+    common.write_json(path, failures)
 
 
 def score(args: argparse.Namespace, model: str, tower: str, seed: int,
@@ -187,18 +218,11 @@ def score(args: argparse.Namespace, model: str, tower: str, seed: int,
             f"--test_split={C.TEST_SPLIT}", f"--seed={seed}",
             f"--output_dir={out}", "--run_training=False"
         ] + shlex.split(args.extra)
-        start = time.time()
-        with open(os.path.join(out, f"log_{model}.txt"), "w",
-                  encoding="utf-8") as log:
-            code = subprocess.call(cmd,
-                                   stdout=log,
-                                   stderr=subprocess.STDOUT,
-                                   cwd=common.REPO)
-        record_test(test_run_dir(args.root, model, tower, variant, seed), start,
-                    code)
+        code = run_test(test_run_dir(args.root, model, tower, variant, seed),
+                        cmd, os.path.join(out, f"log_{model}.txt"))
         if code:
-            common.alert(args.root, f"test/{variant}/{model}_{tower}/s{seed}",
-                         "test scoring failed", {"command": cmd})
+            record_failure(args.root, f"test/{variant}/{model}_{tower}/s{seed}",
+                           cmd, code)
             return
     common.write_once(
         marker,

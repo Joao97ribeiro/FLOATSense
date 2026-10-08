@@ -25,26 +25,32 @@ default, for GPUs that can be killed at once; e.g. 300 s for local GPUs).
 A unit that keeps crashing is shelved, and retried once after
 RETRY_SHELVED_AFTER (hpo/pick.py); a unit whose resume state belongs to
 another configuration is held for an operator (CONFIG_MISMATCH marker)
-and the worker goes on with other units. An exception of a driver or of
-the loop never shelves anything: it is logged and followed by a wait of
---poll_seconds, with an alert after LOOP_ERRORS_ALERT in a row. While work
-remains but nothing can be picked (units held, shelved until their retry,
-or running elsewhere) the worker keeps polling, with one alert after
---idle_minutes. Alerts are records in <root>/alerts/.
+and the worker goes on with other units. An exception of a driver is
+logged and followed by a wait of --poll_seconds; it is a crash of its
+confirmation or final unit (attempts.json, so MAX_ATTEMPTS of them shelve
+it), and after MAX_ATTEMPTS of them in this worker the unit is set aside
+for RETRY_SHELVED_AFTER (with an alert), so it never starves the others.
+An exception of the loop itself (advance, pick) is followed by the same
+wait, with an alert after LOOP_ERRORS_ALERT in a row. While work remains
+but nothing can be picked (units held, shelved until their retry, set
+aside, or running elsewhere) the worker keeps polling, with one alert
+after --idle_minutes. Alerts are records in <root>/alerts/.
 
 Exit codes (the contract with the launcher):
   0   every unit of its models done (or shelved for good); also
       --max_units reached or the file <root>/STOP. Do not restart.
-  98  EXIT_BROKEN: a broken machine. WORKER_FAILURES units in a row
-      shelved after their failures, of at least two different models (bad
-      environment, full disk, missing mount), or a GPU with less memory
-      than --min_gpu_gb. Do not restart it on the same machine.
+  98  EXIT_BROKEN: a broken machine. Units of WORKER_FAILURES different
+      studies shelved in a row after failing early (no attempt saved a
+      resume state: bad environment, full disk, missing mount), or a GPU
+      with less memory than --min_gpu_gb. Do not restart it on the same
+      machine.
   99  EXIT_REQUEUE: stopped. A signal (SIGUSR1, SIGTERM, Ctrl-C: the
       trainer ends its epoch and saves; a second signal is passed on as
       SIGTERM), its lock taken over or not beaten LOCK_BEAT_FAILURES times
       in a row (the unit stopped, its result dropped), MAX_LOOP_ERRORS
-      exceptions in a row, or any other exception of the worker. Restart
-      it; the same --owner resumes its unit first.
+      exceptions of the loop in a row, a GPU of unknown memory under
+      --min_gpu_gb, or any other exception of the worker. Restart it; the
+      same --owner resumes its unit first.
 
 Records, read by hpo/status.py: <root>/workers/<owner>.json (current unit,
 host, GPU; refreshed at every lock beat and idle poll, with the exit code
@@ -71,6 +77,8 @@ from hpo import constants as C
 from hpo import search_space as S
 
 _SIGNALS = {"count": 0}
+GPU_QUERY_TRIES = 3  # nvidia-smi queries of the GPU memory (--min_gpu_gb)
+GPU_QUERY_SECONDS = 10.0  # wait between two of them
 
 
 def _on_signal(signum, frame) -> None:
@@ -102,7 +110,8 @@ def run(args: argparse.Namespace,
         unit: pick.Unit,
         lock: Optional[pick.Lock] = None) -> str:
     """Runs one unit through its driver; returns its status: 'trial' (a
-    search trial told), 'done', 'parked' (shelved after its failures),
+    search trial told), 'done', 'parked' (shelved after its failures;
+    'parked_early' if none of its last attempts saved a resume state),
     'oom' (a search trial out of memory), 'config_mismatch' (held for an
     operator), 'stopped', 'lost' (the result dropped after a lock
     takeover), 'empty' (no trial to run: nothing was done), 'busy' (claimed
@@ -118,14 +127,16 @@ def run(args: argparse.Namespace,
         if not outcomes:
             return "empty"
         last = outcomes[-1]["status"]
-        return last if last in ("parked", "stopped", "lost", "oom",
+        if last == "parked":
+            return _parked(outcomes[-1]["run_dir"])
+        return last if last in ("stopped", "lost", "oom",
                                 "config_mismatch") else "trial"
     run_dir = pick.run_dir(args.root, unit)
     # The lock of the unit is held: a claim left in the run directory by an
     # earlier incarnation of this worker is void; a claim of another
     # process is not.
     common.release(run_dir, owner=args.owner)
-    if common.busy(run_dir):
+    if common.busy(run_dir, args.owner):
         return "busy"
     if unit.phase == "confirm":
         options = confirm.parse_args(driver_args(args, unit, "confirm"))
@@ -140,8 +151,37 @@ def run(args: argparse.Namespace,
     if common.held(run_dir):
         return "config_mismatch"
     if pick.unit_parked(args.root, unit):
-        return "parked"
+        return _parked(run_dir)
     return "stopped" if common.STOP.is_set() else "unfinished"
+
+
+def _parked(run_dir: str) -> str:
+    """'parked_early' for a unit shelved after attempts that all failed
+    before saving a resume state (common.park), else 'parked'."""
+    marker = common.read_json(os.path.join(run_dir, "PARKED")) or {}
+    return "parked_early" if marker.get("early") else "parked"
+
+
+def crash(args: argparse.Namespace, unit: pick.Unit, error: str) -> None:
+    """A driver exception of a confirmation or final unit (its lock held)
+    is a crash of the unit, recorded in its attempts.json: MAX_ATTEMPTS of
+    them shelve it (then the single retry of hpo/pick.py). A search unit
+    has no run directory of its own (`_unit_error` sets it aside)."""
+    run_dir = pick.run_dir(args.root, unit)
+    if run_dir is None:
+        return
+    try:
+        attempts = common.read_attempts(run_dir)
+        common.add_attempt(attempts, time.time(), "error", None,
+                           common.gpu_name())
+        attempts["crashes"] += 1
+        common.save_attempts(run_dir, attempts)
+        if (attempts["crashes"] >= C.MAX_ATTEMPTS and
+                not pick.unit_parked(args.root, unit)):
+            common.park(args.root, pick.unit_id(unit), run_dir, "driver errors",
+                        attempts, {"error": error})
+    except Exception:  # pylint: disable=broad-exception-caught
+        print(traceback.format_exc()[-1500:], flush=True)
 
 
 def record(args: argparse.Namespace,
@@ -218,9 +258,9 @@ def run_locked(args: argparse.Namespace, unit: pick.Unit, lock: pick.Lock,
             try:
                 status = run(args, unit, lock)
             except Exception:  # pylint: disable=broad-exception-caught
-                # Counted with the loop errors; never shelves the unit.
                 status, error = "error", traceback.format_exc()[-1500:]
                 print(error, flush=True)
+                crash(args, unit, error)
         if beater.lost:
             status = "lost"
     finally:
@@ -278,8 +318,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--min_gpu_gb",
                         type=float,
                         default=0.0,
-                        help="Refuse to start (exit 98) on a GPU with less "
-                        "memory, or of unknown memory (0: no check).")
+                        help="Refuse to start on a GPU with less memory "
+                        "(exit 98), or of unknown memory after a few "
+                        "queries (exit 99) (0: no check).")
     parser.add_argument("--idle_minutes", type=float, default=C.IDLE_MINUTES)
     parser.add_argument("--poll_seconds", type=float, default=C.POLL_SECONDS)
     parser.add_argument("--max_units",
@@ -308,19 +349,25 @@ def _alert(args: argparse.Namespace, reason: str, **details) -> None:
         print(traceback.format_exc()[-1500:], flush=True)
 
 
-def small_gpu(args: argparse.Namespace) -> bool:
-    """True (with an alert) if --min_gpu_gb is set and the visible GPU has
-    less memory, or its memory is unknown."""
+def small_gpu(args: argparse.Namespace) -> Optional[int]:
+    """None if --min_gpu_gb is unset or met; else the exit code, with an
+    alert: EXIT_BROKEN for a GPU with less memory, EXIT_REQUEUE if its
+    memory is still unknown after GPU_QUERY_TRIES queries."""
     if args.min_gpu_gb <= 0:
-        return False
-    memory = common.gpu_memory_gb()
+        return None
+    memory = None
+    for attempt in range(GPU_QUERY_TRIES):
+        memory = common.gpu_memory_gb()
+        if memory is not None:
+            break
+        if attempt + 1 < GPU_QUERY_TRIES:
+            time.sleep(GPU_QUERY_SECONDS)
     if memory is not None and memory >= args.min_gpu_gb:
-        return False
-    _alert(args,
-           f"worker not started: GPU memory {memory} GB, below --min_gpu_gb "
-           f"{args.min_gpu_gb:g}",
+        return None
+    _alert(args, f"worker not started: GPU memory {memory or 'unknown'} GB, "
+           f"--min_gpu_gb {args.min_gpu_gb:g}",
            gpu=common.gpu_name())
-    return True
+    return C.EXIT_REQUEUE if memory is None else C.EXIT_BROKEN
 
 
 def main(argv: Optional[List[str]] = None,
@@ -341,8 +388,9 @@ def main(argv: Optional[List[str]] = None,
         signal.signal(sig, _on_signal)
     common.STUB_SECONDS = args.stub_seconds
     common.OWNER = args.owner
-    if small_gpu(args):
-        return mark_exit(args, C.EXIT_BROKEN)
+    refused = small_gpu(args)
+    if refused:
+        return mark_exit(args, refused)
     gpu = None if args.dry_run else common.gpu_name()
     print(
         f"worker {args.owner} ({args.tag or 'untagged'}, restart "
@@ -361,12 +409,14 @@ def main(argv: Optional[List[str]] = None,
 
 
 def _step(args: argparse.Namespace, cost: Optional[Dict[str, float]],
-          gpu: Optional[str]) -> Dict:
-    """One pass of the loop: advance, pick, run. Returns the outcome of the
-    unit, or status 'all_done' or 'idle' when nothing was picked."""
+          gpu: Optional[str], loop: Dict) -> Dict:
+    """One pass of the loop: advance, pick (not the units set aside), run.
+    Returns the outcome of the unit, or status 'all_done' or 'idle' when
+    nothing was picked."""
     pick.advance(args.root, args.models, args.n_trials)
+    skip = {u for u, until in loop["skip"].items() if until > time.monotonic()}
     unit, lock = pick.pick(args.root, args.owner, args.restart, args.models,
-                           args.n_trials, cost)
+                           args.n_trials, cost, skip)
     if unit is None:
         record(args, None, gpu)  # liveness
         if pick.all_done(args.root, args.models, args.n_trials):
@@ -379,15 +429,28 @@ def _step(args: argparse.Namespace, cost: Optional[Dict[str, float]],
 
 
 def _breaker(args: argparse.Namespace, failures: List[Dict]) -> bool:
-    """True (with an alert) once WORKER_FAILURES units in a row were
-    shelved, from at least two different models."""
-    models = {f["model"] for f in failures}
-    if len(failures) < C.WORKER_FAILURES or len(models) < 2:
+    """True (with an alert) once units of WORKER_FAILURES different studies
+    were shelved in a row after failing early ('parked_early')."""
+    studies = {f["study"] for f in failures}
+    if len(studies) < C.WORKER_FAILURES:
         return False
-    _alert(args, f"worker stopped: {len(failures)} units in a row shelved, of "
-           f"{len(models)} models (a broken machine?)",
+    _alert(args, f"worker stopped: units of {len(studies)} studies in a row "
+           "shelved after failing early (a broken machine?)",
            failures=failures)
     return True
+
+
+def _unit_error(args: argparse.Namespace, outcome: Dict, loop: Dict) -> None:
+    """Driver exceptions of one unit: after MAX_ATTEMPTS of them in this
+    worker the unit is set aside for RETRY_SHELVED_AFTER, with an alert."""
+    name = pick.unit_id(outcome["unit"])
+    loop["unit_errors"][name] = loop["unit_errors"].get(name, 0) + 1
+    if loop["unit_errors"][name] >= C.MAX_ATTEMPTS:
+        del loop["unit_errors"][name]
+        loop["skip"][name] = time.monotonic() + C.RETRY_SHELVED_AFTER
+        _alert(args,
+               f"{name}: {C.MAX_ATTEMPTS} driver errors, set aside",
+               error=outcome["error"])
 
 
 def _after(args: argparse.Namespace, outcome: Dict,
@@ -400,8 +463,11 @@ def _after(args: argparse.Namespace, outcome: Dict,
         return 0
     if status in ("stopped", "lost"):
         return C.EXIT_REQUEUE
+    if status == "error" and outcome.get("unit") is not None:
+        _unit_error(args, outcome, loop)
+        return None
     loop["errors"] = loop["errors"] + 1 if status == "error" else 0
-    if status == "error":
+    if status == "error":  # of the loop itself (advance, pick)
         stop = loop["errors"] >= C.MAX_LOOP_ERRORS
         if stop or loop["errors"] == C.LOOP_ERRORS_ALERT:
             _alert(args, f"{loop['errors']} errors in a row"
@@ -417,14 +483,14 @@ def _after(args: argparse.Namespace, outcome: Dict,
                 "shelved until their retry, or running elsewhere)")
         return None
     unit = outcome["unit"]
-    if status == "parked":
+    if status == "parked_early":
         loop["failures"].append({
             "unit": pick.unit_id(unit),
-            "model": unit.model
+            "study": f"{unit.model}_{unit.tower}"
         })
         if _breaker(args, loop["failures"]):
             return C.EXIT_BROKEN
-    elif status in ("done", "trial"):
+    elif status in ("done", "trial", "parked"):  # the unit ran
         loop["failures"].clear()
     loop.update(idle_since=time.monotonic(), idle_alerted=False)
     loop["done"] += 1
@@ -438,8 +504,10 @@ def _loop(args: argparse.Namespace, cost: Optional[Dict[str, float]],
         "idle_since": time.monotonic(),
         "idle_alerted": False,
         "done": 0,
-        "errors": 0,  # exceptions in a row
-        "failures": []  # units shelved in a row
+        "errors": 0,  # exceptions of the loop in a row
+        "unit_errors": {},  # driver exceptions per unit
+        "skip": {},  # units set aside: unit id -> time.monotonic() until
+        "failures": []  # units shelved early in a row
     }
     while True:
         if common.STOP.is_set():
@@ -448,7 +516,7 @@ def _loop(args: argparse.Namespace, cost: Optional[Dict[str, float]],
             print(f"worker {args.owner}: STOP file, exiting", flush=True)
             return 0
         try:
-            outcome = _step(args, cost, gpu)
+            outcome = _step(args, cost, gpu, loop)
         except Exception:  # pylint: disable=broad-exception-caught
             outcome = {
                 "status": "error",

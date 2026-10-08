@@ -5,8 +5,9 @@
     python hpo/status.py --root=outputs/hpo --no_advance  # read only
 
 Writes <root>/status.json, status.txt and status.html: per study the
-counted, pruned, failed and running trials, the best validation score so
-far, the phase, the confirmation and final units done, the hours left and
+counted (and target), pruned, failed and running trials, why a frozen
+plan stopped below its target (stopped_early), the best validation score
+so far, the phase, the confirmation and final units done, the hours left and
 an ETA (from the measured trial durations of the study, else from the
 `cost` given per model, in hours per trial); the workers and their units
 (a worker record not refreshed for STALE_MINUTES, without an exit code, is
@@ -87,6 +88,7 @@ def study_rows(states: List[Dict],
             "final": (f"{state['final_done']}/{len(state['final_units'])}"
                       if state["final_units"] else "-"),
             "units_parked": state["units_parked"],
+            "stopped_early": state["stopped_early"],
             "hours_left": None if hours is None else round(hours, 1),
             "eta": eta(hours),
         })
@@ -202,6 +204,10 @@ def as_text(status: Dict) -> str:
         f"  {w.get('owner')} {w.get('tag') or ''} {w.get('host')} "
         f"{w.get('gpu') or ''} unit={w.get('unit')} {w['state']} "
         f"({w['age_min']} min ago)" for w in status["workers"]
+    ]
+    lines += ["", "stopped early (plan below its target):"] + [
+        f"  {r['study']}: {r['counted']}/{r['target']} counted, "
+        f"{r['stopped_early']}" for r in status["studies"] if r["stopped_early"]
     ]
     lines += ["", "shelved:"] + [f"  {p}" for p in status["parked"]]
     lines += ["", "recent alerts:"] + [f"  {a}" for a in status["alerts"]]

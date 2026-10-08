@@ -134,7 +134,9 @@ def freeze(args: argparse.Namespace) -> Dict:
         "model": args.model,
         "tower": args.tower,
         "n_trials_counted": done,
-        "stopped_early": stopped,
+        "target": target,
+        # Why the study stopped drawing before its target (else None).
+        "stopped_early": stopped if done < target else None,
         "n_seeds": C.N_SEEDS,
         "epochs": args.epochs,
         "margin_top_to_next": margin,

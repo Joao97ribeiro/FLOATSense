@@ -50,19 +50,26 @@ MAX_ATTEMPTS = 3  # crashes before a unit is parked
 MAX_FREE_RETRIES = 10  # preemptions and hardware faults (not counted)
 STALE_MINUTES = 15  # a unit whose heartbeat is older belongs to a dead worker
 DIVERGED_FALLBACK = -1.0  # score of a diverged trial before any completes
-# Search draws above the parameter cap, or out of memory, are failed trials
-# (not counted toward N_TRIALS, ignored by TPE). A study with MAX_OVER_CAP
-# of one kind, or PARK_STUDY_AFTER parked trials, stops drawing: it is
-# parked if it has fewer than N_TRIALS counted trials, else its plan is
-# frozen from the counted ones. A confirmation or final unit out of memory
-# is a crash like any other.
+# Search draws above the parameter cap, or out of memory (after one resume
+# as a crash), are failed trials (not counted toward N_TRIALS, ignored by
+# TPE). A study with MAX_OVER_CAP of one kind, or PARK_STUDY_AFTER parked
+# trials, stops drawing: it is parked if it has fewer than N_TRIALS
+# counted trials, else its plan is frozen from the counted ones (during
+# an extension, after one retry if it stopped for parked or out-of-memory
+# trials). A confirmation or final unit out of memory is a crash like any
+# other.
 MAX_OVER_CAP = 20
 MAX_OOM = MAX_OVER_CAP
 PARK_STUDY_AFTER = 3
-# A parked unit, or a study parked after its parked trials, is retried
-# once, RETRY_SHELVED_AFTER seconds after its parking, with its failure
-# counts reset; a second parking is final. Nothing is retried once
-# READY_FOR_TEST.json or sealed/ exists. Every other parking is final.
+# A parked unit, or a study parked after its parked or out-of-memory
+# trials, is retried once, RETRY_SHELVED_AFTER seconds after its parking,
+# with its failure counts reset (and the extension decision of its model
+# waits for it); a second parking is final. Nothing is retried once
+# READY_FOR_TEST.json or sealed/ exists. Every other parking is final. An
+# operator retries at any time: python hpo/pick.py --retry=<unit>. A unit
+# whose driver raises MAX_ATTEMPTS times in one worker is set aside by
+# that worker for RETRY_SHELVED_AFTER (a confirmation or final unit is
+# shelved by then: each exception is a crash).
 RETRY_SHELVED_AFTER = 3600.0
 # Attempts in a row that end stopped or preempted without a new resume save
 # before an alert (a unit that makes no progress: the checkpoint interval is
@@ -79,21 +86,24 @@ BREAK_LOCK_SECONDS = 120.0  # a stale lock breaker older than this is removed
 # stale after ADVANCE_STALE_SECONDS, so a killed holder blocks little.
 ADVANCE_BEAT_SECONDS = 20.0
 ADVANCE_STALE_SECONDS = 120.0
-# Units in a row of one worker parked after their failures, from at least
-# two different models, before the worker stops with EXIT_BROKEN (a broken
-# machine: bad environment, full disk, missing mount). Out of memory, a
+# Distinct studies whose units one worker parked in a row after failing
+# early (no attempt saved a resume state: before the first validation or
+# resume save) before it stops with EXIT_BROKEN (a broken machine: bad
+# environment, full disk, missing mount). Any unit that ran (done, a
+# trial told, parked after a save) clears the count; out of memory, a
 # configuration mismatch and exceptions of the drivers never count.
-WORKER_FAILURES = 2
-# Exceptions in a row of the worker loop or of a driver: an alert after
-# LOOP_ERRORS_ALERT, a stop with EXIT_REQUEUE after MAX_LOOP_ERRORS (each
-# is followed by a wait of POLL_SECONDS).
+WORKER_FAILURES = 3
+# Exceptions in a row of the worker loop itself (advance, pick; not of a
+# driver): an alert after LOOP_ERRORS_ALERT, a stop with EXIT_REQUEUE after
+# MAX_LOOP_ERRORS (each is followed by a wait of POLL_SECONDS).
 LOOP_ERRORS_ALERT = 3
 MAX_LOOP_ERRORS = 10
 IDLE_MINUTES = 30.0  # nothing to pick for this long: one alert
 POLL_SECONDS = 60.0  # wait between two picks of an idle worker
 # Worker exit codes besides 0 (every unit of its models done): EXIT_BROKEN
 # a broken machine (do not restart it on the same machine); EXIT_REQUEUE
-# stopped (signal, lock lost, repeated errors), to be restarted.
+# stopped (signal, lock lost, repeated errors, GPU memory unknown), to be
+# restarted.
 EXIT_BROKEN = 98
 EXIT_REQUEUE = 99
 # Wall time between two resume saves of a run (run.py --checkpoint_seconds;

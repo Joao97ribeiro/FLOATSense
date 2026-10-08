@@ -40,7 +40,9 @@ and, once for the track:
   configs.csv         the selected configuration of each model and tower
                       (phase 2) with its status: 'winner', 'shelved' (no
                       configuration) or 'all_seeds_diverged' (every final
-                      seed diverged: no test score)
+                      seed diverged: no test score), and its search:
+                      n_trials_counted, target and stopped_early (why it
+                      stopped drawing before its target)
   curves.csv          best validation score so far against the counted
                       position of each counted trial (1..N), per study
   gpu_hours.csv       GPU-hours per model, tower and phase (search,
@@ -51,6 +53,12 @@ and, once for the track:
                       the test inference runs (phase 'test'), with the
                       totals per model ('all' tower and phase) and overall
                       ('all' model)
+
+Divergence: in phase 2 a diverged seed counts as -inf in the median of
+its configuration; in phase 3 a tower is complete only with all N_SEEDS
+final seeds scored (a diverged final seed leaves its model unranked). The
+build stops if a final seed of a pair that is not parked has no SEALED
+marker (a failed or missing test scoring).
 
 The tuned leaderboard ranks only the 20 learned models: the naive floor
 and the physics baseline are not tuned, and their scores are those of the
@@ -238,12 +246,14 @@ def configs(root: str) -> pd.DataFrame:
     diverged = set(final.skipped(root)["all_seeds_diverged"])
     for model in S.LEARNED:
         for tower in C.TOWERS_SEARCHED:
+            plan = common.read_json(confirm.plan_path(root, model, tower)) or {}
+            search_row = {"model": model, "tower": tower}
+            for key in ("n_trials_counted", "target", "stopped_early"):
+                search_row[key] = plan.get(key)
             parked = common.read_json(confirm.parked_path(root, model, tower))
             if parked is not None:
                 rows.append({
-                    "model": model,
-                    "tower": tower,
-                    "status": "shelved",
+                    **search_row, "status": "shelved",
                     "reason": parked.get("reason")
                 })
                 continue
@@ -251,10 +261,9 @@ def configs(root: str) -> pd.DataFrame:
             if record is None:
                 continue
             rows.append({
-                "model": model,
-                "tower": tower,
-                "status": ("all_seeds_diverged"
-                           if f"{model}/{tower}" in diverged else "winner"),
+                **search_row, "status":
+                    ("all_seeds_diverged"
+                     if f"{model}/{tower}" in diverged else "winner"),
                 "config": json.dumps(record["winner_config"]),
                 "val_median": record["winner_median"],
                 "margin_to_second": record["margin_to_second"],
@@ -338,6 +347,25 @@ def gpu_hours(root: str) -> pd.DataFrame:
     return out.astype({"runs": int, "attempts": int, "killed": int})
 
 
+def check_sealed(root: str, variant: str) -> None:
+    """Exits if a final seed of a pair that is not parked (MISSING.json)
+    has no SEALED marker (a diverged seed has a 'skipped' one): its test
+    scoring failed (sealed/TEST_FAILURES.json) or never ran."""
+    parked = (common.read_json(os.path.join(root, "sealed", "MISSING.json")) or
+              {}).get("parked", {})
+    missing = [
+        f"{model}/{tower}/s{seed}" for model in S.LEARNED
+        for tower in C.TOWERS_SEARCHED if f"{model}/{tower}" not in parked
+        for seed in range(C.N_SEEDS) if not os.path.exists(
+            os.path.join(final.sealed_dir(root, variant, tower, seed),
+                         f"SEALED_{model}.json"))
+    ]
+    if missing:
+        sys.exit(f"{variant}: no SEALED marker for {', '.join(missing)} "
+                 "(see sealed/TEST_FAILURES.json; run hpo/final.py "
+                 "--open_test again)")
+
+
 def build(args: argparse.Namespace) -> Dict[str, pd.DataFrame]:
     """Writes the leaderboard files of every sealed variant."""
     os.makedirs(args.out, exist_ok=True)
@@ -347,6 +375,7 @@ def build(args: argparse.Namespace) -> Dict[str, pd.DataFrame]:
         if not glob.glob(os.path.join(sealed, "*", "seed*", "*.csv")):
             print(f"no sealed '{variant}' runs under {sealed}")
             continue
+        check_sealed(args.root, variant)
         out = os.path.join(args.out, variant)
         os.makedirs(out, exist_ok=True)
         table = score(sealed, args.dataset_dir, out, args.num_resamples)

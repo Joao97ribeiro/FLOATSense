@@ -570,43 +570,74 @@ left to the launcher. Every alert is a record in `outputs/hpo/alerts/`.
 - **One retry.** A shelved unit gets one automatic retry an hour after its
   shelving, with its failure counts reset; a second shelving is final.
   Nothing is retried once `READY_FOR_TEST.json` or `sealed/` exists. An
-  operator retries a unit at any time by removing its `PARKED` marker.
-- **Search failures.** A trial above the parameter cap or out of memory is
-  a failed draw, not counted. A study that stops drawing (too many failed
-  draws or shelved trials) before its 30 counted trials is shelved (after
-  shelved trials it gets the same single retry; an operator retries it by
-  removing `outputs/hpo/parked/<model>_<tower>.json`); with its 30 counted
-  trials it is never shelved for that and its plan is frozen from the
-  counted trials. A study is also shelved with too few eligible trials
-  for a plan, no finite median in the confirmation, or a unit shelved for
-  good. A shelved study is left out of its model's extension rule, has no
-  winner and is missing in the test and the leaderboard.
+  operator retries a unit or a study at once, even after a final
+  shelving, with `python hpo/pick.py --root=outputs/hpo
+  --retry=final/tcn_opt2/s0` (a unit id as in the status) or
+  `--retry=search/tcn_opt2` (a study); this resets the failure counts,
+  which removing a marker by hand would not.
+- **Search failures.** A trial above the parameter cap is a failed draw,
+  not counted; so is a trial out of memory, after one resume as a crash
+  (another process may have held the GPU). A study that stops drawing
+  (too many failed draws or shelved trials) before its 30 counted trials
+  is shelved; after shelved trials or out-of-memory draws it gets the
+  same single retry, counting only the failures after it. With its 30
+  counted trials a study is never shelved for that and its plan is
+  frozen from the counted trials, except during an extension: a study
+  stopped there by shelved trials or out-of-memory draws gets the single
+  delayed retry first, and its plan is frozen only if it stops again.
+  The plan records `n_trials_counted`, `target` and `stopped_early` (why
+  it stopped before its target), shown by the status and in
+  `configs.csv`. A study is also shelved with too few eligible trials for
+  a plan, no finite median in the confirmation, or a unit shelved for
+  good. The extension rule of a model waits while one of its studies is
+  shelved with its retry pending; a study shelved for good is left out of
+  it, has no winner and is missing in the test and the leaderboard.
 - **Out of memory.** A confirmation or final unit out of memory is a
   crash like any other. `--min_gpu_gb` makes a worker refuse a GPU with
-  less memory.
+  less memory (exit 98), or whose memory is still unknown after a few
+  queries (exit 99).
 - **Configuration mismatch.** A run whose resume state belongs to another
   configuration (exit code 6) is not shelved but held for an operator (a
   `CONFIG_MISMATCH` marker in its run directory); the worker goes on with
   other units. Remove the stale resume state (or the run directory), then
   the marker.
-- **Errors of the worker.** An exception of a driver or of the worker loop
-  never shelves anything: the worker waits and tries again, writes an
-  alert after a few in a row, and stops after more.
+- **Errors of the worker.** After an exception of a driver the worker
+  waits and goes on. For a confirmation or final unit each one counts as
+  a crash, so three shelve it (with the single retry); a unit whose
+  driver raised three times in a worker is set aside by that worker for
+  an hour (an alert), so it never starves the other units. Exceptions of
+  the worker loop itself (advancing the phases, picking) are retried
+  after a wait, with an alert after a few in a row and a stop (exit 99)
+  after more.
+- **Damaged files.** An Optuna journal line torn by a kill or a power
+  loss is cut off (kept next to the journal as `<journal>.torn.<time>`,
+  with an alert) before the study is written again; a study that cannot
+  be read is skipped with one alert while the other studies go on.
+- **Restarts.** A lock or a claim of a process of the same machine that
+  no longer exists is taken over at once, and the same `--owner` resumes
+  its own unit at once.
 
 A worker exits with:
 
 | Code | Meaning | Launcher |
 |---|---|---|
 | 0 | Every unit of its models done or shelved for good (also `--max_units` or the file `outputs/hpo/STOP`). While work remains but nothing can be picked, a worker keeps polling (one alert). | Do not restart. |
-| 98 | A broken machine: units of two different models shelved in a row, or a GPU below `--min_gpu_gb`. | Do not restart it on the same machine. |
-| 99 | Stopped: a signal, its lock lost, or repeated errors. | Restart it; the same `--owner` resumes its unit. |
+| 98 | A broken machine: units of three different studies shelved in a row, each after failing before its first resume save (validation or `--checkpoint_seconds`), or a GPU below `--min_gpu_gb`. | Do not restart it on the same machine. |
+| 99 | Stopped: a signal, its lock lost, repeated errors of the worker loop, or GPU memory unknown under `--min_gpu_gb`. | Restart it; the same `--owner` resumes its unit. |
 
 Runs save their resume state every `--checkpoint_seconds` (90 s by
 default, for GPUs that can be killed at once; e.g. 300 s on local GPUs),
-and a unit that keeps stopping without a new save gets an alert. In the
-leaderboard a tower counts as scored only with all three final seeds; a
-tower with fewer (a seed diverged) keeps its score but is listed in
-`missing_towers` and its model is unranked.
+and a unit that keeps stopping without a new save gets an alert.
+
+Divergence follows two rules. In the confirmation a diverged seed counts
+as minus infinity in the median of its configuration (so a configuration
+with most seeds diverged cannot win). In the test a tower counts as
+scored only with all three final seeds; a tower with fewer (a seed
+diverged) keeps its score but is listed in `missing_towers` and its model
+is unranked. A failed test scoring is listed in
+`sealed/TEST_FAILURES.json` (and scored again by a new `--open_test`);
+`hpo/analyze.py` stops while a seed of a pair that is not shelved has no
+sealed marker.
 
 ## Reproducibility
 
