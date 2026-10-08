@@ -492,7 +492,8 @@ space is in [`hpo/search_space.py`](./hpo/search_space.py).
    test split, into a sealed directory, in two variants: `primary_last`
    (primary, the headline: the last epoch) and `secondary_best`
    (secondary: the median best validation epoch of the confirmation).
-   The test opens only when every model and tower is trained; a shelved
+   The test opens only when every model and tower is trained
+   (`READY_FOR_TEST.json`, written by the workers); a shelved
    model and tower (see *Failures and workers* below) is recorded as
    missing, and so is a pair whose final seeds all diverged
    (`sealed/SKIPPED.json`).
@@ -502,7 +503,7 @@ space is in [`hpo/search_space.py`](./hpo/search_space.py).
    of the 11 gauges (median over the seeds per tower, then mean over the
    towers), overall and per regime cell, the top three per criterion and
    the best model of each family, one folder per test variant. Only the
-   models scored on all three towers are ranked; the others are listed
+   models scored on all three towers with all their seeds are ranked; the others are listed
    below them, unranked, with `n_towers` and `missing_towers`. The
    selected configuration of each model and tower, the best validation
    score against the number of counted trials of each study, and the
@@ -549,42 +550,63 @@ per attempt: start, end, seconds, host, GPU and status).
 
 ### Failures and workers
 
-A unit or study that stopped after failures is *shelved* (the files call
-it parked: `PARKED` markers, `outputs/hpo/parked/`; unrelated to the 22
-parked calibration runs of the dataset). A crashed run is resumed from
-its checkpoint a few times and then shelved with an alert record in
-`outputs/hpo/alerts/`; preemptions and hardware faults resume without
-counting. Out of memory is not retried and never blamed on the host: a
-search trial out of memory is a failed draw (not counted, like a model
-above the cap) and a study with too many of them is shelved; a
-confirmation or final unit (a fixed configuration) is shelved at once. A
-run whose resume state belongs to another configuration (exit code 6) is
-not shelved but held for an operator (`CONFIG_MISMATCH` marker in its
-run directory). A study is shelved after a few shelved trials, too many
-draws above the cap, repeated driver errors, too few eligible trials for
-a plan, no finite median in the confirmation, or a confirmation or final
-unit shelved for good; it is left out of its model's extension rule and
-has no winner. A unit or study shelved after failures on a single host
-gets one more chance on another host; until then the track is not
-finished (an operator can make the shelving final by emptying the
-`hosts` list of its marker). Nothing is un-shelved once
-`READY_FOR_TEST.json` or `sealed/` exists.
+The track is meant for one machine with one or more GPUs: start one
+worker per GPU on the same root, e.g.
 
-Workers (`hpo/worker.py`, one per GPU) pick the units of every phase from
-a shared root; `hpo/status.py` writes the status of the track (studies,
-workers alive or dead, bad hosts, shelved units, alerts). A worker exits
-with:
+```bash
+CUDA_VISIBLE_DEVICES=0 python hpo/worker.py --root=outputs/hpo --models=all \
+    --dataset_dir=data/FLOATSense --owner=gpu0
+```
+
+and `hpo/status.py` writes the status of the track (studies, workers alive
+or dead, shelved units, recent alerts). Workers on several machines can
+share a root on a shared file system; launching and restarting them is
+left to the launcher. Every alert is a record in `outputs/hpo/alerts/`.
+
+- **Crashes.** A crashed run is resumed from its checkpoint a few times
+  and then *shelved* (a `PARKED` marker in its run directory; the files
+  call it parked, unrelated to the 22 parked calibration runs of the
+  dataset). Preemptions and hardware faults resume without counting.
+- **One retry.** A shelved unit gets one automatic retry an hour after its
+  shelving, with its failure counts reset; a second shelving is final.
+  Nothing is retried once `READY_FOR_TEST.json` or `sealed/` exists. An
+  operator retries a unit at any time by removing its `PARKED` marker.
+- **Search failures.** A trial above the parameter cap or out of memory is
+  a failed draw, not counted. A study that stops drawing (too many failed
+  draws or shelved trials) before its 30 counted trials is shelved (after
+  shelved trials it gets the same single retry; an operator retries it by
+  removing `outputs/hpo/parked/<model>_<tower>.json`); with its 30 counted
+  trials it is never shelved for that and its plan is frozen from the
+  counted trials. A study is also shelved with too few eligible trials
+  for a plan, no finite median in the confirmation, or a unit shelved for
+  good. A shelved study is left out of its model's extension rule, has no
+  winner and is missing in the test and the leaderboard.
+- **Out of memory.** A confirmation or final unit out of memory is a
+  crash like any other. `--min_gpu_gb` makes a worker refuse a GPU with
+  less memory.
+- **Configuration mismatch.** A run whose resume state belongs to another
+  configuration (exit code 6) is not shelved but held for an operator (a
+  `CONFIG_MISMATCH` marker in its run directory); the worker goes on with
+  other units. Remove the stale resume state (or the run directory), then
+  the marker.
+- **Errors of the worker.** An exception of a driver or of the worker loop
+  never shelves anything: the worker waits and tries again, writes an
+  alert after a few in a row, and stops after more.
+
+A worker exits with:
 
 | Code | Meaning | Launcher |
 |---|---|---|
-| 0 | Every unit of its models done, idle, or `outputs/hpo/STOP` | Do not restart. |
-| 97 | A configuration mismatch: the unit is held for an operator | Restart after the operator removed the stale resume state and the marker. |
-| 98 | A broken host: failed units of two studies in a row, or repeated errors of the worker loop; the host is listed in `outputs/hpo/bad_hosts/<host>.json` and no worker starts on it | Do not requeue onto the same host; an operator removes the file to re-admit the host. |
-| 99 | Stopped mid-unit (signal or lost lock) | Requeue; the same `--owner` resumes its unit. |
+| 0 | Every unit of its models done or shelved for good (also `--max_units` or the file `outputs/hpo/STOP`). While work remains but nothing can be picked, a worker keeps polling (one alert). | Do not restart. |
+| 98 | A broken machine: units of two different models shelved in a row, or a GPU below `--min_gpu_gb`. | Do not restart it on the same machine. |
+| 99 | Stopped: a signal, its lock lost, or repeated errors. | Restart it; the same `--owner` resumes its unit. |
 
 Runs save their resume state every `--checkpoint_seconds` (90 s by
-default, for preemptible GPUs; e.g. 300 s on local or non-preemptible
-ones), and a unit that keeps stopping without a new save gets an alert.
+default, for GPUs that can be killed at once; e.g. 300 s on local GPUs),
+and a unit that keeps stopping without a new save gets an alert. In the
+leaderboard a tower counts as scored only with all three final seeds; a
+tower with fewer (a seed diverged) keeps its score but is listed in
+`missing_towers` and its model is unranked.
 
 ## Reproducibility
 

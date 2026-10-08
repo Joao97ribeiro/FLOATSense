@@ -31,7 +31,9 @@ Exit codes:
      differ only for runs that diverge.
   4  Too large: more trainable parameters than --max_params_m.
   5  Stopped: SIGUSR1 with --resume; the resume state was saved at the end
-     of the epoch and a relaunch continues from it.
+     of the epoch and a relaunch continues from it (a request during the
+     last epoch lets that run complete, then stops before its evaluation
+     and the next model or direction).
   6  Config mismatch: with --resume, the resume state in --output_dir was
      written with another run configuration (tower, task, recipe, training
      simulations or --num_epochs). A run is never extended in place: a
@@ -340,6 +342,12 @@ def train_and_evaluate():
                     sys.exit(C.EXIT_TOO_LARGE)
                 except StoppedError as error:
                     logging.warning("Stopped: %s", error)
+                    sys.exit(C.EXIT_STOPPED)
+                if trainer.stop_requested:
+                    # SIGUSR1 in the last epoch: this run completed and its
+                    # state is saved; a relaunch evaluates it and goes on.
+                    logging.warning("Stopped after %s (%s) completed.",
+                                    model_name, direction)
                     sys.exit(C.EXIT_STOPPED)
             else:
                 trainer.load_checkpoint()

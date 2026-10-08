@@ -19,11 +19,14 @@ import hashlib
 
 import json
 import os
+import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -43,6 +46,7 @@ from floatsense.trainer import ModelTooLargeError
 from floatsense.trainer import STOP_REQUESTED
 from floatsense.trainer import StoppedError
 from floatsense.trainer import SequenceModelTrainer
+from floatsense.trainer import _atomic_save
 from floatsense.trainer import _rng_state
 from floatsense.trainer import _set_rng_state
 from floatsense.trainer import lr_factor
@@ -156,6 +160,10 @@ class DefaultsTest(unittest.TestCase):
         """Same losses, weights and torch random state after training as
         the published trainer, run for run (Adam, no clipping, constant
         rate, validation by loss)."""
+        # The sha256 values (weights and torch random state) are specific to
+        # the CPU and the torch build they were generated on: on another
+        # platform, regenerate tests/data/trainer_fingerprints.json with the
+        # trainer of the main branch before comparing.
         with open(FINGERPRINTS, encoding="utf-8") as file:
             reference = json.load(file)
         train_ids, val_ids = ids()
@@ -400,6 +408,164 @@ class TunedRunTest(unittest.TestCase):
                 torch.save(saved, path)
                 self.assert_same_run(*self.resumed_in(out))
 
+    def init_copy(self) -> str:
+        """A copy of the final checkpoint of the run, to start from."""
+        path = os.path.join(tempfile.mkdtemp(dir=self.out.name), "init.pt")
+        shutil.copy(self.trainer.checkpoint_path(), path)
+        return path
+
+    def test_resume_with_init_checkpoint(self):
+        """With an initial checkpoint, a resumed run keeps the normalization
+        stats of its resume state; the same path with other contents is
+        refused."""
+        init = self.init_copy()
+        out = self.interrupted(1e9, init_checkpoint=init)
+        path = tuned(out).resume_path()
+        saved = torch.load(path, weights_only=False)
+        with open(init, "rb") as file:
+            digest = hashlib.sha256(file.read()).hexdigest()
+        self.assertEqual(saved["config"]["init_checkpoint_sha256"], digest)
+        stats = {
+            k: [v[0] + 1.0, v[1] * 2.0] for k, v in saved["norm_stats"].items()
+        }
+        saved["norm_stats"] = stats
+        torch.save(saved, path)
+        trainer = tuned(out, init_checkpoint=init)
+        trainer.train(*ids())
+        self.assertEqual(trainer.norm_stats, stats)
+        checkpoint = torch.load(init, weights_only=False)
+        checkpoint["norm_stats"] = stats
+        torch.save(checkpoint, init)
+        with self.assertRaisesRegex(ConfigMismatchError,
+                                    "init_checkpoint_sha256"):
+            tuned(out, init_checkpoint=init).train(*ids())
+
+    def test_relative_paths_resume(self):
+        """./init.pt and init.pt are the same initial checkpoint: the real
+        path is stored, and a state that stored the path as given still
+        resumes."""
+        init = self.init_copy()
+        cwd = os.getcwd()
+        os.chdir(os.path.dirname(init))
+        try:
+            out = self.interrupted(1e9, init_checkpoint="./init.pt")
+            path = tuned(out).resume_path()
+            saved = torch.load(path, weights_only=False)
+            self.assertEqual(saved["config"]["init_checkpoint"],
+                             os.path.realpath(init))
+            self.assertIsNone(saved["config"]["calibration_path"])
+            saved["config"]["init_checkpoint"] = "./init.pt"
+            torch.save(saved, path)
+            trainer = tuned(out, init_checkpoint="init.pt")
+            history = trainer.train(*ids())
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(len(history["train_loss"]), 4)
+
+    def test_calibration_digest(self):
+        """The calibration is stored by real path and by the digest of its
+        contents: the same file with other contents is refused."""
+        folder = tempfile.mkdtemp(dir=self.out.name)
+        path = os.path.join(folder, "calibration_fa.json")
+        configs = []
+        for text in ('{"gain": 1}', '{"gain": 2}'):
+            with open(path, "w", encoding="utf-8") as file:
+                file.write(text)
+            trainer = tuned(folder, calibration_path=path)
+            configs.append(trainer._run_config(*ids()))
+        self.assertEqual(configs[0]["calibration_path"], os.path.realpath(path))
+        self.assertEqual(configs[0]["calibration_sha256"],
+                         hashlib.sha256(b'{"gain": 1}').hexdigest())
+        trainer._config = configs[1]
+        with self.assertRaisesRegex(ConfigMismatchError, "calibration_sha256"):
+            trainer._check_run_config({"config": configs[0]})
+        trainer._check_run_config({"config": configs[1]})
+
+    def test_model_kwargs_mismatch_is_config_mismatch(self):
+        """A state stored before the configuration held the model knobs is
+        refused for other knobs with ConfigMismatchError."""
+        out = self.interrupted(1e9)
+        path = tuned(out).resume_path()
+        saved = torch.load(path, weights_only=False)
+        del saved["config"]["model_kwargs"]
+        saved["model_kwargs"] = dict(TINY, dropout=0.2)
+        torch.save(saved, path)
+        with self.assertRaisesRegex(ConfigMismatchError, "Resume state of"):
+            tuned(out).train(*ids())
+
+    def test_stop_in_last_epoch(self):
+        """SIGUSR1 during the last epoch: the run completes and records the
+        request in `stop_requested`; the request does not outlive it."""
+        out = tempfile.mkdtemp(dir=self.out.name)
+        STOP_REQUESTED.set()
+        try:
+            trainer = tuned(out, num_epochs=1, val_every=1, save_epochs=[])
+            trainer.train(*ids())
+            self.assertTrue(trainer.stop_requested)
+            self.assertFalse(STOP_REQUESTED.is_set())
+        finally:
+            STOP_REQUESTED.clear()
+        saved = torch.load(trainer.resume_path(), weights_only=False)
+        self.assertTrue(saved["completed"])
+        trainer = tuned(out, num_epochs=1, val_every=1, save_epochs=[])
+        trainer.train(*ids())
+        self.assertFalse(trainer.stop_requested)
+
+    def test_temporary_name(self):
+        """A temporary is named <path>.tmp.<host>.<pid>.<uuid8>."""
+        folder = tempfile.mkdtemp(dir=self.out.name)
+        path = os.path.join(folder, "tcn_fa.pt")
+        with mock.patch("floatsense.trainer.os.replace") as replace:
+            _atomic_save({}, path)
+        tmp = replace.call_args[0][0]
+        self.assertEqual(replace.call_args[0][1], path)
+        pattern = (re.escape(f"{path}.tmp.{socket.gethostname()}."
+                             f"{os.getpid()}.") + "[0-9a-f]{8}")
+        self.assertRegex(tmp, "^" + pattern + "$")
+        self.assertTrue(os.path.isfile(tmp))
+
+    def test_temporaries_across_hosts(self):
+        """A temporary is kept only if written on this host by another live
+        process less than max(3 checkpoint intervals, 1 h) ago, in the new
+        and the older naming."""
+        out = tempfile.mkdtemp(dir=self.out.name)
+        host, live = socket.gethostname(), os.getppid()
+        stem = make(out).checkpoint_path()
+        old = time.time() - 2 * 3600.0
+        files = {
+            f"{stem}.tmp.{host}.{live}.0123abcd": (None, True),
+            f"{stem}.tmp.{host}.{dead_pid()}.0123abcd": (None, False),
+            f"{stem}.tmp.other.host.{live}.0123abcd": (None, False),
+            f"{stem}.tmp.{host}.{live}.4567cdef": (old, False),
+            f"{stem}.tmp.{live}": (old, False),
+            f"{stem}.tmp.{host}.{live}.0123": (None, False),
+        }
+        for path, (mtime, _) in files.items():
+            with open(path, "w", encoding="utf-8") as file:
+                file.write("partial")
+            if mtime is not None:
+                os.utime(path, (mtime, mtime))
+        live_pids = {live}
+        kill = os.kill
+
+        def kill_some(pid, sig):
+            if pid in live_pids:
+                return None
+            return kill(pid, sig)
+
+        with mock.patch("floatsense.trainer.os.kill", kill_some):
+            make(out)._remove_stale_temporaries()
+        for path, (_, kept) in files.items():
+            self.assertEqual(os.path.exists(path), kept, path)
+        # Longer checkpoint intervals keep a temporary longer.
+        path = f"{stem}.tmp.{host}.{live}.89abcdef"
+        with open(path, "w", encoding="utf-8") as file:
+            file.write("partial")
+        os.utime(path, (old, old))
+        with mock.patch("floatsense.trainer.os.kill", kill_some):
+            make(out, checkpoint_seconds=7200.0)._remove_stale_temporaries()
+        self.assertTrue(os.path.exists(path))
+
     def test_stale_temporaries_removed(self):
         """Temporary files of a killed save of this run are removed; other
         files are kept."""
@@ -600,8 +766,9 @@ class GuardsTest(unittest.TestCase):
 
 # Runs main() of scripts/train/run.py with a recording trainer: prints the
 # trainer arguments, the SIGUSR1 handler while the tower loads and during
-# each train(), and the handler after main(). With 'kill', SIGUSR1 arrives
-# while the tower loads; with 'kill_train', during the second train() (the
+# each train(), the evaluated models and the handler after main(). With
+# 'kill', SIGUSR1 arrives while the tower loads; with 'kill_train' = n,
+# during the n-th train(), which then completes as in a last epoch (the
 # default action of SIGUSR1 would end the process).
 RUN_MAIN = """
 import json, os, signal, sys
@@ -618,12 +785,20 @@ def load_tower(*args):
 class Recorder:
     def __init__(self, **kwargs):
         seen["checkpoint_seconds"] = kwargs["checkpoint_seconds"]
+        self.name = kwargs["model_name"] + "_" + kwargs["direction"]
+        self.stop_requested = False
     def train(self, *args):
         seen.setdefault("training", []).append(
             signal.getsignal(signal.SIGUSR1) is T.request_stop)
-        if {kill_train!r} and len(seen["training"]) == 2:
+        if len(seen["training"]) == {kill_train!r}:
             os.kill(os.getpid(), signal.SIGUSR1)
             seen["stop_requested"] = T.STOP_REQUESTED.is_set()
+        seen.setdefault("completed", []).append(self.name)
+        self.stop_requested = T.STOP_REQUESTED.is_set()
+        T.STOP_REQUESTED.clear()
+    def evaluate(self, *args, **kwargs):
+        seen.setdefault("evaluated", []).append(self.name)
+        return {{}}
 run.load_tower, run.SequenceModelTrainer = load_tower, Recorder
 run.FLAGS(["run"] + sys.argv[1:])
 try:
@@ -638,7 +813,7 @@ print("SEEN " + json.dumps(seen))
 class ScriptSignalTest(unittest.TestCase):
     """--checkpoint_seconds and the SIGUSR1 handler of run.py."""
 
-    def run_main(self, *flags, kill=False, kill_train=False) -> dict:
+    def run_main(self, *flags, kill=False, kill_train=0) -> dict:
         """What the recording trainer saw (see RUN_MAIN)."""
         with tempfile.TemporaryDirectory() as out:
             result = subprocess.run([
@@ -673,6 +848,7 @@ class ScriptSignalTest(unittest.TestCase):
                 "loading": True,
                 "checkpoint_seconds": C.CHECKPOINT_SECONDS,
                 "training": [True],
+                "completed": ["tcn_fa"],
                 "after": True
             })
         seen = self.run_main()
@@ -685,10 +861,29 @@ class ScriptSignalTest(unittest.TestCase):
         requests a stop instead of ending the process."""
         for flag in ("--models=tcn,lstm", "--directions=fa,ss"):
             with self.subTest(flag=flag):
-                seen = self.run_main("--resume", flag, kill_train=True)
+                seen = self.run_main("--resume", flag, kill_train=2)
                 self.assertEqual(seen["training"], [True, True])
                 self.assertTrue(seen["stop_requested"])
+                self.assertEqual(seen["exit"], C.EXIT_STOPPED)
                 self.assertTrue(seen["after"])
+
+    def test_stop_in_last_epoch(self):
+        """SIGUSR1 during the last epoch of the first of two models: the
+        run completes, then the script exits with EXIT_STOPPED before its
+        evaluation and the next model."""
+        seen = self.run_main("--resume",
+                             "--models=tcn,lstm",
+                             "--num_epochs=1",
+                             "--run_evaluation=True",
+                             kill_train=1)
+        self.assertEqual(seen["exit"], C.EXIT_STOPPED)
+        self.assertEqual(seen["completed"], ["tcn_fa"])
+        self.assertNotIn("evaluated", seen)
+        self.assertTrue(seen["after"])
+        seen = self.run_main("--resume", "--models=tcn,lstm", "--num_epochs=1",
+                             "--run_evaluation=True")
+        self.assertNotIn("exit", seen)
+        self.assertEqual(seen["evaluated"], ["tcn_fa", "lstm_fa"])
 
     def test_signal_during_startup(self):
         """SIGUSR1 while the data loads: clean stop (EXIT_STOPPED), no

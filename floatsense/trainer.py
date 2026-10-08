@@ -30,8 +30,10 @@ import multiprocessing
 import os
 import random
 import signal
+import socket
 import threading
 import time
+import uuid
 
 # cuBLAS needs this before its first call to run deterministically.
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
@@ -143,29 +145,65 @@ def _set_rng_state(state: Dict) -> None:
 
 def _atomic_save(obj, path: str) -> None:
     """torch.save through a temporary file and a rename (never half
-    written, even if the job is killed)."""
+    written, even if the job is killed).
+
+    The temporary is <path>.tmp.<host>.<pid>.<uuid8>, unique across the
+    hosts that share a file system (see `_temporary_in_flight`).
+    """
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = f"{path}.tmp.{os.getpid()}"
+    tmp = (f"{path}.tmp.{socket.gethostname()}.{os.getpid()}."
+           f"{uuid.uuid4().hex[:8]}")
     torch.save(obj, tmp)
     os.replace(tmp, path)
 
 
-def _writer_alive(path: str) -> bool:
-    """Whether the <pid> suffix of a temporary file of `_atomic_save` is
-    another live process on this host (a process of another user counts as
-    alive)."""
-    suffix = path.rsplit(".", 1)[-1]
-    if not suffix.isdigit() or int(suffix) in (0, os.getpid()):
+def _temporary_writer(path: str) -> Optional[tuple]:
+    """(host, pid) of a temporary file of `_atomic_save`, None if the name
+    does not follow its pattern. The older <path>.tmp.<pid> pattern counts
+    as written on this host."""
+    suffix = path.rsplit(".tmp.", 1)[-1]
+    if suffix.isdigit():
+        return socket.gethostname(), int(suffix)
+    parts = suffix.rsplit(".", 2)
+    if (len(parts) == 3 and parts[0] and parts[1].isdigit() and
+            len(parts[2]) == 8 and
+            all(c in "0123456789abcdef" for c in parts[2])):
+        return parts[0], int(parts[1])
+    return None
+
+
+def _temporary_in_flight(path: str, max_age: float) -> bool:
+    """Whether a temporary file of `_atomic_save` may be the save in flight
+    of a concurrent writer: written on this host by another live process (a
+    process of another user counts as alive) and modified less than
+    `max_age` seconds ago. A pid seen from another host means nothing, and
+    an old temporary of a live pid is a leak of a reused pid."""
+    writer = _temporary_writer(path)
+    if writer is None or writer[0] != socket.gethostname():
+        return False
+    pid = writer[1]
+    if pid in (0, os.getpid()):
         return False
     try:
-        os.kill(int(suffix), 0)
-    except ProcessLookupError:
+        if time.time() - os.path.getmtime(path) >= max_age:
+            return False
+        os.kill(pid, 0)
+    except (ProcessLookupError, FileNotFoundError, OverflowError):
         return False
     except PermissionError:
         return True
-    except OverflowError:
-        return False
     return True
+
+
+def _file_sha256(path: Optional[str]) -> Optional[str]:
+    """sha256 of the bytes of a file (None for no file)."""
+    if path is None:
+        return None
+    digest = hashlib.sha256()
+    with open(path, "rb") as file:
+        for block in iter(lambda: file.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def _ids_hash(train_ids: List[int], val_ids: Optional[List[int]]) -> str:
@@ -350,6 +388,7 @@ class SequenceModelTrainer:
         self.save_epochs = set(save_epochs or [])
         self.checkpoint_seconds = checkpoint_seconds
         self._previous_handler = None
+        self.stop_requested = False
         self._config = None
         self.model = None
         self.norm_stats = None
@@ -452,6 +491,9 @@ class SequenceModelTrainer:
             dict: Per-epoch mean training loss under 'train_loss' and, with
             `val_ids`, the validation loss under 'val_loss' (epoch, value)
             or the damage scores under 'val_r2' (one dict per validation).
+            A SIGUSR1 during the last epoch saves the state and lets the
+            run complete; `stop_requested` is then True, and the caller
+            should stop before its next run.
 
         Raises:
             DivergedError: A training loss or a damage-validation prediction
@@ -463,12 +505,17 @@ class SequenceModelTrainer:
             StoppedError: SIGUSR1 in a resumable run (state saved).
             ConfigMismatchError: The resume state of the output directory
               was written with another run configuration (another
-              `num_epochs` included: a longer run needs a new directory).
+              `num_epochs` or `model_kwargs` included: a longer run needs a
+              new directory).
         """
         self._previous_handler = None
+        self.stop_requested = False
         try:
             return self._train(train_ids, val_ids)
         finally:
+            # A request during the last epoch saves and lets the run
+            # complete: the caller reads it here and stops.
+            self.stop_requested = STOP_REQUESTED.is_set()
             STOP_REQUESTED.clear()
             if self._previous_handler is not None:
                 signal.signal(signal.SIGUSR1, self._previous_handler[0])
@@ -522,7 +569,9 @@ class SequenceModelTrainer:
                                     map_location=self.device,
                                     weights_only=False)
             self._check_setup(init_state, probe)
-            self.norm_stats = init_state["norm_stats"]
+            # A resumed run keeps the stats it trained with.
+            self.norm_stats = (init_state["norm_stats"] if resume_state is None
+                               else resume_state["norm_stats"])
             self.model_kwargs = (self.model_kwargs or
                                  init_state.get("model_kwargs", {}))
         elif resume_state is not None:
@@ -580,7 +629,7 @@ class SequenceModelTrainer:
         best_epoch, best_state, start_epoch = 0, None, 0
         if resume_state is not None:
             if resume_state["model_kwargs"] != self.model_kwargs:
-                raise ValueError(
+                raise ConfigMismatchError(
                     f"Resume state of {resume_state['model_kwargs']}"
                     f", run configured with {self.model_kwargs}.")
             self.model.load_state_dict(resume_state["state_dict"])
@@ -598,8 +647,7 @@ class SequenceModelTrainer:
                 flush=True)
             self._print_val_history(history)
         last_save = time.monotonic()
-        checkpoint_seconds = (CHECKPOINT_SECONDS if self.checkpoint_seconds
-                              is None else self.checkpoint_seconds)
+        checkpoint_seconds = self._checkpoint_interval()
         if (self.resume and
                 threading.current_thread() is threading.main_thread()):
             # Restored by `train` when the run returns or raises.
@@ -777,11 +825,16 @@ class SequenceModelTrainer:
         tower, the task (inputs, target, scored window, damage metric), the
         recipe and the training simulations. The number of epochs is one of
         them, so a finished or interrupted run is never extended in place:
-        a longer run goes to a new output directory.
+        a longer run goes to a new output directory. The calibration and
+        the initial checkpoint are stored by real path and by the sha256 of
+        their contents (read once per run).
         """
 
         def as_list(values) -> Optional[List]:
             return None if values is None else list(values)
+
+        def real_path(path: Optional[str]) -> Optional[str]:
+            return None if path is None else os.path.realpath(path)
 
         return {
             "tower": getattr(self.release, "name", None),
@@ -794,8 +847,10 @@ class SequenceModelTrainer:
             "height_targets": bool(self.height_targets),
             "height_factors": (None if self.height_factors is None else
                                [float(f) for f in self.height_factors]),
-            "calibration_path": self.calibration_path,
-            "init_checkpoint": self.init_checkpoint,
+            "calibration_path": real_path(self.calibration_path),
+            "calibration_sha256": _file_sha256(self.calibration_path),
+            "init_checkpoint": real_path(self.init_checkpoint),
+            "init_checkpoint_sha256": _file_sha256(self.init_checkpoint),
             "min_time": self.min_time,
             "max_time": self.max_time,
             "apply_lowpass": self.apply_lowpass,
@@ -834,6 +889,11 @@ class SequenceModelTrainer:
         if saved is None:
             return
         current = self._config
+        saved = dict(saved)
+        for key in ("calibration_path", "init_checkpoint"):
+            # States written before the real path was stored.
+            if saved.get(key) is not None:
+                saved[key] = os.path.realpath(saved[key])
         changed = sorted(k for k in saved if saved[k] != current.get(k))
         if changed:
             details = ", ".join(
@@ -843,11 +903,18 @@ class SequenceModelTrainer:
                 f"configuration ({details}); use another output directory "
                 "or remove the resume state.")
 
+    def _checkpoint_interval(self) -> float:
+        """Wall time between two saves of the resume state [s]."""
+        return (CHECKPOINT_SECONDS
+                if self.checkpoint_seconds is None else self.checkpoint_seconds)
+
     def _remove_stale_temporaries(self) -> None:
-        """Removes the <file>.tmp.<pid> left by a killed `_atomic_save` of
-        the files this run writes (only those, only in its directory). A
-        temporary whose <pid> is another live process on this host is kept:
-        it may be the save in flight of a concurrent writer."""
+        """Removes the temporaries left by a killed `_atomic_save` of the
+        files this run writes (only those, only in its directory). A
+        temporary of another live process on this host, younger than
+        max(3 checkpoint intervals, 1 h), is kept: it may be the save in
+        flight of a concurrent writer (see `_temporary_in_flight`)."""
+        max_age = max(3.0 * self._checkpoint_interval(), 3600.0)
         stems = [self.checkpoint_path(), self.resume_path()]
         patterns = [glob.escape(stem) + ".tmp.*" for stem in stems]
         patterns.append(
@@ -857,7 +924,8 @@ class SequenceModelTrainer:
             "[0-9]*.pt.tmp.*")
         for pattern in patterns:
             for path in glob.glob(pattern):
-                if os.path.isfile(path) and not _writer_alive(path):
+                if (os.path.isfile(path) and
+                        not _temporary_in_flight(path, max_age)):
                     os.remove(path)
 
     def _save_resume(self, epoch: int, optimizer, scheduler, history: Dict,

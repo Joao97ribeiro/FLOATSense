@@ -1,8 +1,10 @@
 # pylint: disable=wrong-import-position
+# pylint: disable=use-dict-literal
 # pylint: disable=too-many-locals
 """Leaderboard of the validation-tuned track.
 
-Scores the sealed test outputs of phase 3 (hpo/final.py) with the scorer of
+Scores the sealed test outputs of phase 3 (hpo/final.py; only the runs with
+a SEALED_<model>.json marker that is not 'skipped') with the scorer of
 the benchmark (scripts/benchmark/run.py: R^2 of log10 damage, median damage
 ratio, fraction within a factor of two with cluster-bootstrap intervals,
 mean relative error and within-condition correlation, per gauge and regime
@@ -15,11 +17,13 @@ secondary_best/ (SECONDARY: the median best validation epoch of phase 2):
   leaderboard.csv     per model: each metric at the base, z/H 0.78, the top
                       and the mean of the 11 gauges, median over the seeds
                       per tower, then mean over the scored towers (group
-                      'all'); n_towers and missing_towers name the towers
-                      without a score (a shelved (model, tower) has no
-                      winner, and a pair whose final seeds all diverged has
-                      no test score), n_seeds_<tower> the seeds scored per
-                      tower. Only the models scored on every tower are
+                      'all'); n_towers counts the towers scored with all
+                      N_SEEDS final seeds, missing_towers names the others
+                      (a shelved (model, tower) has no winner, a pair whose
+                      final seeds all diverged has no test score, and a
+                      tower with a diverged seed has fewer seeds: its score
+                      stays visible), n_seeds_<tower> the seeds scored per
+                      tower. Only the models with every tower complete are
                       ranked (ranked = True, first, by the mean of 11);
                       the others follow, unranked, by name (a model with no
                       scored tower has an empty row)
@@ -108,6 +112,16 @@ def score(sealed_root: str, dataset_dir: str, out: str,
     table = pd.read_csv(path)
     table = table[(table["direction"] == "fa") &
                   table["model"].isin(S.LEARNED)].copy()
+    markers = {
+        key:
+            common.read_json(
+                os.path.join(sealed_root, key[1], f"SEALED_{key[0]}.json"))
+        for key in set(zip(table["model"], table["run"]))
+    }
+    table = table[[
+        bool(markers[key]) and not markers[key].get("skipped")
+        for key in zip(table["model"], table["run"])
+    ]].copy()
     parts = table["run"].str.split("/", expand=True)
     table["tower"] = parts[0]
     table["seed"] = parts[1].str.replace("seed", "").astype(int)
@@ -134,29 +148,32 @@ def per_tower(table: pd.DataFrame) -> pd.DataFrame:
 
 def leaderboard(towers: pd.DataFrame) -> pd.DataFrame:
     """Mean over the scored towers of the per-tower medians, one row per
-    model and group, one column per metric and position; n_towers and
-    missing_towers name the towers without a score."""
+    model and group, one column per metric and position; n_towers counts
+    the towers with all N_SEEDS seeds and missing_towers names the others
+    (scored with fewer seeds, or not at all)."""
     mean = towers.groupby(["model", "group", "position"],
                           as_index=False)[list(METRICS)].mean()
     wide = mean.pivot(index=["model", "group"], columns="position")
     wide.columns = [f"{metric}_{position}" for metric, position in wide.columns]
     wide = wide.reset_index()
     wide["family"] = wide["model"].map(S.FAMILIES)
-    scored = towers.groupby("model")["tower"].agg(set)
-    wide["n_towers"] = wide["model"].map(lambda m: len(scored[m]))
-    wide["missing_towers"] = wide["model"].map(
-        lambda m: ",".join(t for t in C.TOWERS_SEARCHED if t not in scored[m]))
-    if "n_seeds" in towers.columns:
-        seeds = towers.groupby(["model", "tower"])["n_seeds"].max()
-        for tower in C.TOWERS_SEARCHED:
-            wide[f"n_seeds_{tower}"] = wide["model"].map(
-                lambda m, t=tower: int(seeds.get((m, t), 0)))
+    seeds = towers.groupby(["model", "tower"])["n_seeds"].max()
+    complete = {
+        m: [t for t in C.TOWERS_SEARCHED if seeds.get((m, t), 0) == C.N_SEEDS]
+        for m in wide["model"]
+    }
+    wide["n_towers"] = wide["model"].map(lambda m: len(complete[m]))
+    wide["missing_towers"] = wide["model"].map(lambda m: ",".join(
+        t for t in C.TOWERS_SEARCHED if t not in complete[m]))
+    for tower in C.TOWERS_SEARCHED:
+        wide[f"n_seeds_{tower}"] = wide["model"].map(
+            lambda m, t=tower: int(seeds.get((m, t), 0)))
     return ordered(wide)
 
 
 def ordered(board: pd.DataFrame) -> pd.DataFrame:
-    """Ranked models (scored on every tower) first, by the mean of 11 (ties
-    by name); then the unranked ones by name."""
+    """Ranked models (every tower scored with N_SEEDS seeds) first, by the
+    mean of 11 (ties by name); then the unranked ones by name."""
     board = board.assign(ranked=board["n_towers"] == len(C.TOWERS_SEARCHED))
     ranked = board[board["ranked"]].sort_values(
         ["r2_log_damage_mean11", "model"],
@@ -184,9 +201,8 @@ def with_missing(board: pd.DataFrame) -> pd.DataFrame:
 
 def rankings(board: pd.DataFrame) -> tuple:
     """Top-3 per criterion and best model of each family per criterion,
-    among the models scored on every tower."""
-    learned = board[board["model"].isin(S.LEARNED) &
-                    (board["n_towers"] == len(C.TOWERS_SEARCHED))]
+    among the ranked models."""
+    learned = board[board["model"].isin(S.LEARNED) & board["ranked"]]
     top3, families = [], []
     for criterion in CRITERIA:
         column = f"r2_log_damage_{criterion}"
@@ -288,22 +304,16 @@ def gpu_hours(root: str) -> pd.DataFrame:
             study = os.path.basename(os.path.dirname(os.path.dirname(path)))
             model, tower = study.rsplit("_", 1)
             events = (common.read_json(path) or {}).get("events", [])
-            rows.append({
-                "model":
-                    model,
-                "tower":
-                    tower,
-                "phase":
-                    phase,
-                "runs":
-                    1,
-                "attempts":
-                    len(events),
-                "killed":
-                    sum(common.event_status(e) == "killed" for e in events),
-                "gpu_hours":
-                    sum(e.get("seconds") or 0.0 for e in events) / 3600
-            })
+            rows.append(
+                dict(model=model,
+                     tower=tower,
+                     phase=phase,
+                     runs=1,
+                     attempts=len(events),
+                     killed=sum(
+                         common.event_status(e) == "killed" for e in events),
+                     gpu_hours=sum(e.get("seconds") or 0.0 for e in events) /
+                     3600))
     columns = [
         "model", "tower", "phase", "runs", "attempts", "killed", "gpu_hours"
     ]
@@ -433,6 +443,9 @@ def write_synthetic(root: str,
                     pd.DataFrame(frame).to_csv(os.path.join(
                         runs, f"damage_comparison_{model}_fa.csv"),
                                                index=False)
+                    common.write_json(
+                        os.path.join(runs, f"SEALED_{model}.json"),
+                        {"variant": variant})
     for model in S.LEARNED:
         for tower in C.TOWERS_SEARCHED:
             common.write_json(

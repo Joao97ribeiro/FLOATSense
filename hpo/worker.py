@@ -3,74 +3,52 @@
 """Worker of the validation-tuned track: picks units and runs them.
 
 One worker per GPU. It loops: advance the phases (pick.advance), pick the
-next unit of its models (pick.pick), run it through the drivers (a search
-trial with hpo/search.py, a confirmation unit with hpo/confirm.py, a final
-unit with hpo/final.py; each resumes from its checkpoint), and record it:
+next unit of its models (pick.pick), run it through its driver
+(hpo/search.py, hpo/confirm.py or hpo/final.py; each resumes from its
+checkpoint), and record it:
 
     python hpo/worker.py --root=<root> --models=tcn,fits \\
         --dataset_dir=<dataset> --python=<trainer python>
     python hpo/worker.py --dry_run --root=/tmp/hpo --models=tcn   # CPU stub
 
-Several workers (on one machine or on a cluster sharing the root) can run
-at once; which models a worker takes and how it is launched (a job
-scheduler, one process per GPU) are left to the site. A site can import
-`main` and pass a cost per model (pick order, slowest first).
+The default is one machine, one worker per GPU (CUDA_VISIBLE_DEVICES) on a
+shared --root; workers of several machines can share a root on a shared
+file system. Launching and restarting workers is the launcher's job,
+outside this repository; a launcher can import `main` and pass a cost per
+model (pick order, slowest first). --owner is the identity of a worker,
+stable across its restarts, and --restart its incarnation (default: the
+SLURM_RESTART_COUNT variable, else 0): a lock of the same owner with
+another restart count belongs to a dead incarnation and is taken back.
 
-Identity: --owner is the identity of the job (e.g. slurm-<job id>; it
-survives a requeue) and --restart its incarnation (default: the Slurm
-restart count, 0 outside Slurm). A lock of the same owner with another
-restart count belongs to a dead incarnation and is taken back at once.
-
-Progress: every run gets --checkpoint_seconds, the wall time between two
-resume saves of the trainer, so a run killed without notice loses at most
-that much (plus the epoch in progress at a stop request). A save costs a
-few seconds of GPU time, so the value depends on the class of the worker:
-CHECKPOINT_SECONDS (90 s, the default) on preemptible GPUs that can be
-killed at once; e.g. 300 s on local or non-preemptible GPUs, which stop on
-a signal at the end of an epoch. A unit whose last NO_PROGRESS_ATTEMPTS
-attempts all ended stopped, preempted or killed without a new resume save
-gets one alert (common.check_progress).
+Every run saves its resume state every --checkpoint_seconds (90 s by
+default, for GPUs that can be killed at once; e.g. 300 s for local GPUs).
+A unit that keeps crashing is shelved, and retried once after
+RETRY_SHELVED_AFTER (hpo/pick.py); a unit whose resume state belongs to
+another configuration is held for an operator (CONFIG_MISMATCH marker)
+and the worker goes on with other units. An exception of a driver or of
+the loop never shelves anything: it is logged and followed by a wait of
+--poll_seconds, with an alert after LOOP_ERRORS_ALERT in a row. While work
+remains but nothing can be picked (units held, shelved until their retry,
+or running elsewhere) the worker keeps polling, with one alert after
+--idle_minutes. Alerts are records in <root>/alerts/.
 
 Exit codes (the contract with the launcher):
-  0   every unit of its models done, idle for --idle_minutes, --max_units
-      reached, or <root>/STOP; do not restart (an idle exit while work
-      remains writes an alert record).
-  97  EXIT_CONFIG: a run refused its resume state (written with another
-      configuration, run.py exit code 6). The unit is held for an operator
-      (CONFIG_MISMATCH marker in its run directory, alert record), not
-      shelved; no worker picks it until the marker is removed.
-  98  EXIT_BROKEN: a broken host. The host is listed in
-      <root>/bad_hosts/<host>.json (reason, time) and no worker starts on
-      it (each exits 98 at once). The launcher must not requeue a 98 onto
-      the same host; an operator removes the file to re-admit the host.
-  99  EXIT_REQUEUE: stopped mid-unit (a signal, or its lock lost); restart
-      it (the same --owner resumes its unit first).
+  0   every unit of its models done (or shelved for good); also
+      --max_units reached or the file <root>/STOP. Do not restart.
+  98  EXIT_BROKEN: a broken machine. WORKER_FAILURES units in a row
+      shelved after their failures, of at least two different models (bad
+      environment, full disk, missing mount), or a GPU with less memory
+      than --min_gpu_gb. Do not restart it on the same machine.
+  99  EXIT_REQUEUE: stopped. A signal (SIGUSR1, SIGTERM, Ctrl-C: the
+      trainer ends its epoch and saves; a second signal is passed on as
+      SIGTERM), its lock taken over or not beaten LOCK_BEAT_FAILURES times
+      in a row (the unit stopped, its result dropped), MAX_LOOP_ERRORS
+      exceptions in a row, or any other exception of the worker. Restart
+      it; the same --owner resumes its unit first.
 
-Stopping:
-  - SIGUSR1 or SIGTERM (Slurm time limit or preemption, Ctrl-C): the
-    running trainer gets SIGUSR1, ends its epoch, saves its resume state
-    and exits; the worker keeps the unit as its own (the next incarnation
-    resumes it first) and exits with EXIT_REQUEUE. A second signal is
-    passed on as SIGTERM.
-  - its lock taken over by another worker (it was believed dead), or not
-    beaten LOCK_BEAT_FAILURES times in a row (the lock file unreadable):
-    stops its unit and exits (EXIT_REQUEUE); a result of the unit that
-    arrives after that is dropped, not recorded.
-  - a breaker (EXIT_BROKEN): WORKER_FAILURES units in a row shelved or
-    crashed, from at least two different studies (a broken host: bad
-    environment, full disk, missing mount), or MAX_LOOP_ERRORS exceptions
-    in a row of the loop itself (pick, advance). Failures of one study are
-    the study's: DRIVER_ERRORS_PARK exceptions of the drivers in a study
-    shelve the study (pick.driver_error), and the worker backs off
-    (POLL_SECONDS) and goes on. Out of memory and a configuration mismatch
-    never count. The units shelved by failures on a listed host are
-    un-shelved by a worker of another host (hpo/pick.py).
-
-Records: <root>/workers/<owner>.json (current unit, host, GPU; refreshed
-at every lock beat and idle poll, with the exit code at the end; the status
-page marks a record older than STALE_MINUTES without one as dead) and one
-event line per unit in <root>/events/<owner>.jsonl (start, end, status,
-seconds); both are read by hpo/status.py.
+Records, read by hpo/status.py: <root>/workers/<owner>.json (current unit,
+host, GPU; refreshed at every lock beat and idle poll, with the exit code
+at the end) and one event line per unit in <root>/events/<owner>.jsonl.
 """
 
 import argparse
@@ -125,7 +103,7 @@ def run(args: argparse.Namespace,
         lock: Optional[pick.Lock] = None) -> str:
     """Runs one unit through its driver; returns its status: 'trial' (a
     search trial told), 'done', 'parked' (shelved after its failures),
-    'oom' (out of memory: not the host's), 'config_mismatch' (held for an
+    'oom' (a search trial out of memory), 'config_mismatch' (held for an
     operator), 'stopped', 'lost' (the result dropped after a lock
     takeover), 'empty' (no trial to run: nothing was done), 'busy' (claimed
     by another process, e.g. a driver run by hand) or 'unfinished'."""
@@ -162,8 +140,7 @@ def run(args: argparse.Namespace,
     if common.held(run_dir):
         return "config_mismatch"
     if pick.unit_parked(args.root, unit):
-        marker = common.read_json(os.path.join(run_dir, "PARKED")) or {}
-        return "oom" if marker.get("reason") == "oom" else "parked"
+        return "parked"
     return "stopped" if common.STOP.is_set() else "unfinished"
 
 
@@ -195,7 +172,7 @@ def mark_exit(args: argparse.Namespace, code: int) -> int:
         path = pick.worker_path(args.root, args.owner)
         entry = common.read_json(path) or {"owner": args.owner}
         common.write_json(path, {**entry, "exit": code, "time": common.now()})
-    except (OSError, ValueError) as error:
+    except Exception as error:  # pylint: disable=broad-exception-caught
         print(f"worker {args.owner}: record not written ({error})", flush=True)
     return code
 
@@ -213,63 +190,41 @@ def event(args: argparse.Namespace, entry: dict) -> None:
         file.write(json.dumps({"owner": args.owner, **entry}) + "\n")
 
 
-def last_error(args: argparse.Namespace, unit: pick.Unit) -> str:
-    """The end of the log of the last parked run of a unit (from its alert
-    record), for the alert of a broken worker."""
-    if unit.phase == "search":
-        study = search.open_study(args.root,
-                                  unit.model,
-                                  unit.tower,
-                                  create=False)
-        parked = [
-            t for t in (study.get_trials(deepcopy=False) if study else [])
-            if t.user_attrs.get("parked")
-        ]
-        run_dir = (search.trial_run_dir(parked[-1]) if parked else None)
-    else:
-        run_dir = pick.run_dir(args.root, unit)
-    marker = common.read_json(os.path.join(run_dir,
-                                           "PARKED")) if run_dir else None
-    details = common.read_json(marker["alert"]) if marker else None
-    return (details or {}).get("tail", "")[-1500:]
-
-
 def run_locked(args: argparse.Namespace, unit: pick.Unit, lock: pick.Lock,
                gpu: Optional[str]) -> Dict:
-    """Runs a unit while beating its lock; records it.
+    """Runs a unit while beating its lock, records it and releases the lock
+    (if still ours) whatever happens.
 
     Returns:
-        dict: 'status' (see `run`, or 'crash' when the driver raised) and
-          'error' (the traceback of a crash, the log tail of a parked unit).
+        dict: 'status' (see `run`, or 'error' when the driver raised) and
+          'error' (the traceback of an error).
     """
-    record(args, unit, gpu)
-    start = time.time()
-    event(args, {"unit": pick.unit_id(unit), "start": common.now(), "gpu": gpu})
+    start, status, error = time.time(), "error", ""
+    try:
+        record(args, unit, gpu)
+        event(args, {
+            "unit": pick.unit_id(unit),
+            "start": common.now(),
+            "gpu": gpu
+        })
 
-    def lost():
-        print(f"worker: lock of {pick.unit_id(unit)} lost; stopping",
-              flush=True)
-        common.request_stop(signal.SIGTERM)
+        def lost():
+            print(f"worker: lock of {pick.unit_id(unit)} lost; stopping",
+                  flush=True)
+            common.request_stop(signal.SIGTERM)
 
-    error = ""
-    with pick.Beater(lock, lost, on_beat=lambda: touch_record(args)) as beater:
-        try:
-            status = run(args, unit, lock)
-        except Exception:  # pylint: disable=broad-exception-caught
-            # A driver error (full disk, missing mount, bad environment, a
-            # bad study): counted by the failure breaker of the worker and
-            # by the driver errors of the study.
-            status, error = "crash", traceback.format_exc()[-1500:]
-            print(error, flush=True)
-    if status == "parked":
-        try:
-            error = last_error(args, unit)
-        except Exception:  # pylint: disable=broad-exception-caught
-            error = traceback.format_exc()[-1500:]
-    if beater.lost:
-        status = "lost"
-    else:
-        lock.release()
+        with pick.Beater(lock, lost,
+                         on_beat=lambda: touch_record(args)) as beater:
+            try:
+                status = run(args, unit, lock)
+            except Exception:  # pylint: disable=broad-exception-caught
+                # Counted with the loop errors; never shelves the unit.
+                status, error = "error", traceback.format_exc()[-1500:]
+                print(error, flush=True)
+        if beater.lost:
+            status = "lost"
+    finally:
+        lock.release()  # only if still ours (best effort after a loss)
     if status not in ("stopped", "lost"):
         record(args, None, gpu)  # else the next incarnation resumes it
     event(
@@ -290,20 +245,18 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--root", default="outputs/hpo")
     parser.add_argument("--owner",
                         default=f"{socket.gethostname()}-{os.getpid()}",
-                        help="Stable identity (e.g. slurm-<job id>).")
+                        help="Stable identity (e.g. a job id).")
     parser.add_argument("--restart",
                         type=int,
                         default=int(os.environ.get("SLURM_RESTART_COUNT") or 0),
-                        help="Incarnation of the owner (Slurm restart count; "
-                        "a lock of the same owner with another count is "
-                        "taken back at once).")
+                        help="Incarnation of the owner (a lock of the same "
+                        "owner with another count is taken back at once).")
     parser.add_argument("--models",
                         default="all",
                         help="Models of this worker (comma list or all).")
     parser.add_argument("--tag",
                         default="",
-                        help="Free label of the worker record (e.g. the "
-                        "site's worker class).")
+                        help="Free label of the worker record.")
     parser.add_argument("--dataset_dir", default="data/FLOATSense")
     parser.add_argument("--python",
                         default=sys.executable,
@@ -322,6 +275,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                         default=C.CHECKPOINT_SECONDS,
                         help="Wall time between two resume saves of every "
                         "run (run.py --checkpoint_seconds).")
+    parser.add_argument("--min_gpu_gb",
+                        type=float,
+                        default=0.0,
+                        help="Refuse to start (exit 98) on a GPU with less "
+                        "memory, or of unknown memory (0: no check).")
     parser.add_argument("--idle_minutes", type=float, default=C.IDLE_MINUTES)
     parser.add_argument("--poll_seconds", type=float, default=C.POLL_SECONDS)
     parser.add_argument("--max_units",
@@ -337,54 +295,37 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     return args
 
 
-def _nothing_left(args: argparse.Namespace, idle_since: float) -> bool:
-    """Nothing to pick: True (exit) if every unit is done or the worker
-    has been idle for --idle_minutes (with an alert record if work
-    remains: units held, shelved on one host, or running elsewhere)."""
-    if pick.all_done(args.root, args.models, args.n_trials):
-        print(f"worker {args.owner}: every unit done", flush=True)
-        return True
-    if time.monotonic() - idle_since > args.idle_minutes * 60:
-        print(f"worker {args.owner}: idle, exiting", flush=True)
-        common.alert(
-            args.root, f"worker/{args.owner}",
-            "worker idle while work remains (units held, running "
-            "elsewhere, or shelved on this host only)", {
-                "owner": args.owner,
-                "models": args.models
-            })
-        return True
-    return False
+def _alert(args: argparse.Namespace, reason: str, **details) -> None:
+    """An alert record of this worker (best effort: never raises)."""
+    print(f"worker {args.owner}: {reason}", flush=True)
+    try:
+        common.alert(args.root, f"worker/{args.owner}", reason, {
+            "owner": args.owner,
+            "models": args.models,
+            **details
+        })
+    except Exception:  # pylint: disable=broad-exception-caught
+        print(traceback.format_exc()[-1500:], flush=True)
 
 
-def broken(args: argparse.Namespace,
-           failures: List[Dict],
-           gpu: Optional[str],
-           reason: Optional[str] = None) -> bool:
-    """The failure breaker: True once WORKER_FAILURES units in a row ended
-    parked or crashed on this worker, from at least two different studies
-    (or, with `reason`, at once); then the host is listed in
-    <root>/bad_hosts/ and an alert record (host, GPU, the units and their
-    last errors) is written."""
-    studies = {f.get("study") for f in failures}
-    if reason is None:
-        if len(failures) < C.WORKER_FAILURES or len(studies) < 2:
-            return False
-        reason = (f"{len(failures)} failed units in a row, in "
-                  f"{len(studies)} studies")
-    details = {"owner": args.owner, "gpu": gpu, "failures": failures}
-    host = common.add_bad_host(args.root, socket.gethostname(), reason, details)
-    path = common.alert(args.root, f"worker/{args.owner}",
-                        f"worker stopped: {reason}", {
-                            **details, "bad_host": host
-                        })
-    print(f"worker {args.owner}: {reason}, exiting (alert {path})", flush=True)
+def small_gpu(args: argparse.Namespace) -> bool:
+    """True (with an alert) if --min_gpu_gb is set and the visible GPU has
+    less memory, or its memory is unknown."""
+    if args.min_gpu_gb <= 0:
+        return False
+    memory = common.gpu_memory_gb()
+    if memory is not None and memory >= args.min_gpu_gb:
+        return False
+    _alert(args,
+           f"worker not started: GPU memory {memory} GB, below --min_gpu_gb "
+           f"{args.min_gpu_gb:g}",
+           gpu=common.gpu_name())
     return True
 
 
 def main(argv: Optional[List[str]] = None,
          cost: Optional[Dict[str, float]] = None) -> int:
-    """Picks and runs units until done, idle, stopped or signalled.
+    """Picks and runs units until done, stopped or signalled.
 
     Args:
         argv (List[str], optional): Command-line options.
@@ -392,83 +333,114 @@ def main(argv: Optional[List[str]] = None,
           order: most work left first).
 
     Returns:
-        int: 0 (done, idle or STOP file), EXIT_CONFIG (a configuration
-          mismatch), EXIT_BROKEN (a broken host) or EXIT_REQUEUE
-          (signalled, or its lock lost); see the module docstring.
+        int: 0 (done, --max_units or STOP file), EXIT_BROKEN or
+          EXIT_REQUEUE; see the module docstring.
     """
     args = parse_args(argv)
     for sig in (signal.SIGUSR1, signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, _on_signal)
     common.STUB_SECONDS = args.stub_seconds
     common.OWNER = args.owner
-    host = socket.gethostname()
-    if host in common.bad_hosts(args.root):
-        print(
-            f"worker {args.owner}: host {host} is listed in "
-            f"{common.bad_hosts_dir(args.root)}; not starting",
-            flush=True)
-        return C.EXIT_BROKEN
+    if small_gpu(args):
+        return mark_exit(args, C.EXIT_BROKEN)
     gpu = None if args.dry_run else common.gpu_name()
     print(
         f"worker {args.owner} ({args.tag or 'untagged'}, restart "
-        f"{args.restart}): "
-        f"{','.join(args.models)}",
+        f"{args.restart}): {','.join(args.models)}",
         flush=True)
-    return mark_exit(args, _loop(args, cost, gpu))
+    try:
+        code = _loop(args, cost, gpu)
+    except Exception:  # pylint: disable=broad-exception-caught
+        # A failure of the worker itself (its records, alerts, locks): the
+        # lock of its unit was released by run_locked.
+        _alert(args,
+               "worker stopped: exception",
+               error=traceback.format_exc()[-1500:])
+        code = C.EXIT_REQUEUE
+    return mark_exit(args, code)
 
 
-def _after(args: argparse.Namespace, unit: pick.Unit, outcome: Dict,
-           failures: List[Dict], gpu: Optional[str]) -> Optional[int]:
-    """Handles the outcome of a unit: the exit code of the worker, or None
-    to go on (after a back-off of --poll_seconds if nothing was run or the
-    unit failed). `failures` (the failed units in a row) is updated."""
+def _step(args: argparse.Namespace, cost: Optional[Dict[str, float]],
+          gpu: Optional[str]) -> Dict:
+    """One pass of the loop: advance, pick, run. Returns the outcome of the
+    unit, or status 'all_done' or 'idle' when nothing was picked."""
+    pick.advance(args.root, args.models, args.n_trials)
+    unit, lock = pick.pick(args.root, args.owner, args.restart, args.models,
+                           args.n_trials, cost)
+    if unit is None:
+        record(args, None, gpu)  # liveness
+        if pick.all_done(args.root, args.models, args.n_trials):
+            # Written here too: the advance lock may have been busy when
+            # the last units ended.
+            pick.mark_ready(args.root, args.n_trials)
+            return {"status": "all_done"}
+        return {"status": "idle"}
+    return {**run_locked(args, unit, lock, gpu), "unit": unit}
+
+
+def _breaker(args: argparse.Namespace, failures: List[Dict]) -> bool:
+    """True (with an alert) once WORKER_FAILURES units in a row were
+    shelved, from at least two different models."""
+    models = {f["model"] for f in failures}
+    if len(failures) < C.WORKER_FAILURES or len(models) < 2:
+        return False
+    _alert(args, f"worker stopped: {len(failures)} units in a row shelved, of "
+           f"{len(models)} models (a broken machine?)",
+           failures=failures)
+    return True
+
+
+def _after(args: argparse.Namespace, outcome: Dict,
+           loop: Dict) -> Optional[int]:
+    """Handles the outcome of one pass of the loop (`loop` holds the counts
+    of the loop); returns the exit code of the worker, or None to go on."""
     status = outcome["status"]
+    if status == "all_done":
+        print(f"worker {args.owner}: every unit done", flush=True)
+        return 0
     if status in ("stopped", "lost"):
         return C.EXIT_REQUEUE
-    if status == "config_mismatch":
-        common.alert(
-            args.root, f"worker/{args.owner}",
-            "worker stopped: configuration mismatch of "
-            f"{pick.unit_id(unit)} (held for an operator)", {
-                "owner": args.owner,
-                "unit": pick.unit_id(unit)
-            })
-        return C.EXIT_CONFIG
-    if status in ("done", "trial"):
-        failures.clear()
-    if status not in ("parked", "crash"):
-        if status in ("empty", "busy", "unfinished"):  # do not spin
-            common.STOP.wait(args.poll_seconds)
+    loop["errors"] = loop["errors"] + 1 if status == "error" else 0
+    if status == "error":
+        stop = loop["errors"] >= C.MAX_LOOP_ERRORS
+        if stop or loop["errors"] == C.LOOP_ERRORS_ALERT:
+            _alert(args, f"{loop['errors']} errors in a row"
+                   f"{', stopping' if stop else ''}",
+                   error=outcome["error"])
+        return C.EXIT_REQUEUE if stop else None
+    if status in ("idle", "empty", "busy", "unfinished"):
+        if (status == "idle" and not loop["idle_alerted"] and
+                time.monotonic() - loop["idle_since"] > args.idle_minutes * 60):
+            loop["idle_alerted"] = True
+            _alert(
+                args, "worker idle while work remains (units held, "
+                "shelved until their retry, or running elsewhere)")
         return None
-    if status == "crash":
-        try:
-            reason = pick.driver_error(args.root, unit, args.owner,
-                                       outcome["error"])
-            if reason:
-                print(
-                    f"worker {args.owner}: study of {pick.unit_id(unit)} "
-                    f"shelved ({reason})",
-                    flush=True)
-        except Exception:  # pylint: disable=broad-exception-caught
-            print(traceback.format_exc()[-1500:], flush=True)
-    failures.append({
-        "unit": pick.unit_id(unit),
-        "study": f"{unit.model}_{unit.tower}",
-        **outcome
-    })
-    if broken(args, failures, gpu):
-        return C.EXIT_BROKEN
-    common.STOP.wait(args.poll_seconds)  # back off, then retry
-    return None
+    unit = outcome["unit"]
+    if status == "parked":
+        loop["failures"].append({
+            "unit": pick.unit_id(unit),
+            "model": unit.model
+        })
+        if _breaker(args, loop["failures"]):
+            return C.EXIT_BROKEN
+    elif status in ("done", "trial"):
+        loop["failures"].clear()
+    loop.update(idle_since=time.monotonic(), idle_alerted=False)
+    loop["done"] += 1
+    return 0 if args.max_units and loop["done"] >= args.max_units else None
 
 
 def _loop(args: argparse.Namespace, cost: Optional[Dict[str, float]],
           gpu: Optional[str]) -> int:
     """The loop of `main`; returns the exit code."""
-    idle_since = time.monotonic()
-    done = 0
-    failures: List[Dict] = []  # consecutive failed units of this worker
-    errors: List[str] = []  # consecutive exceptions of the loop itself
+    loop = {
+        "idle_since": time.monotonic(),
+        "idle_alerted": False,
+        "done": 0,
+        "errors": 0,  # exceptions in a row
+        "failures": []  # units shelved in a row
+    }
     while True:
         if common.STOP.is_set():
             return C.EXIT_REQUEUE
@@ -476,39 +448,19 @@ def _loop(args: argparse.Namespace, cost: Optional[Dict[str, float]],
             print(f"worker {args.owner}: STOP file, exiting", flush=True)
             return 0
         try:
-            pick.advance(args.root, args.models, args.n_trials)
-            unit, lock = pick.pick(args.root, args.owner, args.restart,
-                                   args.models, args.n_trials, cost)
-            if unit is None:
-                record(args, None, gpu)  # liveness
-                if _nothing_left(args, idle_since):
-                    return 0
-            errors = []
+            outcome = _step(args, cost, gpu)
         except Exception:  # pylint: disable=broad-exception-caught
-            # A transient error of the shared file system: back off.
-            errors.append(traceback.format_exc()[-1500:])
-            print(errors[-1], flush=True)
-            if len(errors) >= C.MAX_LOOP_ERRORS and broken(
-                    args, [{
-                        "error": e
-                    } for e in errors[-3:]], gpu,
-                    f"{len(errors)} errors in a row of the worker loop"):
-                return C.EXIT_BROKEN
-            common.STOP.wait(args.poll_seconds)
-            continue
-        if unit is None:
-            common.STOP.wait(args.poll_seconds)
-            continue
-        outcome = run_locked(args, unit, lock, gpu)
-        code = _after(args, unit, outcome, failures, gpu)
+            outcome = {
+                "status": "error",
+                "error": traceback.format_exc()[-1500:]
+            }
+            print(outcome["error"], flush=True)
+        code = _after(args, outcome, loop)
         if code is not None:
             return code
-        if outcome["status"] in ("empty", "busy", "unfinished"):
-            continue  # nothing was run
-        idle_since = time.monotonic()
-        done += 1
-        if args.max_units and done >= args.max_units:
-            return 0
+        if outcome["status"] in ("error", "idle", "empty", "busy",
+                                 "unfinished"):
+            common.STOP.wait(args.poll_seconds)  # back off, do not spin
 
 
 if __name__ == "__main__":

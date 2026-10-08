@@ -1,14 +1,15 @@
 # pylint: disable=wrong-import-position
+# pylint: disable=use-dict-literal
 """Phase 3 of the validation-tuned track: retrain the winners, test once.
 
 The winner of every (model, tower) (hpo/confirm.py) is retrained on the
 full training split (FINAL_TRAIN_SPLIT, 1,728 simulations) with N_SEEDS
 seeds for EPOCHS_FINAL epochs, keeping the weights of the phase-2 median
 best epoch too. The test split is opened once, at the end, for every
-learned model and tower together, and only when each of them has its
-winner.json and a final result for all its units; a parked (model, tower)
-(hpo/confirm.py, hpo/pick.py) is the only exception, recorded as missing
-in <root>/sealed/MISSING.json:
+learned model and tower together, only once READY_FOR_TEST.json exists
+(hpo/pick.py) and each of them has its winner.json and a final result for
+all its units; a parked (model, tower) (hpo/confirm.py, hpo/pick.py) is
+the only exception, recorded as missing in <root>/sealed/MISSING.json:
 
     python hpo/final.py --model=tcn --tower=opt2   # train
     python hpo/final.py --open_test                # test, once
@@ -16,13 +17,14 @@ in <root>/sealed/MISSING.json:
 Each test score is written into a sealed directory,
 <root>/sealed/<variant>/<tower>/seed<k>/, in the layout of the
 within-tower runs (damage_comparison_<model>_fa.csv), with a
-SEALED_<model>.json marker; a sealed score is never computed again. A
-pair listed as parked in MISSING.json is never scored, even if it is
-un-parked later. A seed whose retraining diverged is skipped; the skipped
-seeds, and the pairs whose seeds all diverged (missing towers of the
-leaderboard), are listed in <root>/sealed/SKIPPED.json. The inference runs
-of the test are recorded in <root>/test_runs/<model>_<tower>/<variant>_s<k>/
-attempts.json (phase 'test' of gpu_hours.csv). Two variants are scored:
+SEALED_<model>.json marker; a sealed score is never computed again (and
+hpo/analyze.py reads only the runs with a marker). A pair listed as parked
+in MISSING.json is never scored. A seed whose retraining diverged is
+skipped; the skipped seeds, and the pairs whose seeds all diverged
+(missing towers of the leaderboard), are listed in
+<root>/sealed/SKIPPED.json. The inference runs of the test are recorded in
+<root>/test_runs/<model>_<tower>/<variant>_s<k>/attempts.json (phase
+'test' of gpu_hours.csv). Two variants are scored:
 
   primary_last     PRIMARY: the weights of the last epoch (the headline);
   secondary_best   SECONDARY: the weights of the median best validation
@@ -108,18 +110,16 @@ def train(args: argparse.Namespace,
                                            seed,
                                            validate=False,
                                            extra=keep)
-                result = common.run_unit(f"final/{model}_{tower}/s{seed}",
-                                         cmd,
-                                         run_dir,
-                                         args.root,
-                                         model,
-                                         config=record["winner_config"])
-            if result["status"] == "oom":  # a fixed configuration: no retry
-                common.park(args.root, f"final/{model}_{tower}/s{seed}",
-                            run_dir, "oom", common.read_attempts(run_dir),
-                            {"tail": result.get("tail", "")[-4000:]})
-            elif result["status"] not in ("parked", "stopped",
-                                          "config_mismatch"):
+                result = common.run_unit(
+                    f"final/{model}_{tower}/s{seed}",
+                    cmd,
+                    run_dir,
+                    args.root,
+                    model,
+                    config=record["winner_config"],
+                    owned=lambda d=run_dir: common.owns_claim(d),
+                    oom_ends=False)
+            if result["status"] not in ("parked", "stopped", "config_mismatch"):
                 common.write_once(
                     result_path, {
                         "status": result["status"],
@@ -201,24 +201,16 @@ def score(args: argparse.Namespace, model: str, tower: str, seed: int,
                          "test scoring failed", {"command": cmd})
             return
     common.write_once(
-        marker, {
-            "model":
-                model,
-            "tower":
-                tower,
-            "seed":
-                seed,
-            "variant":
-                variant,
-            "label":
-                VARIANT_LABELS[variant],
-            "epoch":
-                epoch,
-            "summary":
-                common.read_json(os.path.join(out, f"summary_{model}_fa.json")),
-            "time":
-                common.now()
-        })
+        marker,
+        dict(model=model,
+             tower=tower,
+             seed=seed,
+             variant=variant,
+             label=VARIANT_LABELS[variant],
+             epoch=epoch,
+             summary=common.read_json(
+                 os.path.join(out, f"summary_{model}_fa.json")),
+             time=common.now()))
 
 
 def missing_units(root: str) -> tuple:
@@ -269,9 +261,12 @@ def skipped(root: str) -> Dict:
 
 
 def open_test(args: argparse.Namespace) -> None:
-    """Opens the test split once for every learned model and tower (parked
-    pairs recorded as missing; a pair recorded as parked in MISSING.json is
-    never scored, even if it was un-parked since)."""
+    """Opens the test split once for every learned model and tower, once
+    READY_FOR_TEST.json exists (parked pairs recorded as missing; a pair
+    recorded as parked in MISSING.json is never scored)."""
+    if not os.path.exists(os.path.join(args.root, common.READY)):
+        sys.exit(f"the test opens only once {common.READY} exists in "
+                 f"{args.root} (written when every final unit is trained)")
     path = os.path.join(args.root, "sealed", "MISSING.json")
     stored = (common.read_json(path) or {}).get("parked", {})
     missing, parked = missing_units(args.root)
@@ -299,22 +294,13 @@ def open_test(args: argparse.Namespace) -> None:
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     """Command-line options."""
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--model", choices=sorted(S.SPACE))
-    parser.add_argument("--tower", choices=C.TOWERS_SEARCHED)
+    parser = common.driver_parser(__doc__,
+                                  C.EPOCHS_FINAL,
+                                  required=False,
+                                  n_trials=False)
     parser.add_argument("--open_test",
                         action="store_true",
                         help="Score the test of every model and tower, once.")
-    parser.add_argument("--root", default="outputs/hpo")
-    parser.add_argument("--dataset_dir", default="data/FLOATSense")
-    parser.add_argument("--extra", default="")
-    parser.add_argument("--python", default=sys.executable)
-    parser.add_argument("--dry_run", action="store_true")
-    parser.add_argument("--epochs", type=int, default=C.EPOCHS_FINAL)
-    parser.add_argument("--checkpoint_seconds",
-                        type=float,
-                        default=C.CHECKPOINT_SECONDS,
-                        help="Wall time between two resume saves of a run.")
     args = parser.parse_args(argv)
     if not args.open_test and not (args.model and args.tower):
         parser.error("--model and --tower (training) or --open_test")

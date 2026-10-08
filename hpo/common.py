@@ -13,20 +13,21 @@ handles failures:
   - NaN or divergence (exit code EXIT_DIVERGED) and a model above the
     parameter cap (EXIT_TOO_LARGE) are returned to the caller;
   - out of memory ('oom': "CUDA out of memory", OutOfMemoryError, "out of
-    memory" in the last lines) is returned to the caller, not retried and
-    not counted against the host (the configuration does not fit);
+    memory" in the last lines) is returned to the caller (a search trial:
+    the configuration does not fit), or with `oom_ends=False` (a fixed
+    configuration of phases 2 and 3) resumed as a crash;
   - a resume state of another configuration (EXIT_CONFIG_MISMATCH) is
     returned as 'config_mismatch' with an alert and a CONFIG_MISMATCH
     marker in the run directory; the unit is not parked, and no worker
     picks it until an operator removes the marker (after removing the
     resume state, or the run directory);
   - a crash is resumed from the last checkpoint, up to MAX_ATTEMPTS
-    attempts; then the unit is parked (PARKED marker, with the hosts of its
-    failures) and an alert record is written to <root>/alerts/;
+    attempts; then the unit is parked (PARKED marker) and an alert record
+    is written to <root>/alerts/;
   - a preemption (the run killed by a signal) or a hardware fault (CUDA
     error, ECC, Xid) is resumed without counting as an attempt;
-  - a stop request of the worker (`request_stop`: Slurm time limit,
-    preemption notice, STOP file) is passed to the run as SIGUSR1 (the
+  - a stop request of the worker (`request_stop`: a time limit, a
+    preemption notice) is passed to the run as SIGUSR1 (the
     trainer saves at the end of the epoch and exits with EXIT_STOPPED);
     the unit returns 'stopped' and is resumed by the next worker.
 
@@ -37,21 +38,20 @@ and status, pruned and preempted attempts included; analyze.py sums them
 into GPU-hours). An attempt is recorded when it starts, with status
 'running', and its end and seconds are updated by the heartbeat; an open
 attempt older than STALE_MINUTES was hard-killed ('killed', `event_status`)
-and its seconds still count.
+and its seconds still count. The record is written only while the unit is
+still ours (`owned`), merged by attempt with the file (`save_attempts`).
 
-A parked unit whose failures all came from a single host is un-parked once
-(`unpark`) when a worker of another host picks it (hpo/pick.py): the
-failures were probably the host's, not the unit's. A unit parked twice, or
-after failures on two hosts, stays parked. Failures on a host listed in
-<root>/bad_hosts/ (`bad_hosts`, written when a worker stops with
-EXIT_BROKEN) do not count: a unit parked by them only is un-parked by any
-other host. Nothing is un-parked once the test is ready (`test_frozen`).
+A parked unit is retried once (`retry_unit`, called by hpo/pick.py
+RETRY_SHELVED_AFTER after its parking) with its failure counts reset; a
+second parking is final, and so is every parking once the test is ready
+(`test_frozen`). An operator retries a unit by removing its PARKED marker.
 
 Every file the drivers share is written atomically (temporary file and
 rename), and the files that fix a decision (plans, sealed test results)
 are written once.
 """
 
+import argparse
 import datetime
 import functools
 import json
@@ -65,6 +65,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from typing import Callable, Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -81,7 +82,8 @@ CONFIG = os.path.join(REPO, "scripts", "train", "config.cfg")
 VAL_LINE = re.compile(r"^VAL epoch=(\d+) r2_mean=(\S+) r2_top=(\S+) "
                       r"r2_base=(\S+)(?: r2_gauges=(\S+))?")
 PARAMS_LINE = re.compile(r"^PARAMS trainable=(\d+)")
-# Signals of a preemption (Slurm sends TERM, then KILL after the grace time).
+# Signals of a preemption (a scheduler sends TERM, then KILL after a grace
+# time).
 PREEMPT_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGUSR1,
                    signal.SIGUSR2)
 HARDWARE = re.compile(
@@ -98,9 +100,6 @@ STOP = threading.Event()
 _CHILDREN: set = set()
 # Seconds per validation of the dry-run stub (0: instantaneous).
 STUB_SECONDS = 0.0
-# Outcomes of an attempt that are not failures of the host.
-NOT_FAILURES = ("ok", "pruned", "stopped", "diverged", "too_large", "oom",
-                "config_mismatch", "running")
 READY = "READY_FOR_TEST.json"  # marker: every final unit is trained
 # Marker of a unit whose resume state belongs to another configuration.
 HOLD = "CONFIG_MISMATCH"
@@ -114,13 +113,24 @@ def now() -> str:
     return datetime.datetime.now().isoformat(timespec="seconds")
 
 
-def write_json(path: str, obj) -> None:
-    """Writes JSON atomically (temporary file next to it, then rename)."""
+def tmp_path(path: str) -> str:
+    """A temporary name next to `path`, unique across processes and hosts."""
+    return (f"{path}.tmp.{socket.gethostname()}.{os.getpid()}."
+            f"{uuid.uuid4().hex[:8]}")
+
+
+def write_text(path: str, text: str) -> None:
+    """Writes a file atomically (temporary file next to it, then rename)."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = f"{path}.tmp.{os.getpid()}"
+    tmp = tmp_path(path)
     with open(tmp, "w", encoding="utf-8") as file:
-        json.dump(obj, file, indent=1)
+        file.write(text)
     os.replace(tmp, path)
+
+
+def write_json(path: str, obj) -> None:
+    """Writes JSON atomically."""
+    write_text(path, json.dumps(obj, indent=1))
 
 
 def write_once(path: str, obj) -> bool:
@@ -131,7 +141,7 @@ def write_once(path: str, obj) -> bool:
         bool: True if this call wrote the file.
     """
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = f"{path}.tmp.{os.getpid()}"
+    tmp = tmp_path(path)
     with open(tmp, "w", encoding="utf-8") as file:
         json.dump(obj, file, indent=1)
     try:
@@ -140,7 +150,10 @@ def write_once(path: str, obj) -> bool:
     except FileExistsError:
         return False
     finally:
-        os.remove(tmp)
+        try:
+            os.remove(tmp)
+        except FileNotFoundError:
+            pass
 
 
 def read_json(path: str):
@@ -170,7 +183,8 @@ def alert(root: str, unit: str, reason: str, details: Dict) -> str:
     """Writes an alert record to <root>/alerts/ and returns its path."""
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     name = re.sub(r"[^A-Za-z0-9_.-]", "_", unit)
-    path = os.path.join(root, "alerts", f"{stamp}_{name}.json")
+    path = os.path.join(root, "alerts",
+                        f"{stamp}_{name}_{uuid.uuid4().hex[:6]}.json")
     write_json(
         path, {
             "unit": unit,
@@ -205,18 +219,17 @@ def server_time(directory: str) -> float:
     return os.stat(path).st_mtime
 
 
-@functools.lru_cache(maxsize=1)
-def gpu_name() -> str:
-    """Name of the first visible GPU, or 'unknown'.
-
-    nvidia-smi is queried first (for the first device of
-    CUDA_VISIBLE_DEVICES), so the driver does not create a CUDA context on
-    the GPU of its runs; torch is asked only if it is already imported.
-    """
+def query_gpu(field: str) -> Optional[str]:
+    """A field of nvidia-smi (--query-gpu) for the first device of
+    CUDA_VISIBLE_DEVICES, or None (no GPU visible, no nvidia-smi). The
+    driver never imports torch for it, so it creates no CUDA context on
+    the GPU of its runs."""
     visible = os.environ.get("CUDA_VISIBLE_DEVICES")
     if visible is not None and not visible.strip():
-        return "unknown"  # no GPU visible
-    query = ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"]
+        return None  # no GPU visible
+    query = [
+        "nvidia-smi", f"--query-gpu={field}", "--format=csv,noheader,nounits"
+    ]
     if visible:
         query.append(f"--id={visible.split(',')[0].strip()}")
     try:
@@ -226,16 +239,22 @@ def gpu_name() -> str:
                              timeout=30,
                              check=False).stdout.strip()
     except (OSError, subprocess.SubprocessError):
-        out = ""
-    if out:
-        return out.splitlines()[0].strip()
-    torch = sys.modules.get("torch")
+        return None
+    return out.splitlines()[0].strip() if out else None
+
+
+def gpu_memory_gb() -> Optional[float]:
+    """Total memory of the first visible GPU in GB, or None if unknown."""
     try:
-        if torch is not None and torch.cuda.is_available():
-            return torch.cuda.get_device_name(0)
-    except (RuntimeError, AssertionError):
-        pass
-    return "unknown"
+        return float(query_gpu("memory.total")) / 1024
+    except (TypeError, ValueError):
+        return None
+
+
+@functools.lru_cache(maxsize=1)
+def gpu_name() -> str:
+    """Name of the first visible GPU, or 'unknown'."""
+    return query_gpu("name") or "unknown"
 
 
 def heartbeat_age(run_dir: str) -> float:
@@ -321,31 +340,16 @@ def busy(run_dir: str) -> bool:
     return holder.rpartition("|")[2] != _process() and not is_stale(run_dir)
 
 
-def bad_hosts_dir(root: str) -> str:
-    """Records of the hosts a worker stopped on with EXIT_BROKEN."""
-    return os.path.join(root, "bad_hosts")
-
-
-def bad_hosts(root: str) -> frozenset:
-    """The hosts listed in <root>/bad_hosts/ (an operator removes a file to
-    re-admit a host)."""
-    try:
-        names = os.listdir(bad_hosts_dir(root))
-    except FileNotFoundError:
-        return frozenset()
-    return frozenset(n[:-5] for n in names if n.endswith(".json"))
-
-
-def add_bad_host(root: str, host: str, reason: str, details: Dict) -> str:
-    """Lists `host` in <root>/bad_hosts/; returns the record path."""
-    path = os.path.join(bad_hosts_dir(root), f"{host}.json")
-    write_json(path, {"host": host, "reason": reason, "time": now(), **details})
-    return path
+def owns_claim(run_dir: str) -> bool:
+    """False once the claim of a unit is readable and another process's
+    (taken over); a claim missing or unreadable now counts as ours."""
+    holder = claim_holder(run_dir)
+    return holder is None or holder.rpartition("|")[2] == _process()
 
 
 def test_frozen(root: str) -> bool:
     """The test is ready (READY_FOR_TEST.json) or opened (sealed/): no
-    parked unit or study is un-parked any more."""
+    parking is retried any more."""
     return (os.path.exists(os.path.join(root, READY)) or
             os.path.exists(os.path.join(root, "sealed")))
 
@@ -432,6 +436,43 @@ def train_command(args,
     return cmd + shlex.split(args.extra) + list(extra or [])
 
 
+def driver_parser(doc: str,
+                  epochs: int,
+                  required: bool = True,
+                  n_trials: bool = True) -> argparse.ArgumentParser:
+    """The options shared by the drivers (search, confirm, final)."""
+    parser = argparse.ArgumentParser(description=doc.splitlines()[0])
+    parser.add_argument("--model", required=required, choices=sorted(S.SPACE))
+    parser.add_argument("--tower", required=required, choices=C.TOWERS_SEARCHED)
+    parser.add_argument("--root",
+                        default="outputs/hpo",
+                        help="Root of the track (studies, runs, alerts).")
+    parser.add_argument("--dataset_dir", default="data/FLOATSense")
+    parser.add_argument("--extra",
+                        default="",
+                        help="Extra run.py flags of every run.")
+    parser.add_argument("--python",
+                        default=sys.executable,
+                        help="Python that runs scripts/train/run.py.")
+    parser.add_argument("--dry_run",
+                        action="store_true",
+                        help="CPU stub instead of training.")
+    parser.add_argument("--epochs",
+                        type=int,
+                        default=epochs,
+                        help="Epochs per run (the protocol's value).")
+    parser.add_argument("--checkpoint_seconds",
+                        type=float,
+                        default=C.CHECKPOINT_SECONDS,
+                        help="Wall time between two resume saves of a run.")
+    if n_trials:
+        parser.add_argument("--n_trials",
+                            type=int,
+                            default=C.N_TRIALS,
+                            help="Budget per study (the protocol: N_TRIALS).")
+    return parser
+
+
 def history_path(run_dir: str, model: str) -> str:
     """History JSON written by the trainer at the end of a run."""
     return os.path.join(run_dir, f"history_{model}_fa.json")
@@ -492,6 +533,25 @@ def read_attempts(run_dir: str) -> Dict:
     record.setdefault("free", 0)
     record.setdefault("events", [])
     return record
+
+
+def save_attempts(run_dir: str,
+                  record: Dict,
+                  owned: Optional[Callable[[], bool]] = None) -> bool:
+    """Writes the attempts record of a unit if it is still ours (`owned`),
+    merged with the file by attempt (start, host): an attempt written by
+    another worker meanwhile is kept. Returns True if written."""
+    if owned is not None and not owned():
+        return False
+    stored = (read_json(attempts_path(run_dir)) or {}).get("events", [])
+    events = {(e.get("start"), e.get("host")): e for e in stored}
+    events.update({
+        (e.get("start"), e.get("host")): e for e in record["events"]
+    })
+    record["events"] = sorted(events.values(),
+                              key=lambda e: e.get("start") or "")
+    write_json(attempts_path(run_dir), record)
+    return True
 
 
 def open_attempt(record: Dict,
@@ -593,92 +653,74 @@ def check_progress(root: str, name: str, run_dir: str, record: Dict) -> bool:
     return True
 
 
-def failure_hosts(record: Dict) -> List[str]:
-    """Hosts of the failed attempts of a unit since its last un-parking."""
-    since = record.get("since", (record.get("unparked") or
-                                 {}).get("events_before", 0))
-    return sorted({
-        e.get("host") or "unknown"
-        for e in record["events"][since:]
-        if e.get("status") not in NOT_FAILURES
-    })
-
-
 def park(root: str, name: str, run_dir: str, reason: str, record: Dict,
          details: Dict) -> str:
-    """Parks a unit: alert record and PARKED marker (with the hosts of its
-    failures; none for a failure that is not the host's: out of memory).
-    Returns the alert path."""
-    hosts = [] if reason in ("config_mismatch",
-                             "oom") else failure_hosts(record)
+    """Parks a unit: alert record and PARKED marker. Returns the alert
+    path."""
     path = alert(root, name, f"shelved after {reason}", {
         "run_dir": run_dir,
         "attempts": record,
-        "hosts": hosts,
         **details
     })
     write_json(
-        os.path.join(run_dir, "PARKED"), {
+        os.path.join(run_dir, "PARKED"),
+        {
             "time": now(),
             "reason": reason,
             "host": socket.gethostname(),
-            "hosts": hosts,
-            "alert": path
+            "alert": path,
+            "id":
+                uuid.uuid4().hex  # tells two parkings apart
         })
     return path
 
 
-def live_hosts(hosts: List[str], bad=frozenset()) -> Optional[List[str]]:
-    """The hosts of a parking that count: those not listed as bad; None if
-    every host of a non-empty list is bad (the parking does not count)."""
-    live = [h for h in hosts if h not in bad]
-    return None if hosts and not live else live
+def marker_age(path: str) -> float:
+    """Seconds since a marker file was written (file-server clock; 0 if it
+    is missing)."""
+    try:
+        return server_time(os.path.dirname(path)) - os.path.getmtime(path)
+    except FileNotFoundError:
+        return 0.0
 
 
-def can_unpark(run_dir: str, host: str, bad=frozenset()) -> bool:
-    """A parked unit whose failures all came from one host other than
-    `host`, never un-parked before; or whose failures all came from hosts
-    listed as bad (`bad`), whatever its history. A worker on a bad host
-    un-parks nothing."""
+def park_final(run_dir: str, frozen: bool = False) -> bool:
+    """A parked unit that will not be retried: retried once already (its
+    marker is a second parking), or the test is ready (`frozen`)."""
     marker = read_json(os.path.join(run_dir, "PARKED"))
-    if marker is None or host in bad:
+    if marker is None:
         return False
-    live = live_hosts(marker.get("hosts") or [], bad)
-    if live is None:
-        return True
-    return (len(live) == 1 and live[0] != host and
-            not read_attempts(run_dir).get("unparked"))
+    retried = read_attempts(run_dir).get("retried")
+    return frozen or (retried is not None and retried.get("parked") != marker)
 
 
-def unpark(run_dir: str, host: str, bad=frozenset()) -> bool:
-    """Un-parks a unit (see `can_unpark`; the caller holds its lock): the
-    PARKED marker is renamed away and the failure counts restart.
+def retry_due(run_dir: str, frozen: bool = False) -> bool:
+    """A parked unit whose single retry is due (RETRY_SHELVED_AFTER)."""
+    path = os.path.join(run_dir, "PARKED")
+    return (os.path.exists(path) and not park_final(run_dir, frozen) and
+            marker_age(path) >= C.RETRY_SHELVED_AFTER)
+
+
+def retry_unit(root: str, name: str, run_dir: str) -> bool:
+    """Retries a parked unit once (the caller checked `retry_due`): its
+    failure counts reset, its PARKED marker renamed away, an alert.
 
     Returns:
-        bool: True if the unit was un-parked.
+        bool: True if the unit was retried.
     """
-    if not can_unpark(run_dir, host, bad):
-        return False
     marker = read_json(os.path.join(run_dir, "PARKED"))
     record = read_attempts(run_dir)
-    entry = {
-        "time": now(),
-        "host": host,
-        "parked": marker,
-        "events_before": len(record["events"])
-    }
-    if live_hosts(marker.get("hosts") or [], bad) is None:
-        record.setdefault("unparked_bad_hosts", []).append(entry)
-    else:
-        record["unparked"] = entry
-    record["since"] = len(record["events"])
+    if marker is None or park_final(run_dir):
+        return False
+    record["retried"] = {"time": now(), "parked": marker}
     record["crashes"] = record["free"] = 0
-    write_json(attempts_path(run_dir), record)
+    save_attempts(run_dir, record)
     try:
         os.replace(os.path.join(run_dir, "PARKED"),
-                   os.path.join(run_dir, f"PARKED.unparked.{time.time():.0f}"))
+                   os.path.join(run_dir, "PARKED.retried"))
     except FileNotFoundError:
         return False
+    alert(root, name, "shelved unit retried (once)", {"run_dir": run_dir})
     return True
 
 
@@ -703,12 +745,12 @@ def hold(root: str, name: str, run_dir: str, details: Dict) -> str:
     return path
 
 
-def _beat_attempt(record_path: str, record: Dict, event: Dict,
-                  start: float) -> None:
+def _beat_attempt(run_dir: str, record: Dict, event: Dict, start: float,
+                  owned: Optional[Callable[[], bool]]) -> None:
     """Heartbeat of an open attempt: its end moved to now, the record
-    written (atomically)."""
+    written while the unit is ours."""
     update_attempt(event, start)
-    write_json(record_path, record)
+    save_attempts(run_dir, record, owned)
 
 
 def _attempt(cmd: List[str], run_dir: str, env: Optional[Dict[str, str]],
@@ -759,7 +801,9 @@ def run_unit(name: str,
              model: str,
              on_val: Optional[Callable[[Dict], bool]] = None,
              env: Optional[Dict[str, str]] = None,
-             config: Optional[Dict] = None) -> Dict:
+             config: Optional[Dict] = None,
+             owned: Optional[Callable[[], bool]] = None,
+             oom_ends: bool = True) -> Dict:
     """Runs one unit to completion, resuming it after failures.
 
     Args:
@@ -774,6 +818,11 @@ def run_unit(name: str,
         env (dict, optional): Environment of the run.
         config (dict, optional): Hyperparameters of the run (written to
           config.json as passed to run.py, i.e. formatted).
+        owned (callable, optional): False once the unit is no longer ours
+          (lock or claim taken over): its attempts record is then left
+          alone.
+        oom_ends (bool): Out of memory ends the unit ('oom'); if False it
+          is resumed and counted as a crash.
 
     Returns:
         dict: 'status' ('ok', 'pruned', 'diverged', 'too_large', 'oom',
@@ -789,7 +838,6 @@ def run_unit(name: str,
             "command_line": shlex.join(cmd),
             "time": now()
         })
-    record_path = attempts_path(run_dir)
     record = read_attempts(run_dir)
     params = None
     gpu = gpu_name()
@@ -800,10 +848,11 @@ def run_unit(name: str,
         close_killed(record, _mtime(resume))
         start = time.time()
         event = open_attempt(record, start, gpu, _mtime(resume))
-        write_json(record_path, record)
+        save_attempts(run_dir, record, owned)
         returncode, text, stopped, printed = _attempt(
             cmd, run_dir, env, on_val,
-            functools.partial(_beat_attempt, record_path, record, event, start))
+            functools.partial(_beat_attempt, run_dir, record, event, start,
+                              owned))
         params = printed if printed is not None else params
         status = "pruned" if stopped else classify(returncode, text)
         if (status not in ("ok", "pruned", "diverged", "too_large", "oom",
@@ -812,19 +861,23 @@ def run_unit(name: str,
         close_attempt(event, start, status, returncode, _mtime(resume))
         check_progress(root, name, run_dir, record)
         result = {"status": status, "params": params, "tail": text}
-        if status in ("ok", "pruned", "diverged", "too_large", "stopped",
-                      "oom"):
-            write_json(record_path, record)
+        ends = ("ok", "pruned", "diverged", "too_large", "stopped",
+                "config_mismatch") + (("oom",) if oom_ends else ())
+        if status in ends or (owned is not None and not owned()):
+            save_attempts(run_dir, record, owned)
             if status == "ok":
                 result["history"] = read_json(history_path(run_dir, model))
+            elif status == "config_mismatch":
+                hold(root, name, run_dir, {
+                    "command": cmd,
+                    "tail": text[-4000:]
+                })
+            elif status not in ends:
+                result["status"] = "stopped"  # no longer ours
             return result
-        if status == "config_mismatch":
-            write_json(record_path, record)
-            hold(root, name, run_dir, {"command": cmd, "tail": text[-4000:]})
-            return result
-        key = "crashes" if status == "crash" else "free"
+        key = "crashes" if status in ("crash", "oom") else "free"
         record[key] += 1
-        write_json(record_path, record)
+        save_attempts(run_dir, record, owned)
         if (record["crashes"] >= C.MAX_ATTEMPTS or
                 record["free"] > C.MAX_FREE_RETRIES):
             park(root, name, run_dir, status, record, {
@@ -875,7 +928,7 @@ def stub_unit(cfg: Dict,
         })
         record = read_attempts(run_dir)
         add_attempt(record, start, status, None, "none")
-        write_json(attempts_path(run_dir), record)
+        save_attempts(run_dir, record)
 
     curve = stub_curve(cfg, key, epochs)
     for scores in curve:

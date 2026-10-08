@@ -13,7 +13,8 @@ last-epoch validation score; never by the best seed.
     python hpo/confirm.py --model=tcn --tower=opt2 --summarize  # winner
 
 The plan (the N_TOP configurations) is written once (--freeze), when the
-study has its full budget and nothing running, so every worker confirms
+study has its full budget (or at least N_TRIALS counted trials and stopped
+drawing, search.capped) and nothing running, so every worker confirms
 the same configurations; they are taken among the first `target` counted
 trials (by number), the trials that decided the extension rule. If the
 winner's median is not finite (most seeds diverged), the (model, tower)
@@ -28,6 +29,7 @@ test epoch of phase 3. --dry_run trains nothing (common.stub_unit).
 import argparse
 import os
 import sys
+import uuid
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -36,7 +38,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from hpo import common
 from hpo import constants as C
 from hpo import search
-from hpo import search_space as S
 
 
 def study_dir(root: str, model: str, tower: str) -> str:
@@ -66,22 +67,26 @@ def park_study(root: str,
                model: str,
                tower: str,
                reason: str,
-               hosts: Optional[List[str]] = None) -> bool:
+               retry: bool = False) -> bool:
     """Parks a study once, with an alert; True if this call parked it.
-    `hosts`: hosts of the failures that parked it (hpo/pick.py un-parks a
-    study once if they are a single host)."""
-    if not common.write_once(parked_path(root, model, tower), {
+    `retry`: a parking after failures (parked trials), retried once by
+    hpo/pick.py; any other parking is final."""
+    if not common.write_once(
+            parked_path(root, model, tower),
+        {
             "reason": reason,
-            "hosts": sorted(hosts or []),
-            "time": common.now()
-    }):
+            "retry": retry,
+            "time": common.now(),
+            "id":
+                uuid.uuid4().hex  # tells two parkings apart
+        }):
         return False
     common.alert(
         root, f"study/{model}_{tower}", f"study shelved: {reason}", {
             "note": f"the other towers of {model} go on without it; "
                     f"{model}/{tower} has no winner and is missing in the "
-                    "leaderboard",
-            "hosts": sorted(hosts or [])
+                    "leaderboard" +
+                    (" unless its retry succeeds" if retry else ""),
         })
     return True
 
@@ -106,7 +111,11 @@ def freeze(args: argparse.Namespace) -> Dict:
                  search.journal_path(args.root, args.model, args.tower))
     done, running, waiting = search.budget(study)
     target = search.target_trials(args.root, args.model, args.n_trials)
-    if done < target or running or waiting:
+    stopped = search.capped(
+        search.failed_draws(args.root, args.model, args.tower,
+                            study.get_trials(deepcopy=False)))
+    if (running or waiting or done < args.n_trials or
+        (done < target and not stopped)):
         sys.exit(f"search not finished: {done}/{target} trials counted, "
                  f"{running} running, {waiting} waiting")
     first = [
@@ -125,6 +134,7 @@ def freeze(args: argparse.Namespace) -> Dict:
         "model": args.model,
         "tower": args.tower,
         "n_trials_counted": done,
+        "stopped_early": stopped,
         "n_seeds": C.N_SEEDS,
         "epochs": args.epochs,
         "margin_top_to_next": margin,
@@ -172,13 +182,9 @@ def run_one(args: argparse.Namespace, plan: Dict, rank: int,
                 run_dir,
                 args.root,
                 args.model,
-                config=cfg)
-        if result["status"] == "oom":  # a fixed configuration: no retry
-            common.park(args.root,
-                        f"phase2/{args.model}_{args.tower}/c{rank}_s{seed}",
-                        run_dir, "oom", common.read_attempts(run_dir),
-                        {"tail": result.get("tail", "")[-4000:]})
-            return None
+                config=cfg,
+                owned=lambda: common.owns_claim(run_dir),
+                oom_ends=False)
         if result["status"] in ("parked", "stopped", "config_mismatch"):
             return None
         record = {"rank": rank, "seed": seed, "status": result["status"]}
@@ -261,26 +267,13 @@ def summarize(args: argparse.Namespace, plan: Dict) -> Optional[Dict]:
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     """Command-line options."""
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--model", required=True, choices=sorted(S.SPACE))
-    parser.add_argument("--tower", required=True, choices=C.TOWERS_SEARCHED)
-    parser.add_argument("--root", default="outputs/hpo")
-    parser.add_argument("--dataset_dir", default="data/FLOATSense")
+    parser = common.driver_parser(__doc__, C.EPOCHS_FINAL)
     parser.add_argument("--freeze", action="store_true")
     parser.add_argument("--summarize", action="store_true")
     parser.add_argument("--only",
                         type=int,
                         default=-1,
                         help="Run only the n-th unit (rank-major).")
-    parser.add_argument("--extra", default="")
-    parser.add_argument("--python", default=sys.executable)
-    parser.add_argument("--dry_run", action="store_true")
-    parser.add_argument("--n_trials", type=int, default=C.N_TRIALS)
-    parser.add_argument("--epochs", type=int, default=C.EPOCHS_FINAL)
-    parser.add_argument("--checkpoint_seconds",
-                        type=float,
-                        default=C.CHECKPOINT_SECONDS,
-                        help="Wall time between two resume saves of a run.")
     return parser.parse_args(argv)
 
 

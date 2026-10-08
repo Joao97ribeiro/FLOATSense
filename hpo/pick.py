@@ -1,13 +1,12 @@
 # pylint: disable=wrong-import-position
+# pylint: disable=use-dict-literal
 # pylint: disable=too-many-arguments
 # pylint: disable=too-many-positional-arguments
 # pylint: disable=too-many-locals
-# pylint: disable=too-many-return-statements
 """Units, locks, phase advancement and pick order of the track's workers.
 
-A worker is given a list of models (which models run where is a choice of
-each site, outside this repository) and runs every phase of them, one
-unit at a time:
+A worker is given a list of models and runs every phase of them, one unit
+at a time:
 
   search    one trial of a (model, tower) study; the study has one worker
             at a time (lock 'study_<model>_<tower>'), so its trials are
@@ -17,55 +16,45 @@ unit at a time:
   final     one seed of the retraining of a winner (hpo/final.py).
 
 The next unit of a worker (`pick`) is, in this order: its own unit left
-unfinished by its previous incarnation (same owner, e.g. the same Slurm
-job after a requeue, whatever its restart count); a search trial of the
-study with the most work left; a confirmation unit of a frozen plan; a
-final unit of a winner.
-Within a phase the order is the same (most work left first). Work is
-counted in search trials (a 300-epoch unit is UNIT_FACTOR trials), times
-an optional cost per model (`cost`: e.g. GPU-hours per trial measured on
-the site, so the slowest models start first).
+unfinished by its previous incarnation (same owner, whatever its restart
+count); a search trial of the study with the most work left; a
+confirmation unit of a frozen plan; a final unit of a winner. Within a
+phase the order is the same (most work left first). Work is counted in
+search trials (a 300-epoch unit is UNIT_FACTOR trials), times an optional
+cost per model (`cost`, e.g. GPU-hours per trial, so the slowest models
+start first). Units done, parked, held or claimed by another live process
+are skipped before any lock is taken.
 
-Locks are files created with O_EXCL under <root>/locks/ (safe on NFSv4),
-holding an owner token, and beaten (mtime set by the file server) every
-LOCK_BEAT_SECONDS. A lock is stale when its mtime is STALE_MINUTES older
-than a probe file touched now (common.server_time: no node clock is
-compared), or at once when it belongs to another incarnation of the same
-owner (the owner is the identity of the job: an incarnation with a
-different restart count is an older one, now dead). A stale lock is taken
-over under a breaker lock holding the breaker's token (only one worker
-breaks it, and only it removes the breaker); a worker that finds its token
-gone stops its unit.
+Locks are files created with O_EXCL under <root>/locks/ holding an owner
+token, beaten (mtime) every LOCK_BEAT_SECONDS. A lock is stale when its
+mtime is STALE_MINUTES older than a probe file touched now
+(common.server_time: no machine clock is compared), or at once when it
+belongs to another incarnation of the same owner. A stale lock is taken
+over under a breaker lock (only one worker breaks it, and only it removes
+the breaker); a worker that finds its token gone stops its unit.
 
-Parking (shown as 'shelved' to the reader): a study is parked (marker in
-<root>/parked/) after PARK_STUDY_AFTER parked trials, MAX_OVER_CAP draws
-above the parameter cap or MAX_OOM trials out of memory (these three only
-while its budget is not counted yet), DRIVER_ERRORS_PARK exceptions of the
-drivers (`driver_error`), too few eligible trials to freeze a plan, no
-finite median in phase 2, or a confirmation or final unit whose parking is
-final. A parked study is left out of the gate of its model (the extension
-rule and the plans of the other towers go on without it), it has no
-winner, and the test and the leaderboard record it as missing. Un-parking
-(once): a unit or a study parked after failures that all came from one
-host is un-parked by the first worker of another host that picks
-(common.unpark; a study counts only the trials parked after that).
-Failures on a host listed in <root>/bad_hosts/ do not count: a parking
-caused by them only is un-parked by any other host. A parking is final
-(`park_final`, `study_park_final`) when no un-parking can follow; only a
-final parking is terminal for `all_done`. Once READY_FOR_TEST.json or
-sealed/ exists every parking is final and nothing is un-parked. A unit
-held for an operator (common.hold: configuration mismatch) is never
-picked.
+Parking ('shelved' for the reader): a study with fewer than N_TRIALS
+counted trials is parked when it stops drawing (search.capped); with
+N_TRIALS counted trials it is never parked for that, and its plan is
+frozen from the counted trials. A study is also parked with too few
+eligible trials for a plan, no finite median in phase 2, or a unit parked
+for good. A parked study is left out of the gate of its model, has no
+winner, and is missing in the test and the leaderboard. Retry: `advance`
+retries a parked unit, or a study parked after its parked trials, once,
+RETRY_SHELVED_AFTER after its parking, with its failure counts reset (a
+study counts only the trials parked after that); a second parking is
+final, and so is every parking once READY_FOR_TEST.json or sealed/
+exists. An operator retries a unit or a study by removing its marker. A
+unit held for an operator (configuration mismatch) is never picked.
 
 `advance` moves the phases forward from the files alone, idempotently
-(every decision is a write-once file): the extension decision (extended or
-not, never taken again) once the non-parked studies of a model have
-N_TRIALS counted trials; the plan of a
-study once its budget is spent (with the extension decided); the winner
-once every unit of a plan is done; READY_FOR_TEST once every final unit
-of every learned model is trained (the test itself is opened by hand,
-hpo/final.py --open_test). A study that cannot go on is parked with an
-alert (see Parking).
+(every decision is a write-once file): the parkings and retries; the
+extension decision (extended or not, taken once) once the non-parked
+studies of a model have N_TRIALS counted trials; the plan of a study once
+its search is over (with the extension decided); the winner once every
+unit of a plan is done; READY_FOR_TEST once every final unit of every
+learned model is trained (`mark_ready`; the test itself is opened by
+hand, hpo/final.py --open_test).
 """
 
 import collections
@@ -289,10 +278,6 @@ class Lock:
             return "unknown"
         return "held" if holder.get("token") == self.token else "lost"
 
-    def held(self) -> bool:
-        """Is the lock still ours (now)?"""
-        return self.state() == "held"
-
     def owned(self, tries: int = 3, wait: float = 1.0) -> bool:
         """Is the lock still ours? A transient read error is retried; after
         `tries` unclear reads the answer is False (the safe side: a result
@@ -392,92 +377,22 @@ parked_path = confirm.parked_path
 park_study = confirm.park_study
 
 
-def unparked_path(root: str, model: str, tower: str) -> str:
-    """Record of the (single) un-parking of a study."""
-    return os.path.join(root, "parked", "unparked", f"{model}_{tower}.json")
-
-
-def park_final(directory: str, bad=frozenset(), frozen: bool = False) -> bool:
-    """A parked unit (run directory) that will not be un-parked: failures
-    on several hosts (or none, e.g. out of memory), or un-parked once
-    before; failures on the hosts listed as bad (`bad`) do not count. Every
-    parking is final once the test is ready (`frozen`)."""
-    marker = common.read_json(os.path.join(directory, "PARKED"))
-    if marker is None:
-        return False
-    if frozen:
-        return True
-    live = common.live_hosts(marker.get("hosts") or [], bad)
-    if live is None:
-        return False
-    return (len(live) != 1 or
-            bool(common.read_attempts(directory).get("unparked")))
-
-
 def study_park_final(root: str,
                      model: str,
                      tower: str,
-                     bad=frozenset(),
                      frozen: Optional[bool] = None) -> bool:
-    """A parked study that will not be un-parked (see `park_final`): its
-    failures on several hosts (or none), or parked again after its
-    un-parking; always once the test is ready."""
+    """A parked study that will not be retried: a parking that is not
+    after failures, a second parking after its retry, or any parking once
+    the test is ready (`frozen`)."""
     marker = common.read_json(parked_path(root, model, tower))
     if marker is None:
         return False
-    if common.test_frozen(root) if frozen is None else frozen:
+    if (common.test_frozen(root) if frozen is None else frozen):
         return True
-    live = common.live_hosts(marker.get("hosts") or [], bad)
-    if live is None:
-        return False
-    if len(live) != 1:
+    if not marker.get("retry"):
         return True
-    record = common.read_json(unparked_path(root, model, tower))
+    record = common.read_json(search.retried_path(root, model, tower))
     return record is not None and record.get("parked") != marker
-
-
-def driver_errors_dir(root: str, model: str, tower: str) -> str:
-    """Records of the driver exceptions of a study (hpo/worker.py)."""
-    return os.path.join(root, "driver_errors", f"{model}_{tower}")
-
-
-def driver_error(root: str, unit: Unit, owner: str,
-                 error: str) -> Optional[str]:
-    """Records an exception of a driver in the study of `unit` and parks the
-    study once DRIVER_ERRORS_PARK of them (on hosts not listed as bad,
-    since its last un-parking) have happened, so one bad study cannot stop
-    every worker. Returns the parking reason, if this call parked it."""
-    host = socket.gethostname()
-    folder = driver_errors_dir(root, unit.model, unit.tower)
-    common.write_json(
-        os.path.join(
-            folder, f"{common.now().replace(':', '')}_"
-            f"{uuid.uuid4().hex[:8]}.json"), {
-                "time": common.now(),
-                "host": host,
-                "owner": owner,
-                "unit": unit_id(unit),
-                "error": error[-1500:]
-            })
-    bad = common.bad_hosts(root)
-    unparked = common.read_json(unparked_path(root, unit.model, unit.tower))
-    since = (unparked or {}).get("time", "")
-    records = [
-        common.read_json(os.path.join(folder, name)) or {}
-        for name in sorted(os.listdir(folder))
-        if name.endswith(".json")
-    ]
-    counted = [
-        r for r in records
-        if r.get("host") not in bad and r.get("time", "") > since
-    ]
-    if len(counted) < C.DRIVER_ERRORS_PARK:
-        return None
-    reason = f"{len(counted)} driver errors"
-    if park_study(root, unit.model, unit.tower, reason,
-                  sorted({r.get("host") or "unknown" for r in counted})):
-        return reason
-    return None
 
 
 def unit_done(root: str, unit: Unit) -> bool:
@@ -501,81 +416,47 @@ def study_state(root: str,
     study = search.open_study(root, model, tower, create=False)
     trials = study.get_trials(deepcopy=False) if study else []
     states = collections.Counter(t.state for t in trials)
-    unparked = common.read_json(unparked_path(root, model, tower))
-    after = unparked["after_trial"] if unparked else -1
-    bad = common.bad_hosts(root)
-    frozen = common.test_frozen(root)
-    # Trials parked after the un-parking, by failures on hosts not listed
-    # as bad.
-    parked_trials = [
-        t for t in trials if t.user_attrs.get("parked") and
-        t.number > after and common.live_hosts(
-            t.user_attrs.get("parked_hosts") or ["unknown"], bad) is not None
-    ]
     marker = common.read_json(parked_path(root, model, tower))
+    frozen = common.test_frozen(root)
     eligible = [t for t in trials if search.eligible(t)]
     durations = [
         h for h in (_hours(t) for t in trials if t.state == TrialState.COMPLETE)
         if h
     ]
-    state = {
-        "model":
-            model,
-        "tower":
-            tower,
-        "target":
-            search.target_trials(root, model, n_trials),
-        "counted":
-            sum(search.counted(t) for t in trials),
-        "complete":
-            states[TrialState.COMPLETE],
-        "pruned":
-            sum(t.state == TrialState.PRUNED and not search.over_cap(t)
-                for t in trials),
-        "over_cap":
-            sum(search.over_cap(t) for t in trials),
-        "oom":
-            sum(search.oom(t) for t in trials),
-        "failed":
-            states[TrialState.FAIL],
-        "parked_trials":
-            len(parked_trials),
-        "parked_hosts":
-            sorted({
-                h for t in parked_trials for h in common.live_hosts(
-                    t.user_attrs.get("parked_hosts") or ["unknown"], bad)
-            }),
-        "last_trial":
-            max((t.number for t in trials), default=-1),
-        "running":
-            states[TrialState.RUNNING],
-        "waiting":
-            states[TrialState.WAITING],
-        "best":
-            max((t.value for t in eligible), default=None),
-        "best_trial":
-            (max(eligible, key=lambda t: t.value).number if eligible else None),
-        "hours_per_trial":
-            (statistics.median(durations) if len(durations) >= 3 else None),
-        "parked":
-            marker is not None,
-        "park_hosts": (marker or {}).get("hosts") or [],
-        "park_final":
-            study_park_final(root, model, tower, bad, frozen),
-        "unparked":
-            unparked is not None,
+    draws = search.failed_draws(root, model, tower, trials)
+    final_park = study_park_final(root, model, tower, frozen)
+    state = dict(
+        model=model,
+        tower=tower,
+        target=search.target_trials(root, model, n_trials),
+        n_trials=n_trials,
+        counted=sum(search.counted(t) for t in trials),
+        complete=states[TrialState.COMPLETE],
+        pruned=sum(t.state == TrialState.PRUNED and not search.over_cap(t)
+                   for t in trials),
+        failed=states[TrialState.FAIL],
+        capped=search.capped(draws),
+        last_trial=max((t.number for t in trials), default=-1),
+        running=states[TrialState.RUNNING],
+        waiting=states[TrialState.WAITING],
+        best=max((t.value for t in eligible), default=None),
+        best_trial=(max(eligible, key=lambda t: t.value).number
+                    if eligible else None),
+        hours_per_trial=(statistics.median(durations)
+                         if len(durations) >= 3 else None),
+        parked=marker is not None,
+        park_final=final_park,
+        retry_due=(marker is not None and not final_park and common.marker_age(
+            parked_path(root, model, tower)) >= C.RETRY_SHELVED_AFTER),
         # A RUNNING or WAITING trial whose run is held for an operator
         # (configuration mismatch): the study is not picked.
-        "held":
-            any(
-                common.held(search.trial_run_dir(t))
-                for t in trials
-                if t.state in (TrialState.RUNNING, TrialState.WAITING)),
-        "extension_decided":
-            os.path.exists(search.extension_path(root, model)),
-        "cost": (cost or {}).get(model, 1.0),
-    }
-    state["extended"] = state["target"] > n_trials
+        held=any(
+            common.held(search.trial_run_dir(t))
+            for t in trials
+            if t.state in (TrialState.RUNNING, TrialState.WAITING)),
+        extension_decided=os.path.exists(search.extension_path(root, model)),
+        cost=(cost or {}).get(model, 1.0),
+        **draws)
     plan = common.read_json(confirm.plan_path(root, model, tower))
     winner = common.read_json(confirm.winner_path(root, model, tower))
     state["plan"] = plan is not None
@@ -587,27 +468,20 @@ def study_state(root: str,
     state["final_units"] = ([
         Unit("final", model, tower, None, seed) for seed in range(C.N_SEEDS)
     ] if winner else [])
+    units = state["confirm_units"] + state["final_units"]
     state["confirm_done"] = sum(
         unit_done(root, u) for u in state["confirm_units"])
     state["final_done"] = sum(unit_done(root, u) for u in state["final_units"])
-    state["units_parked"] = sum(
-        unit_parked(root, u)
-        for u in state["confirm_units"] + state["final_units"])
+    state["units_parked"] = sum(unit_parked(root, u) for u in units)
     state["units_park_final"] = [
-        unit_id(u)
-        for u in state["confirm_units"] + state["final_units"]
-        if park_final(run_dir(root, u), bad, frozen)
+        unit_id(u) for u in units if common.park_final(run_dir(root, u), frozen)
     ]
-    state["units_held"] = [
-        unit_id(u)
-        for u in state["confirm_units"] + state["final_units"]
-        if common.held(run_dir(root, u))
+    state["units_retry_due"] = [
+        u for u in units if common.retry_due(run_dir(root, u), frozen)
     ]
-    state["search_pending"] = (not state["held"] and
-                               state["over_cap"] < C.MAX_OVER_CAP and
-                               state["oom"] < C.MAX_OOM and
-                               (state["counted"] < state["target"] or
-                                state["running"] > 0 or state["waiting"] > 0))
+    state["search_pending"] = (not state["parked"] and not state["held"] and (
+        (not state["capped"] and state["counted"] < state["target"]) or
+        state["running"] > 0 or state["waiting"] > 0))
     state["phase"] = phase_of(state)
     state["work_left"] = work_left(state)
     return state
@@ -658,67 +532,43 @@ def all_states(root: str,
 # --- Phase advancement -------------------------------------------------------
 
 
-def park_reason(state: Dict) -> Optional[Tuple[str, List[str]]]:
-    """Why a study must be parked now (reason, hosts of the failures), or
-    None."""
+def park_reason(state: Dict) -> Optional[Tuple[str, bool]]:
+    """Why a study must be parked now, and whether that parking is retried
+    once (parked trials), or None. A study with its N_TRIALS counted trials
+    is never parked for its failed draws."""
     if state["parked"]:
         return None
     if state["units_park_final"]:
         return (
             f"unit shelved for good: {', '.join(state['units_park_final'])}",
-            [])
-    # Once the budget is counted, failed draws no longer matter.
-    if state["plan"] or state["counted"] >= state["target"]:
+            False)
+    if (state["plan"] or state["counted"] >= state["n_trials"] or
+            not state["capped"]):
         return None
-    if state["parked_trials"] >= C.PARK_STUDY_AFTER:
-        return (f"{state['parked_trials']} trials shelved",
-                state["parked_hosts"])
-    if state["over_cap"] >= C.MAX_OVER_CAP:
-        return f"{state['over_cap']} draws above the parameter cap", []
-    if state["oom"] >= C.MAX_OOM:
-        return f"{state['oom']} trials out of memory", []
-    return None
+    return state["capped"], state["capped"].endswith("trials shelved")
 
 
-def unpark_study(root: str, state: Dict, host: str, bad=frozenset()) -> bool:
-    """Un-parks a study once if its parking failures all came from one host
-    other than `host`, or (whatever its history) if they all came from
-    hosts listed as bad (`bad`); the caller holds the lock of the study.
-    Only the trials parked after this count toward a new parking. Nothing
-    is un-parked once the test is ready."""
+def retry_study(root: str, state: Dict) -> bool:
+    """Retries a parked study once (the caller checked `retry_due`): only
+    the trials parked after this count toward a new parking."""
     model, tower = state["model"], state["tower"]
     marker = common.read_json(parked_path(root, model, tower))
-    if marker is None or host in bad or common.test_frozen(root):
+    if marker is None:
         return False
-    hosts = marker.get("hosts") or []
-    live = common.live_hosts(hosts, bad)
-    record = common.read_json(unparked_path(root, model, tower))
-    entry = {
+    path = search.retried_path(root, model, tower)
+    common.write_once(path, {
         "time": common.now(),
-        "host": host,
         "parked": marker,
         "after_trial": state["last_trial"]
-    }
-    if live is None:  # every failure on a bad host: not the study's
-        if record is None or record.get("parked") != marker:
-            common.write_json(unparked_path(root, model, tower), {
-                **entry, "bad_hosts": hosts
-            })
-    elif record is None:
-        if len(live) != 1 or live[0] == host:
-            return False
-        common.write_once(unparked_path(root, model, tower), entry)
-    record = common.read_json(unparked_path(root, model, tower))
-    if record.get("parked") != marker:
-        return False  # parked again after its un-parking: for good
+    })
+    if (common.read_json(path) or {}).get("parked") != marker:
+        return False  # parked again after its retry: final
     try:
         os.remove(parked_path(root, model, tower))
     except FileNotFoundError:
         return False
-    common.alert(
-        root, f"study/{model}_{tower}",
-        f"study un-shelved by {host} (failures on "
-        f"{', '.join(hosts)} only)", {})
+    common.alert(root, f"study/{model}_{tower}", "shelved study retried (once)",
+                 {"parked": marker})
     return True
 
 
@@ -733,14 +583,13 @@ def _advance_model(root: str, model: str, n_trials: int,
                    states: Dict[str, Dict]) -> List[str]:
     """The gate of a model: its non-parked studies (a parked tower never
     holds the others back) all have `n_trials` counted trials; then the
-    extension rule (on those studies), the plans and the winners."""
+    extension rule (on those studies, decided once: a tower retried later
+    does not reopen it), the plans and the winners."""
     events = []
     active = [t for t, s in states.items() if not s["parked"]]
     if not active or not all(states[t]["counted"] >= n_trials for t in active):
         return events
     if not states[active[0]]["extension_decided"]:
-        # The decision is written once (extended or not) and never taken
-        # again: a tower un-parked later does not reopen it.
         if search.maybe_extend(root, model, n_trials, active, decide=True):
             events.append(f"{model}: extended by {C.EXTEND_BY} trials")
         states = {
@@ -750,7 +599,10 @@ def _advance_model(root: str, model: str, n_trials: int,
         if state["parked"]:
             continue
         args = _driver_args(root, model, tower, n_trials)
-        if not state["plan"] and not state["search_pending"]:
+        # A held trial waits for an operator: no plan (and no parking).
+        if (not state["plan"] and not state["search_pending"] and
+                not state["held"] and
+            (state["counted"] >= state["target"] or state["capped"])):
             try:
                 confirm.freeze(args)
                 events.append(f"{model}/{tower}: plan frozen")
@@ -774,6 +626,24 @@ def ready_path(root: str) -> str:
     return os.path.join(root, common.READY)
 
 
+def mark_ready(root: str, n_trials: int = C.N_TRIALS) -> bool:
+    """Writes READY_FOR_TEST.json (once, with an alert) if every final unit
+    of every learned model is trained, whatever the caller's models.
+    Returns True if this call wrote it."""
+    if (os.path.exists(ready_path(root)) or
+            not all_done(root, S.LEARNED, n_trials) or
+            not common.write_once(ready_path(root), {
+                "models": list(S.LEARNED),
+                "time": common.now()
+            })):
+        return False
+    common.alert(
+        root, "track", "every final unit is trained: "
+        "ready to open the test (hpo/final.py --open_test)",
+        {"models": list(S.LEARNED)})
+    return True
+
+
 def _advance_all(root: str, models, n_trials: int) -> List[str]:
     """The body of `advance` (its lock held)."""
     events = []
@@ -781,27 +651,21 @@ def _advance_all(root: str, models, n_trials: int) -> List[str]:
         states = {
             t: study_state(root, model, t, n_trials) for t in C.TOWERS_SEARCHED
         }
-        for state in states.values():
+        for tower, state in states.items():
+            for unit in state["units_retry_due"]:
+                if common.retry_unit(root, unit_id(unit), run_dir(root, unit)):
+                    events.append(f"{unit_id(unit)}: retried")
+            if state["retry_due"] and retry_study(root, state):
+                events.append(f"{model}/{tower}: retried")
+                states[tower] = state = study_state(root, model, tower,
+                                                    n_trials)
             reason = park_reason(state)
-            if reason is None:
-                continue
-            state["parked"] = True
-            if park_study(root, model, state["tower"], *reason):
-                events.append(
-                    f"{model}/{state['tower']}: shelved ({reason[0]})")
+            if reason is not None:
+                state["parked"] = True
+                if park_study(root, model, tower, *reason):
+                    events.append(f"{model}/{tower}: shelved ({reason[0]})")
         events += _advance_model(root, model, n_trials, states)
-    # The marker is for the whole track, whatever the caller's models.
-    if (not os.path.exists(ready_path(root)) and
-            all_done(root, models, n_trials) and
-            all_done(root, S.LEARNED, n_trials) and
-            common.write_once(ready_path(root), {
-                "models": list(S.LEARNED),
-                "time": common.now()
-            })):
-        common.alert(
-            root, "track", "every final unit is trained: "
-            "ready to open the test (hpo/final.py --open_test)",
-            {"models": list(S.LEARNED)})
+    if all_done(root, models, n_trials) and mark_ready(root, n_trials):
         events.append("ready for test")
     return events
 
@@ -837,11 +701,9 @@ def advance(root: str, models, n_trials: int = C.N_TRIALS) -> List[str]:
 
 
 def all_done(root: str, models, n_trials: int = C.N_TRIALS) -> bool:
-    """Every final unit of every study of `models` is trained; a parked
-    study is terminal only if its parking is final (`study_park_final`: a
-    study parked after failures on one host waits for a worker of another
-    host; an operator makes it final by emptying the hosts list of its
-    marker)."""
+    """Every final unit of every study of `models` is trained, or the study
+    is parked for good (`study_park_final`; a parking still to be retried
+    is not terminal)."""
     return all(state["phase"] == "done" or
                (state["phase"] == "parked" and state["park_final"])
                for state in all_states(root, models, n_trials))
@@ -861,8 +723,6 @@ def candidates(states: List[Dict]) -> List[Unit]:
     ranked: List[Tuple[tuple, Unit]] = []
     order = {phase: i for i, phase in enumerate(PHASES)}
     for state in states:
-        if state["parked"]:
-            continue
         key = (-state["work_left"], state["model"], state["tower"])
         if state["phase"] == "search":
             ranked.append(((order["search"],) + key,
@@ -870,75 +730,37 @@ def candidates(states: List[Dict]) -> List[Unit]:
         units = (state["confirm_units"] if state["phase"] == "confirm" else
                  state["final_units"] if state["phase"] == "final" else [])
         for unit in units:
-            if unit_id(unit) in state.get("units_held", ()):
-                continue
             ranked.append(
                 ((order[unit.phase],) + key + (unit.rank or 0, unit.seed),
                  unit))
     return [unit for _, unit in sorted(ranked)]
 
 
-def pending(root: str,
-            unit: Unit,
-            n_trials: int,
-            host: Optional[str] = None) -> bool:
-    """Is there still work in this unit (for a worker on `host`: a parked
-    unit it may un-park counts, until the test is ready)? A unit held for
-    an operator has none."""
+def pending(root: str, unit: Unit, n_trials: int) -> bool:
+    """Is there work in this unit for this worker? Not for a unit done,
+    parked, held for an operator, or claimed by another live process."""
     if unit.phase == "search":
-        state = study_state(root, unit.model, unit.tower, n_trials)
-        return not state["parked"] and state["search_pending"]
-    if unit_done(root, unit) or common.held(run_dir(root, unit)):
-        return False
-    if unit_parked(root, unit):
-        return (host is not None and not common.test_frozen(root) and
-                common.can_unpark(run_dir(root, unit), host,
-                                  common.bad_hosts(root)))
-    return True
+        return study_state(root, unit.model, unit.tower,
+                           n_trials)["search_pending"]
+    directory = run_dir(root, unit)
+    return not (unit_done(root, unit) or unit_parked(root, unit) or
+                common.held(directory) or common.busy(directory))
 
 
 def _try(root: str, unit: Unit, owner: str, restart: int,
          n_trials: int) -> Optional[Lock]:
-    host = socket.gethostname()
+    """The lock of a unit, if free and the unit still pending under it."""
     lock = Lock(root, lock_name(unit), owner, restart)
     if not lock.acquire():
         return None
-    if not pending(root, unit, n_trials, host):  # finished meanwhile
+    try:
+        if pending(root, unit, n_trials):
+            return lock
+    except BaseException:
         lock.release()
-        return None
-    if unit.phase != "search" and unit_parked(root, unit):
-        if not common.unpark(run_dir(root, unit), host, common.bad_hosts(root)):
-            lock.release()
-            return None
-        common.alert(root, unit_id(unit), f"unit un-shelved by {host}", {})
-    return lock
-
-
-def _unpark_studies(root: str, states: List[Dict], owner: str,
-                    restart: int) -> bool:
-    """Un-parks (once) the parked studies whose failures all came from
-    another host (or from hosts listed as bad); True if one was."""
-    host = socket.gethostname()
-    bad = common.bad_hosts(root)
-    if host in bad or common.test_frozen(root):
-        return False
-    done = False
-    for state in states:
-        if not state["parked"] or state["park_final"]:
-            continue
-        live = common.live_hosts(state["park_hosts"], bad)
-        if live is not None and live == [host]:
-            continue
-        lock = Lock(root,
-                    lock_name(Unit("search", state["model"], state["tower"])),
-                    owner, restart)
-        if not lock.acquire():
-            continue
-        try:
-            done = unpark_study(root, state, host, bad) or done
-        finally:
-            lock.release()
-    return done
+        raise
+    lock.release()  # finished meanwhile
+    return None
 
 
 def pick(
@@ -954,8 +776,8 @@ def pick(
     Args:
         root (str): Root of the track.
         owner (str): Stable identity of the worker.
-        restart (int): Its incarnation (Slurm restart count; any other
-          count of the same owner is a dead incarnation).
+        restart (int): Its incarnation (any other count of the same owner
+          is a dead incarnation).
         models: Models of the worker.
         n_trials (int): Budget per study (the protocol: N_TRIALS).
         cost (dict, optional): Cost of a search trial per model.
@@ -970,10 +792,11 @@ def pick(
             lock = _try(root, unit, owner, restart, n_trials)
             if lock:
                 return unit, lock
-    states = all_states(root, models, n_trials, cost)
-    if _unpark_studies(root, states, owner, restart):
-        states = all_states(root, models, n_trials, cost)
-    for unit in candidates(states):
+    for unit in candidates(all_states(root, models, n_trials, cost)):
+        # Checked before the lock (no lock churn on finished units); a
+        # search study is pending by construction of the candidates.
+        if unit.phase != "search" and not pending(root, unit, n_trials):
+            continue
         lock = _try(root, unit, owner, restart, n_trials)
         if lock:
             return unit, lock

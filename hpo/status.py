@@ -11,8 +11,8 @@ an ETA (from the measured trial durations of the study, else from the
 `cost` given per model, in hours per trial); the workers and their units
 (a worker record not refreshed for STALE_MINUTES, without an exit code, is
 marked dead; a live worker refreshes it at every lock beat or idle poll);
-the hosts listed as bad; the shelved units and studies (PARKED markers in
-the files); the recent alerts. No test output is read.
+the shelved units and studies (PARKED markers in the files); the recent
+alerts. No test output is read.
 With advance (the default), the phases are moved forward first
 (pick.advance).
 """
@@ -35,8 +35,8 @@ from hpo import constants as C
 from hpo import search_space as S
 
 MAX_ALERTS_SHOWN = 20
-COLUMNS = ("site", "study", "phase", "counted", "target", "pruned", "failed",
-           "running", "best", "confirm", "winner", "final", "hours_left", "eta")
+COLUMNS = ("study", "phase", "counted", "target", "pruned", "failed", "running",
+           "best", "confirm", "winner", "final", "hours_left", "eta")
 
 
 def eta(hours: Optional[float], workers: int = 1) -> Optional[str]:
@@ -62,14 +62,12 @@ def hours_left(state: Dict,
 
 
 def study_rows(states: List[Dict],
-               site: str = "",
                cost: Optional[Dict[str, float]] = None) -> List[Dict]:
     """One status row per study."""
     rows = []
     for state in states:
         hours = hours_left(state, cost)
         rows.append({
-            "site": site,
             "study": f"{state['model']}_{state['tower']}",
             "model": state["model"],
             # 'parked' in the files, 'shelved' for the reader.
@@ -150,8 +148,7 @@ def alert_files(root: str) -> List[str]:
 def collect(root: str,
             models,
             n_trials: int = C.N_TRIALS,
-            cost: Optional[Dict[str, float]] = None,
-            site: str = "") -> Dict:
+            cost: Optional[Dict[str, float]] = None) -> Dict:
     """The status of the track under `root`."""
     states = pick.all_states(root, models, n_trials, cost)
     ends = [e["end"] for e in read_events(root) if "end" in e]
@@ -159,12 +156,11 @@ def collect(root: str,
     return {
         "time": common.now(),
         "root": root,
-        "studies": study_rows(states, site, cost),
+        "studies": study_rows(states, cost),
         "workers": read_workers(root),
         "units_completed": len(ends),
         "last_completion": max(ends) if ends else None,
         "parked": parked_units(root),
-        "bad_hosts": sorted(common.bad_hosts(root)),
         "alerts": [
             os.path.basename(p) for p in alert_files(root)[-MAX_ALERTS_SHOWN:]
         ],
@@ -207,7 +203,6 @@ def as_text(status: Dict) -> str:
         f"{w.get('gpu') or ''} unit={w.get('unit')} {w['state']} "
         f"({w['age_min']} min ago)" for w in status["workers"]
     ]
-    lines += ["", "bad hosts:"] + [f"  {h}" for h in status["bad_hosts"]]
     lines += ["", "shelved:"] + [f"  {p}" for p in status["parked"]]
     lines += ["", "recent alerts:"] + [f"  {a}" for a in status["alerts"]]
     return "\n".join(lines) + "\n"
@@ -241,7 +236,6 @@ tr.done td {{ color: var(--accent); }}
 <p>{stamp}. {summary}</p>
 <h2>Studies</h2><div class="wrap"><table><tr>{head}</tr>{rows}</table></div>
 <h2>Workers</h2><div class="wrap"><table>{workers}</table></div>
-<h2>Bad hosts</h2><p>{bad_hosts}</p>
 <h2>Shelved</h2><p>{parked}</p>
 <h2>Recent alerts</h2><p>{alerts}</p>
 </body></html>
@@ -269,7 +263,6 @@ def as_html(status: Dict) -> str:
                        rows=rows,
                        workers=workers or "<tr><td>none</td></tr>",
                        parked=esc(", ".join(status["parked"]) or "none"),
-                       bad_hosts=esc(", ".join(status["bad_hosts"]) or "none"),
                        alerts="<br>".join(esc(a) for a in status["alerts"]) or
                        "none")
 
@@ -277,13 +270,8 @@ def as_html(status: Dict) -> str:
 def write_status(root: str, status: Dict) -> None:
     """status.json, status.txt and status.html, atomically."""
     common.write_json(os.path.join(root, "status.json"), status)
-    for name, text in (("status.txt", as_text(status)), ("status.html",
-                                                         as_html(status))):
-        path = os.path.join(root, name)
-        tmp = f"{path}.tmp.{os.getpid()}"
-        with open(tmp, "w", encoding="utf-8") as file:
-            file.write(text)
-        os.replace(tmp, path)
+    common.write_text(os.path.join(root, "status.txt"), as_text(status))
+    common.write_text(os.path.join(root, "status.html"), as_html(status))
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:

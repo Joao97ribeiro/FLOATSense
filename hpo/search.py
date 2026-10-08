@@ -5,8 +5,8 @@
 # pylint: disable=too-many-locals
 """Phase 1 of the validation-tuned track: the search of one (model, tower).
 
-One Optuna study per (model, tower), in a journal file that any number of
-workers share (one worker per GPU; workers can join and leave at any time):
+One Optuna study per (model, tower), in a journal file (one worker at a
+time when run by hpo/worker.py):
 
     python hpo/search.py --model=tcn --tower=opt2 --dataset_dir=data/FLOATSense
     python hpo/search.py --model=tcn --tower=opt2 --dry_run --root=/tmp/hpo
@@ -28,17 +28,18 @@ the study; a model above the parameter cap is rejected before training
 and recorded as FAIL with the user attribute over_cap (not counted, and
 not seen by TPE, whose startup counts completed and pruned trials only);
 the next trial draws again at once (an over-cap draw does not count toward
---max_new), and the study stops drawing after MAX_OVER_CAP of them (it is
-then parked by hpo/pick.py). A trial out of memory is FAIL with the user
-attribute oom (not counted, not retried, not a fault of the host); the
-study stops drawing after MAX_OOM of them (then parked). A trial whose
-resume state belongs to another configuration stays RUNNING, held for an
-operator (common.hold). A crash is resumed up to MAX_ATTEMPTS times
-(common.run_unit), then parked with an alert. A trial left RUNNING by a
-dead worker (stale heartbeat) is requeued with the same configuration and
-resumes from its checkpoint. A worker that holds the lock of the study
-(hpo/pick.py, --exclusive) is its only writer, so every RUNNING trial it
-finds is orphaned and requeued at once. A trial stopped on request
+--max_new). A trial out of memory is FAIL with the user attribute oom (not
+counted, not retried). A crash is resumed up to MAX_ATTEMPTS times
+(common.run_unit), then the trial is FAIL with the user attribute parked.
+The study stops drawing (`capped`) after MAX_OVER_CAP over-cap draws,
+MAX_OOM trials out of memory or PARK_STUDY_AFTER parked trials (since its
+retry); hpo/pick.py then parks it, or freezes its plan if it has its
+N_TRIALS counted trials. A trial whose resume state belongs to another
+configuration stays RUNNING, held for an operator (common.hold). A trial
+left RUNNING by a dead worker (stale heartbeat) is requeued with the same
+configuration and resumes from its checkpoint; a worker that holds the
+lock of the study (hpo/pick.py, --exclusive) is its only writer, so every
+RUNNING trial it finds is requeued at once. A trial stopped on request
 (common.request_stop) stays RUNNING for the next worker to resume. A
 worker whose lock was taken over (`owned` returns False) drops its result
 instead of telling it.
@@ -143,11 +144,6 @@ def oom(trial: optuna.trial.FrozenTrial) -> bool:
     return bool(trial.user_attrs.get("oom"))
 
 
-def oom_count(study: optuna.Study) -> int:
-    """Trials of a study that ran out of memory."""
-    return sum(oom(t) for t in study.get_trials(deepcopy=False))
-
-
 def counted(trial: optuna.trial.FrozenTrial) -> bool:
     """A trial that spends budget: completed, or pruned by the median rule
     (never a draw rejected by the parameter cap)."""
@@ -175,11 +171,6 @@ def _running_alive(trial: optuna.trial.FrozenTrial) -> bool:
         return not common.is_stale(run_dir)
     age = datetime.datetime.now() - trial.datetime_start
     return age.total_seconds() < C.STALE_MINUTES * 60
-
-
-def over_cap_count(study: optuna.Study) -> int:
-    """Draws of a study rejected by the parameter cap."""
-    return sum(over_cap(t) for t in study.get_trials(deepcopy=False))
 
 
 def budget(study: optuna.Study) -> Tuple[int, int, int]:
@@ -242,6 +233,39 @@ def extension_path(root: str, model: str) -> str:
 def parked_path(root: str, model: str, tower: str) -> str:
     """Marker of a parked (model, tower) study."""
     return os.path.join(root, "parked", f"{model}_{tower}.json")
+
+
+def retried_path(root: str, model: str, tower: str) -> str:
+    """Record of the single retry of a parked study (hpo/pick.py)."""
+    return os.path.join(root, "parked", "retried", f"{model}_{tower}.json")
+
+
+def failed_draws(root: str, model: str, tower: str, trials) -> Dict[str, int]:
+    """Over-cap draws, trials out of memory and parked trials of a study
+    (parked ones since its retry, if it was retried)."""
+    retried = common.read_json(retried_path(root, model, tower))
+    after = retried["after_trial"] if retried else -1
+    return {
+        "over_cap":
+            sum(over_cap(t) for t in trials),
+        "oom":
+            sum(oom(t) for t in trials),
+        "parked_trials":
+            sum(
+                bool(t.user_attrs.get("parked")) and t.number > after
+                for t in trials)
+    }
+
+
+def capped(draws: Dict[str, int]) -> Optional[str]:
+    """Why a study stops drawing (see `failed_draws`), or None."""
+    if draws["over_cap"] >= C.MAX_OVER_CAP:
+        return f"{draws['over_cap']} draws above the parameter cap"
+    if draws["oom"] >= C.MAX_OOM:
+        return f"{draws['oom']} trials out of memory"
+    if draws["parked_trials"] >= C.PARK_STUDY_AFTER:
+        return f"{draws['parked_trials']} trials shelved"
+    return None
 
 
 def extension_decision(root: str, model: str) -> Optional[bool]:
@@ -372,7 +396,7 @@ def _tell(study: optuna.Study,
 
 
 def _result_of(study: optuna.Study, result: Dict, args: argparse.Namespace,
-               reported: set, run_dir: str) -> tuple:
+               reported: set) -> tuple:
     """What to tell the study for a finished run.
 
     Returns:
@@ -409,9 +433,7 @@ def _result_of(study: optuna.Study, result: Dict, args: argparse.Namespace,
         attrs["oom"] = True
         state = TrialState.FAIL
     elif status != "ok":  # parked
-        marker = common.read_json(os.path.join(run_dir, "PARKED")) or {}
         attrs["parked"] = True
-        attrs["parked_hosts"] = marker.get("hosts", [])
         state = TrialState.FAIL
     return status, attrs, value, state
 
@@ -473,7 +495,8 @@ def run_trial(study: optuna.Study,
                                  args.root,
                                  args.model,
                                  on_val,
-                                 config=cfg)
+                                 config=cfg,
+                                 owned=owned)
     status = result["status"]
     if lost:
         print(f"trial {trial.number}: finished elsewhere, result dropped",
@@ -486,8 +509,7 @@ def run_trial(study: optuna.Study,
         # Left RUNNING: the next worker resumes it (a held one, once an
         # operator removed its CONFIG_MISMATCH marker).
         return outcome
-    status, attrs, value, state = _result_of(study, result, args, reported,
-                                             run_dir)
+    status, attrs, value, state = _result_of(study, result, args, reported)
     if not _tell(study, trial, attrs, owned, value, state):
         return outcome
     _recorded(run_dir, trial.number, status)
@@ -500,42 +522,15 @@ def run_trial(study: optuna.Study,
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     """Command-line options."""
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--model", required=True, choices=sorted(S.SPACE))
-    parser.add_argument("--tower", required=True, choices=C.TOWERS_SEARCHED)
-    parser.add_argument("--root",
-                        default="outputs/hpo",
-                        help="Root of the track (studies, runs, alerts).")
-    parser.add_argument("--dataset_dir", default="data/FLOATSense")
+    parser = common.driver_parser(__doc__, C.EPOCHS_TRIAL)
     parser.add_argument("--max_new",
                         type=int,
                         default=0,
                         help="Run at most this many trials, then exit.")
-    parser.add_argument("--extra",
-                        default="",
-                        help="Extra run.py flags of every trial.")
-    parser.add_argument("--python",
-                        default=sys.executable,
-                        help="Python that runs scripts/train/run.py.")
-    parser.add_argument("--dry_run",
-                        action="store_true",
-                        help="CPU stub instead of training.")
     parser.add_argument("--exclusive",
                         action="store_true",
                         help="The caller holds the lock of the study "
                         "(hpo/pick.py): requeue every RUNNING trial.")
-    parser.add_argument("--n_trials",
-                        type=int,
-                        default=C.N_TRIALS,
-                        help="Budget per study (the protocol: N_TRIALS).")
-    parser.add_argument("--epochs",
-                        type=int,
-                        default=C.EPOCHS_TRIAL,
-                        help="Epochs per trial (the protocol: EPOCHS_TRIAL).")
-    parser.add_argument("--checkpoint_seconds",
-                        type=float,
-                        default=C.CHECKPOINT_SECONDS,
-                        help="Wall time between two resume saves of a run.")
     return parser.parse_args(argv)
 
 
@@ -565,17 +560,11 @@ def main(argv: Optional[List[str]] = None,
            not common.STOP.is_set()):
         done, running, waiting = budget(study)
         target = target_trials(args.root, args.model, args.n_trials)
-        if over_cap_count(study) >= C.MAX_OVER_CAP:
-            print(
-                f"study {study.study_name}: {C.MAX_OVER_CAP} draws above "
-                "the parameter cap, stopping",
-                flush=True)
-            break
-        if oom_count(study) >= C.MAX_OOM:
-            print(
-                f"study {study.study_name}: {C.MAX_OOM} trials out of "
-                "memory, stopping",
-                flush=True)
+        reason = capped(
+            failed_draws(args.root, args.model, args.tower,
+                         study.get_trials(deepcopy=False)))
+        if reason and not waiting:  # a requeued trial still resumes
+            print(f"study {study.study_name}: {reason}, stopping", flush=True)
             break
         if not waiting and done + running >= target:
             # Only the non-parked towers decide (maybe_extend's default).
