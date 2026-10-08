@@ -31,6 +31,7 @@ from typing import Dict, List, Optional
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from hpo import common
 from hpo import confirm
+from hpo import constants as C
 from hpo import search_space as S
 
 VARIANTS = ("last", "best")
@@ -55,11 +56,16 @@ def winner(root: str, model: str, tower: str) -> Dict:
     return record
 
 
-def train(args: argparse.Namespace, model: str, tower: str) -> None:
-    """Trains the N_SEEDS units of one (model, tower)."""
+def train(args: argparse.Namespace,
+          model: str,
+          tower: str,
+          seeds: Optional[List[int]] = None) -> None:
+    """Trains the N_SEEDS units of one (model, tower) (or `seeds`)."""
     record = winner(args.root, model, tower)
     best_epoch = record["best_epoch"]
-    for seed in range(S.N_SEEDS):
+    for seed in range(C.N_SEEDS) if seeds is None else seeds:
+        if common.STOP.is_set():
+            return
         run_dir = unit_dir(args.root, model, tower, seed)
         result_path = os.path.join(run_dir, "result.json")
         if os.path.exists(result_path) or os.path.exists(
@@ -67,7 +73,8 @@ def train(args: argparse.Namespace, model: str, tower: str) -> None:
             continue
         try:
             if args.dry_run:
-                result = {"status": "ok"}
+                result = common.stub_unit(record["winner_config"], 200 + seed,
+                                          args.epochs)
             else:
                 keep = ([f"--save_epochs={best_epoch}"]
                         if best_epoch and best_epoch < args.epochs else [])
@@ -76,14 +83,14 @@ def train(args: argparse.Namespace, model: str, tower: str) -> None:
                                            tower,
                                            run_dir,
                                            record["winner_config"],
-                                           S.FINAL_TRAIN_SPLIT,
+                                           C.FINAL_TRAIN_SPLIT,
                                            args.epochs,
                                            seed,
                                            validate=False,
                                            extra=keep)
                 result = common.run_unit(f"final/{model}_{tower}/s{seed}", cmd,
                                          run_dir, args.root, model)
-            if result["status"] != "parked":
+            if result["status"] not in ("parked", "stopped"):
                 common.write_once(
                     result_path, {
                         "status": result["status"],
@@ -131,8 +138,8 @@ def score(args: argparse.Namespace, model: str, tower: str, seed: int,
         cmd = [
             args.python, common.RUN_PY, f"--flagfile={common.CONFIG}",
             f"--dataset_dir={args.dataset_dir}", f"--tower={tower}",
-            f"--models={model}", f"--train_split={S.FINAL_TRAIN_SPLIT}",
-            f"--test_split={S.TEST_SPLIT}", f"--seed={seed}",
+            f"--models={model}", f"--train_split={C.FINAL_TRAIN_SPLIT}",
+            f"--test_split={C.TEST_SPLIT}", f"--seed={seed}",
             f"--output_dir={out}", "--run_training=False"
         ] + shlex.split(args.extra)
         with open(os.path.join(out, f"log_{model}.txt"), "w",
@@ -167,12 +174,12 @@ def score(args: argparse.Namespace, model: str, tower: str, seed: int,
 def open_test(args: argparse.Namespace) -> None:
     """Opens the test split once for every requested unit."""
     if (set(args.models) != set(S.LEARNED) or
-            set(args.towers) != set(S.TOWERS_SEARCHED)) and not args.partial:
+            set(args.towers) != set(C.TOWERS_SEARCHED)) and not args.partial:
         sys.exit("the protocol opens the test once for every model and tower;"
                  " pass --partial to open it for a subset")
     pairs = [(m, t) for m in args.models for t in args.towers]
     missing = [
-        f"{m}/{t}/s{seed}" for m, t in pairs for seed in range(S.N_SEEDS)
+        f"{m}/{t}/s{seed}" for m, t in pairs for seed in range(C.N_SEEDS)
         if not os.path.exists(
             os.path.join(unit_dir(args.root, m, t, seed), "result.json"))
     ]
@@ -180,7 +187,7 @@ def open_test(args: argparse.Namespace) -> None:
         sys.exit(f"the test opens when every unit is trained; missing: "
                  f"{', '.join(missing)}")
     for model, tower in pairs:
-        for seed in range(S.N_SEEDS):
+        for seed in range(C.N_SEEDS):
             for variant in VARIANTS:
                 score(args, model, tower, seed, variant)
     print(f"test scored into {os.path.join(args.root, 'sealed')}")
@@ -190,7 +197,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     """Command-line options."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--model", choices=sorted(S.SPACE))
-    parser.add_argument("--tower", choices=S.TOWERS_SEARCHED)
+    parser.add_argument("--tower", choices=C.TOWERS_SEARCHED)
     parser.add_argument("--open_test", action="store_true")
     parser.add_argument("--models",
                         default="all",
@@ -206,11 +213,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--extra", default="")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--dry_run", action="store_true")
-    parser.add_argument("--epochs", type=int, default=S.EPOCHS_FINAL)
+    parser.add_argument("--epochs", type=int, default=C.EPOCHS_FINAL)
     args = parser.parse_args(argv)
     args.models = (list(S.LEARNED)
                    if args.models == "all" else args.models.split(","))
-    args.towers = (list(S.TOWERS_SEARCHED)
+    args.towers = (list(C.TOWERS_SEARCHED)
                    if args.towers == "all" else args.towers.split(","))
     if not args.open_test and not (args.model and args.tower):
         parser.error("--model and --tower (training) or --open_test")

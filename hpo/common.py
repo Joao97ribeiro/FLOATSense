@@ -1,6 +1,8 @@
 # pylint: disable=too-many-arguments
 # pylint: disable=too-many-positional-arguments
 # pylint: disable=too-many-locals
+# pylint: disable=too-many-return-statements
+# pylint: disable=wrong-import-position
 """Pieces shared by the drivers of the validation-tuned track.
 
 A *unit* is one training run of scripts/train/run.py in its own directory
@@ -14,7 +16,11 @@ handles failures:
     up to MAX_ATTEMPTS attempts; then the unit is parked and an alert record
     is written to <root>/alerts/;
   - a preemption (the run killed by a signal) or a hardware fault (CUDA
-    error, ECC, Xid) is resumed without counting as an attempt.
+    error, ECC, Xid) is resumed without counting as an attempt;
+  - a stop request of the worker (`request_stop`: Slurm time limit,
+    preemption notice, STOP file) is passed to the run as SIGUSR1 (the
+    trainer saves at the end of the epoch and exits with EXIT_STOPPED);
+    the unit returns 'stopped' and is resumed by the next worker.
 
 Every file the drivers share is written atomically (temporary file and
 rename), and the files that fix a decision (plans, sealed test results)
@@ -36,9 +42,11 @@ import time
 from typing import Callable, Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from floatsense.constants import EXIT_DIVERGED  # pylint: disable=wrong-import-position
-from floatsense.constants import EXIT_TOO_LARGE  # pylint: disable=wrong-import-position
-from hpo import search_space as S  # pylint: disable=wrong-import-position
+from floatsense.constants import EXIT_DIVERGED
+from floatsense.constants import EXIT_STOPPED
+from floatsense.constants import EXIT_TOO_LARGE
+from hpo import constants as C
+from hpo import search_space as S
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUN_PY = os.path.join(REPO, "scripts", "train", "run.py")
@@ -56,6 +64,11 @@ HARDWARE = re.compile(
 HEARTBEAT_SECONDS = 30.0
 RETRY_SECONDS = 5.0  # pause before resuming a failed run
 TAIL_LINES = 60
+# A stop request of the worker; the runs it started get SIGUSR1.
+STOP = threading.Event()
+_CHILDREN: set = set()
+# Seconds per validation of the dry-run stub (0: instantaneous).
+STUB_SECONDS = 0.0
 
 
 def now() -> str:
@@ -131,17 +144,40 @@ def alert(root: str, unit: str, reason: str, details: Dict) -> str:
     return path
 
 
+def request_stop(sig: int = signal.SIGUSR1) -> None:
+    """Asks the runs of this process to stop (SIGUSR1: save at the end of
+    the epoch) and `run_unit` not to start or resume any."""
+    STOP.set()
+    for process in list(_CHILDREN):
+        try:
+            process.send_signal(sig)
+        except (ProcessLookupError, OSError):
+            pass
+
+
+def server_time(directory: str) -> float:
+    """Time of the file server of `directory`: the mtime of a probe file
+    touched now (on NFS, utime without a time is set by the server), so
+    that ages on a shared file system do not depend on the node clocks."""
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, f".probe.{socket.gethostname()}")
+    with open(path, "a", encoding="utf-8"):
+        pass
+    os.utime(path, None)
+    return os.stat(path).st_mtime
+
+
 def heartbeat_age(run_dir: str) -> float:
     """Seconds since the heartbeat of a unit (inf if it never ran)."""
     path = os.path.join(run_dir, "heartbeat")
     if not os.path.exists(path):
         return float("inf")
-    return time.time() - os.path.getmtime(path)
+    return server_time(run_dir) - os.path.getmtime(path)
 
 
 def is_stale(run_dir: str) -> bool:
     """A unit whose worker stopped beating STALE_MINUTES ago."""
-    return heartbeat_age(run_dir) > S.STALE_MINUTES * 60
+    return heartbeat_age(run_dir) > C.STALE_MINUTES * 60
 
 
 def claim(run_dir: str) -> bool:
@@ -189,11 +225,13 @@ def classify(returncode: int, tail: str) -> str:
     """Outcome of a finished run from its exit code and last lines.
 
     Returns:
-        str: 'ok', 'diverged', 'too_large', 'preempted', 'hardware' or
-          'crash' (out of memory and every other error).
+        str: 'ok', 'diverged', 'too_large', 'stopped', 'preempted',
+          'hardware' or 'crash' (out of memory and every other error).
     """
     if returncode == 0:
         return "ok"
+    if returncode == EXIT_STOPPED:
+        return "stopped"
     if returncode == EXIT_DIVERGED:
         return "diverged"
     if returncode == EXIT_TOO_LARGE:
@@ -241,8 +279,8 @@ def train_command(args,
     ] + S.as_args(cfg)
     if validate:
         cmd += [
-            f"--val_split={S.SEARCH_VAL_SPLIT}", "--val_score=damage",
-            f"--val_every={S.VAL_EVERY}"
+            f"--val_split={C.SEARCH_VAL_SPLIT}", "--val_score=damage",
+            f"--val_every={C.VAL_EVERY}"
         ]
     if model not in S.PRETRAINED:
         cmd.append(f"--max_params_m={S.MAX_PARAMS_M}")
@@ -297,15 +335,17 @@ def run_unit(name: str,
         env (dict, optional): Environment of the run.
 
     Returns:
-        dict: 'status' ('ok', 'pruned', 'diverged', 'too_large' or
-          'parked'), 'history' when ok, 'params' (trainable count, when
-          printed) and 'tail' (last lines of the log).
+        dict: 'status' ('ok', 'pruned', 'diverged', 'too_large',
+          'stopped' or 'parked'), 'history' when ok, 'params' (trainable
+          count, when printed) and 'tail' (last lines of the log).
     """
     os.makedirs(run_dir, exist_ok=True)
     record_path = os.path.join(run_dir, "attempts.json")
     record = read_json(record_path) or {"crashes": 0, "free": 0, "events": []}
     params = None
     while True:
+        if STOP.is_set():
+            return {"status": "stopped", "params": params, "tail": ""}
         tail: List[str] = []
         stopped = False
         with _Heartbeat(run_dir), open(os.path.join(run_dir, "log.txt"),
@@ -319,6 +359,9 @@ def run_unit(name: str,
                                   bufsize=1,
                                   cwd=REPO,
                                   env=env) as process:
+                _CHILDREN.add(process)
+                if STOP.is_set():
+                    process.send_signal(signal.SIGUSR1)
                 for line in process.stdout:
                     log.write(line)
                     tail = (tail + [line])[-TAIL_LINES:]
@@ -331,6 +374,7 @@ def run_unit(name: str,
                         process.terminate()
                         break
                 returncode = process.wait()
+                _CHILDREN.discard(process)
         text = "".join(tail)
         if stopped:
             return {"status": "pruned", "params": params, "tail": text}
@@ -351,11 +395,14 @@ def run_unit(name: str,
         if status in ("diverged", "too_large"):
             write_json(record_path, record)
             return {"status": status, "params": params, "tail": text}
+        if status == "stopped" or STOP.is_set():
+            write_json(record_path, record)
+            return {"status": "stopped", "params": params, "tail": text}
         key = "crashes" if status == "crash" else "free"
         record[key] += 1
         write_json(record_path, record)
-        if (record["crashes"] >= S.MAX_ATTEMPTS or
-                record["free"] > S.MAX_FREE_RETRIES):
+        if (record["crashes"] >= C.MAX_ATTEMPTS or
+                record["free"] > C.MAX_FREE_RETRIES):
             path = alert(
                 root, name, f"parked after {status}", {
                     "command": cmd,
@@ -378,7 +425,7 @@ def stub_curve(cfg: Dict, key: int, epochs: int) -> List[Dict]:
     level = 0.6 + 0.3 * ((key * 0.618034) % 1.0)
     level -= 0.05 * abs(math.log10(cfg["lr"] / 1e-3))
     curve = []
-    for epoch in range(S.VAL_EVERY, epochs + 1, S.VAL_EVERY):
+    for epoch in range(C.VAL_EVERY, epochs + 1, C.VAL_EVERY):
         value = level * (1.0 - 0.5**(epoch / 30.0))
         curve.append({
             "epoch": epoch,
@@ -394,9 +441,12 @@ def stub_unit(cfg: Dict,
               key: int,
               epochs: int,
               on_val: Optional[Callable[[Dict], bool]] = None) -> Dict:
-    """`run_unit` of a dry run: streams `stub_curve` to `on_val`."""
+    """`run_unit` of a dry run: streams `stub_curve` to `on_val` (one
+    validation every STUB_SECONDS; a stop request stops it)."""
     curve = stub_curve(cfg, key, epochs)
     for scores in curve:
+        if STOP.wait(STUB_SECONDS) if STUB_SECONDS else STOP.is_set():
+            return {"status": "stopped", "params": 1000, "tail": ""}
         if on_val is not None and on_val(scores):
             return {"status": "pruned", "params": 1000, "tail": ""}
     return {

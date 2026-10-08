@@ -18,19 +18,18 @@ import unittest
 from unittest import mock
 
 import numpy as np
+import optuna
 import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from floatsense import constants as C
+from floatsense import constants as FC
 from hpo import analyze
 from hpo import common
+from hpo import confirm
+from hpo import constants as C
+from hpo import final
+from hpo import search
 from hpo import search_space as S
-
-try:
-    import optuna
-    HAS_OPTUNA = int(optuna.__version__.split(".", maxsplit=1)[0]) >= 4
-except ImportError:
-    HAS_OPTUNA = False
 
 
 class FakeTrial:
@@ -93,7 +92,7 @@ class SearchSpaceTest(unittest.TestCase):
         args = S.as_args(dict(lr=1e-3, use_wd=True, wd=1e-4, schedule="cosine"))
         self.assertIn("--weight_decay=0.0001", args)
         self.assertIn(f"--warmup_epochs={S.WARMUP_EPOCHS}", args)
-        self.assertIn(f"--grad_clip={S.GRAD_CLIP}", args)
+        self.assertIn(f"--grad_clip={C.GRAD_CLIP}", args)
 
 
 class CommonTest(unittest.TestCase):
@@ -111,8 +110,8 @@ class CommonTest(unittest.TestCase):
     def test_classify(self):
         """Exit codes and logs map to the failure classes."""
         self.assertEqual(common.classify(0, ""), "ok")
-        self.assertEqual(common.classify(C.EXIT_DIVERGED, ""), "diverged")
-        self.assertEqual(common.classify(C.EXIT_TOO_LARGE, ""), "too_large")
+        self.assertEqual(common.classify(FC.EXIT_DIVERGED, ""), "diverged")
+        self.assertEqual(common.classify(FC.EXIT_TOO_LARGE, ""), "too_large")
         self.assertEqual(common.classify(-signal.SIGTERM, ""), "preempted")
         self.assertEqual(
             common.classify(
@@ -133,7 +132,7 @@ class CommonTest(unittest.TestCase):
             unit = os.path.join(root, "unit")
             self.assertTrue(common.claim(unit))
             self.assertFalse(common.claim(unit))
-            old = time.time() - 2 * S.STALE_MINUTES * 60
+            old = time.time() - 2 * C.STALE_MINUTES * 60
             os.utime(os.path.join(unit, "heartbeat"), (old, old))
             self.assertTrue(common.claim(unit))
             common.release(unit)
@@ -182,7 +181,7 @@ class CommonTest(unittest.TestCase):
             record = common.read_json(
                 os.path.join(root, "unit", "attempts.json"))
             self.assertEqual((record["free"], record["crashes"]),
-                             (2, S.MAX_ATTEMPTS))
+                             (2, C.MAX_ATTEMPTS))
             alerts = os.listdir(os.path.join(root, "alerts"))
             self.assertEqual(len(alerts), 1)
             self.assertTrue(os.path.exists(os.path.join(root, "unit",
@@ -191,13 +190,12 @@ class CommonTest(unittest.TestCase):
     def test_exit_codes_are_returned(self):
         """Divergence and the parameter cap are not retried."""
         with tempfile.TemporaryDirectory() as root:
-            for code, status in ((C.EXIT_DIVERGED, "diverged"),
-                                 (C.EXIT_TOO_LARGE, "too_large")):
+            for code, status in ((FC.EXIT_DIVERGED, "diverged"),
+                                 (FC.EXIT_TOO_LARGE, "too_large")):
                 result = self.run_fake(root, f"import sys; sys.exit({code})")
                 self.assertEqual(result["status"], status)
 
 
-@unittest.skipUnless(HAS_OPTUNA, "needs optuna >= 4")
 class DriversTest(unittest.TestCase):
     """search, confirm and final with the dry-run stub."""
 
@@ -210,7 +208,6 @@ class DriversTest(unittest.TestCase):
 
     def search(self, *extra, model="tcn", tower="opt2"):
         """search.main in dry-run mode on the test root."""
-        from hpo import search  # pylint: disable=import-outside-toplevel
         return search.main([
             f"--model={model}", f"--tower={tower}", "--dry_run",
             f"--root={self.root}", "--n_trials=10", *extra
@@ -223,7 +220,7 @@ class DriversTest(unittest.TestCase):
         states = [t.state.name for t in study.trials]
         self.assertEqual(len(states), 10)
         self.assertGreaterEqual(states.count("PRUNED"), 1)
-        self.assertEqual(states[:S.N_STARTUP], ["COMPLETE"] * S.N_STARTUP)
+        self.assertEqual(states[:C.N_STARTUP], ["COMPLETE"] * C.N_STARTUP)
         for trial in study.trials:
             cfg = trial.user_attrs["config"]
             self.assertEqual("wd" in cfg, cfg["use_wd"])
@@ -236,14 +233,13 @@ class DriversTest(unittest.TestCase):
 
     def test_stale_trial_is_requeued(self):
         """A RUNNING trial of a dead worker is resumed with its config."""
-        from hpo import search  # pylint: disable=import-outside-toplevel
         study = search.open_study(self.root, "tcn", "opt2")
         trial = study.ask()
         cfg = S.suggest(trial, "tcn")
         run_dir = os.path.join(self.root, "trials", "dead")
         trial.set_user_attr("run_dir", run_dir)
         common.touch(run_dir)
-        old = time.time() - 2 * S.STALE_MINUTES * 60
+        old = time.time() - 2 * C.STALE_MINUTES * 60
         os.utime(os.path.join(run_dir, "heartbeat"), (old, old))
         study = self.search("--max_new=1")
         resumed = study.trials[1]
@@ -253,8 +249,7 @@ class DriversTest(unittest.TestCase):
 
     def test_extension_rule(self):
         """A best trial after the EXTEND_AFTER-th extends the model."""
-        from hpo import search  # pylint: disable=import-outside-toplevel
-        n_trials = S.EXTEND_AFTER + 5
+        n_trials = C.EXTEND_AFTER + 5
         study = search.open_study(self.root, "fits", "ref")
         dist = optuna.distributions.CategoricalDistribution([0.5])
         for number in range(n_trials):
@@ -262,27 +257,26 @@ class DriversTest(unittest.TestCase):
                 optuna.trial.create_trial(
                     params={"x": 0.5},
                     distributions={"x": dist},
-                    value=1.0 if number == S.EXTEND_AFTER + 2 else 0.0))
+                    value=1.0 if number == C.EXTEND_AFTER + 2 else 0.0))
         trials = study.get_trials()
         self.assertEqual(search.best_position(trials, n_trials),
-                         S.EXTEND_AFTER + 3)
-        self.assertEqual(search.best_position(trials, S.EXTEND_AFTER), 1)
+                         C.EXTEND_AFTER + 3)
+        self.assertEqual(search.best_position(trials, C.EXTEND_AFTER), 1)
         self.assertTrue(search.maybe_extend(self.root, "fits", n_trials))
         self.assertEqual(search.target_trials(self.root, "fits", n_trials),
-                         n_trials + S.EXTEND_BY)
+                         n_trials + C.EXTEND_BY)
         self.assertEqual(search.target_trials(self.root, "tcn", n_trials),
                          n_trials)
 
     def test_confirm_and_final(self):
         """Plan frozen once, winner by the median, test sealed once."""
-        from hpo import confirm, final  # pylint: disable=import-outside-toplevel
         self.search()
         args = [
             "--model=tcn", "--tower=opt2", f"--root={self.root}", "--dry_run",
             "--n_trials=10"
         ]
         plan = confirm.main(args + ["--freeze"])
-        self.assertEqual(len(plan["configs"]), S.N_TOP)
+        self.assertEqual(len(plan["configs"]), C.N_TOP)
         self.assertEqual(confirm.main(args + ["--freeze"]), plan)
         self.assertIsNone(confirm.main(args + ["--summarize"]))
         confirm.main(args)
@@ -292,7 +286,7 @@ class DriversTest(unittest.TestCase):
         for row in record["configs"]:
             self.assertAlmostEqual(row["median"],
                                    float(np.median(row["scores"])))
-        self.assertEqual(record["best_epoch"] % S.BEST_EPOCH_ROUND, 0)
+        self.assertEqual(record["best_epoch"] % C.BEST_EPOCH_ROUND, 0)
         test = [
             "--open_test", "--models=tcn", "--towers=opt2",
             f"--root={self.root}", "--dry_run"

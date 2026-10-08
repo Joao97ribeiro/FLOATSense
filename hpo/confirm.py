@@ -29,6 +29,8 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from hpo import common
+from hpo import constants as C
+from hpo import search
 from hpo import search_space as S
 
 
@@ -61,7 +63,6 @@ def units(plan: Dict) -> List[tuple]:
 
 def freeze(args: argparse.Namespace) -> Dict:
     """Writes the plan once, from a finished search study."""
-    from hpo import search  # pylint: disable=import-outside-toplevel
     path = plan_path(args.root, args.model, args.tower)
     existing = common.read_json(path)
     if existing is not None:
@@ -78,17 +79,17 @@ def freeze(args: argparse.Namespace) -> Dict:
                  f"{running} running, {waiting} waiting")
     trials = sorted([t for t in study.trials if search.eligible(t)],
                     key=lambda t: (-t.value, t.number))
-    if len(trials) < S.N_TOP:
-        sys.exit(f"{len(trials)} eligible trials, fewer than {S.N_TOP}")
-    top = trials[:S.N_TOP]
+    if len(trials) < C.N_TOP:
+        sys.exit(f"{len(trials)} eligible trials, fewer than {C.N_TOP}")
+    top = trials[:C.N_TOP]
     margin = (top[-1].value -
-              trials[S.N_TOP].value if len(trials) > S.N_TOP else None)
+              trials[C.N_TOP].value if len(trials) > C.N_TOP else None)
     plan = {
         "study": study.study_name,
         "model": args.model,
         "tower": args.tower,
         "n_trials_counted": done,
-        "n_seeds": S.N_SEEDS,
+        "n_seeds": C.N_SEEDS,
         "epochs": args.epochs,
         "margin_top_to_next": margin,
         "configs": [{
@@ -124,12 +125,12 @@ def run_one(args: argparse.Namespace, plan: Dict, rank: int,
                                       plan["epochs"])
         else:
             cmd = common.train_command(args, args.model, args.tower, run_dir,
-                                       cfg, S.SEARCH_TRAIN_SPLIT,
+                                       cfg, C.SEARCH_TRAIN_SPLIT,
                                        plan["epochs"], seed)
             result = common.run_unit(
                 f"phase2/{args.model}_{args.tower}/c{rank}_s{seed}", cmd,
                 run_dir, args.root, args.model)
-        if result["status"] == "parked":
+        if result["status"] in ("parked", "stopped"):
             return None
         record = {"rank": rank, "seed": seed, "status": result["status"]}
         curve = (result.get("history") or {}).get("val_r2", [])
@@ -181,8 +182,8 @@ def summarize(args: argparse.Namespace, plan: Dict) -> Optional[Dict]:
             "median":
                 float(np.median(scores)),
             "best_epoch_median": (int(
-                round(np.median(epochs) / S.BEST_EPOCH_ROUND) *
-                S.BEST_EPOCH_ROUND) if epochs else None)
+                round(np.median(epochs) / C.BEST_EPOCH_ROUND) *
+                C.BEST_EPOCH_ROUND) if epochs else None)
         })
     rows.sort(key=lambda r: (-r["median"], r["rank"]))
     winner = rows[0]
@@ -208,7 +209,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     """Command-line options."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--model", required=True, choices=sorted(S.SPACE))
-    parser.add_argument("--tower", required=True, choices=S.TOWERS_SEARCHED)
+    parser.add_argument("--tower", required=True, choices=C.TOWERS_SEARCHED)
     parser.add_argument("--root", default="outputs/hpo")
     parser.add_argument("--dataset_dir", default="data/FLOATSense")
     parser.add_argument("--freeze", action="store_true")
@@ -220,8 +221,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--extra", default="")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--dry_run", action="store_true")
-    parser.add_argument("--n_trials", type=int, default=S.N_TRIALS)
-    parser.add_argument("--epochs", type=int, default=S.EPOCHS_FINAL)
+    parser.add_argument("--n_trials", type=int, default=C.N_TRIALS)
+    parser.add_argument("--epochs", type=int, default=C.EPOCHS_FINAL)
     return parser.parse_args(argv)
 
 

@@ -1,6 +1,6 @@
 # pylint: disable=use-dict-literal
-"""The search space and the numbers of the validation-tuned track, in one
-place, so the budget is comparable across models.
+"""The search space of the validation-tuned track, in one place, so the
+search effort is comparable across models.
 
 What is held equal is the SEARCH EFFORT (the same number of trials per model
 over a space of comparable complexity), not the shape of a grid.
@@ -14,13 +14,11 @@ size, the epoch budget, the validation frequency, the damage model (radius
 at the gauge) and the selection metric. A search that is allowed to change
 those is not comparing architectures.
 
-Objective: VALIDATION R^2 of log10 damage, mean over the 11 heights, at the
-last epoch of each run. Phase 2 confirms the top-2 configurations of each
-(model, tower) over N_SEEDS seeds (winner = highest median over the seeds);
-phase 3 retrains the winner on the full training split and opens the test
-split once. The search has no enqueued published configuration; PUBLISHED
-below only records the fixed-budget values (all inside the grids).
+The protocol numbers (trials, epochs, seeds, splits, failures) are in
+hpo/constants.py.
 """
+
+from hpo import constants as C
 
 # A parameter ceiling, so that "more capacity" cannot be bought indefinitely
 # by one family (millions of trainable parameters); the pretrained encoders
@@ -168,42 +166,6 @@ PUBLISHED = {
         dict(context_length=1024),
 }
 
-# --- Phase 1: search -------------------------------------------------------
-N_TRIALS = 30  # per model and tower (completed + pruned trials count)
-N_STARTUP = 7  # random trials, then TPE; no enqueued trial
-# Trials of 100 epochs (one third of the confirmation budget), scored at
-# their last validation epoch; validation every VAL_EVERY epochs;
-# MedianPruner after PRUNE_WARMUP epochs.
-VAL_EVERY = 10
-EPOCHS_TRIAL = 100
-PRUNE_WARMUP = 50
-NO_PRUNING = ("mamba", "moment_ft", "timesfm_ft")
-TRIAL_SEED = 0  # training seed of every trial
-# Extension rule: if a study's best eligible trial comes after the
-# EXTEND_AFTER-th, the three studies of that model get EXTEND_BY more.
-EXTEND_AFTER = 20
-EXTEND_BY = 20
-TOWERS_SEARCHED = ("ref", "opt1", "opt2")
-SEARCH_TRAIN_SPLIT = "val/train"  # 1,380 simulations
-SEARCH_VAL_SPLIT = "val/val"  # 348 simulations
-
-# --- Phase 2: confirmation, phase 3: test ----------------------------------
-EPOCHS_FINAL = 300  # confirmation and retraining
-N_TOP = 2  # configurations confirmed per study
-N_SEEDS = 3
-FINAL_TRAIN_SPLIT = "train"  # 1,728 simulations
-TEST_SPLIT = "test"
-BEST_EPOCH_ROUND = 10  # the secondary test epoch is rounded to this
-
-# --- Fixed for every run -----------------------------------------------------
-GRAD_CLIP = 1.0
-
-# --- Failures ----------------------------------------------------------------
-MAX_ATTEMPTS = 3  # crashes (OOM included) before a unit is parked
-MAX_FREE_RETRIES = 10  # preemptions and hardware faults (not counted)
-STALE_MINUTES = 15  # a unit whose heartbeat is older belongs to a dead worker
-DIVERGED_FALLBACK = -1.0  # score of a diverged trial before any completes
-
 # --- Leaderboard (analyze.py) -----------------------------------------------
 # The eight families of the paper (best model of each is reported).
 FAMILIES = {
@@ -253,7 +215,7 @@ def as_args(cfg):
     wd = cfg["wd"] if cfg.get("use_wd") else 0.0
     args = [
         f"--learning_rate={cfg['lr']:.6g}", f"--weight_decay={wd:.6g}",
-        f"--schedule={cfg['schedule']}", f"--grad_clip={GRAD_CLIP}"
+        f"--schedule={cfg['schedule']}", f"--grad_clip={C.GRAD_CLIP}"
     ]
     if cfg["schedule"] == "cosine":
         args.append(f"--warmup_epochs={WARMUP_EPOCHS}")

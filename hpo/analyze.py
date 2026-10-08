@@ -22,7 +22,7 @@ cell) and builds the leaderboard of the track, for the headline variant
 
 and, once for the track, configs.csv (the selected configuration of each
 model and tower, from phase 2) and curves.csv (best validation score so far
-against the trial number, per study; needs optuna >= 4).
+against the trial number, per study).
 
     python hpo/analyze.py --root=outputs/hpo --dataset_dir=data/FLOATSense
     python hpo/analyze.py --dry_run --out=/tmp/leaderboard   # synthetic
@@ -44,6 +44,8 @@ import pyarrow.parquet as pq
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from hpo import common
 from hpo import confirm
+from hpo import constants as C
+from hpo import search
 from hpo import search_space as S
 
 BENCHMARK = os.path.join(common.REPO, "scripts", "benchmark", "run.py")
@@ -135,7 +137,7 @@ def configs(root: str) -> pd.DataFrame:
     """Selected configuration of every model and tower (phase 2)."""
     rows = []
     for model in S.LEARNED:
-        for tower in S.TOWERS_SEARCHED:
+        for tower in C.TOWERS_SEARCHED:
             record = common.read_json(confirm.winner_path(root, model, tower))
             if record is None:
                 continue
@@ -152,14 +154,9 @@ def configs(root: str) -> pd.DataFrame:
 
 def curves(root: str) -> pd.DataFrame:
     """Best validation score so far against the trial number, per study."""
-    try:
-        from hpo import search  # pylint: disable=import-outside-toplevel
-    except ImportError:
-        print("curves.csv needs optuna >= 4; skipped")
-        return pd.DataFrame()
     rows = []
     for model in S.LEARNED:
-        for tower in S.TOWERS_SEARCHED:
+        for tower in C.TOWERS_SEARCHED:
             study = search.open_study(root, model, tower, create=False)
             if study is None:
                 continue
@@ -229,7 +226,7 @@ def write_synthetic(root: str,
     heights = np.linspace(1.0, 150.0, len(GAUGES))
     quality = dict(zip(S.LEARNED, np.linspace(0.05, 0.6, len(S.LEARNED))))
     quality[FLOOR] = 0.8
-    for tower in S.TOWERS_SEARCHED:
+    for tower in C.TOWERS_SEARCHED:
         folder = os.path.join(dataset_dir, tower)
         os.makedirs(folder, exist_ok=True)
         pd.DataFrame({
@@ -266,7 +263,7 @@ def write_synthetic(root: str,
             for i, g in enumerate(GAUGES)
         }
         for variant in VARIANTS:
-            for seed in range(S.N_SEEDS):
+            for seed in range(C.N_SEEDS):
                 runs = os.path.join(root, "sealed", variant, tower,
                                     f"seed{seed}")
                 os.makedirs(runs, exist_ok=True)
@@ -280,7 +277,7 @@ def write_synthetic(root: str,
                         runs, f"damage_comparison_{model}_fa.csv"),
                                                index=False)
     for model in S.LEARNED:
-        for tower in S.TOWERS_SEARCHED:
+        for tower in C.TOWERS_SEARCHED:
             common.write_json(
                 confirm.winner_path(root, model, tower), {
                     "winner_config": S.FIXED_RECIPE,

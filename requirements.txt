@@ -17,3 +17,6 @@ tqdm==4.67.1
 # TimesFM 2.5 is installed from https://github.com/google-research/timesfm
 chronos-forecasting==2.2.2
 transformers==4.57.6
+
+# Validation-tuned track (hpo/).
+optuna==4.6.0
