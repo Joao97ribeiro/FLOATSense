@@ -8,6 +8,11 @@ phase 3 retrains the winner on the full training split and opens the test
 split once. The search has no enqueued published configuration; PUBLISHED
 in hpo/search_space.py only records the fixed-budget values (all inside the
 grids).
+
+Naming: a unit or study that stopped after failures is 'parked' in the code
+and in the files (PARKED markers, <root>/parked/) and 'shelved' in the
+alerts, the status and the README, which keep 'parked' for the 22
+calibration runs of the dataset.
 """
 
 # --- Phase 1: search -------------------------------------------------------
@@ -41,27 +46,58 @@ BEST_EPOCH_ROUND = 10  # the secondary test epoch is rounded to this
 GRAD_CLIP = 1.0
 
 # --- Failures ----------------------------------------------------------------
-MAX_ATTEMPTS = 3  # crashes (OOM included) before a unit is parked
+MAX_ATTEMPTS = 3  # crashes before a unit is parked
 MAX_FREE_RETRIES = 10  # preemptions and hardware faults (not counted)
 STALE_MINUTES = 15  # a unit whose heartbeat is older belongs to a dead worker
 DIVERGED_FALLBACK = -1.0  # score of a diverged trial before any completes
 # Draws above the parameter cap are failed trials (not counted toward
 # N_TRIALS, ignored by TPE); a study with this many is parked.
 MAX_OVER_CAP = 20
-# A parked unit (or study) whose failures all came from one host is un-parked
-# once, by the first worker of another host that picks it.
+# Out of memory is not retried: a search trial is a failed draw (not counted,
+# like an over-cap draw) and a study with this many is parked; a
+# confirmation or final unit (a fixed configuration) is parked at once.
+# Neither counts against the host.
+MAX_OOM = 5
+# A parked unit (or study) whose failures all came from one host is
+# un-parked once, by the first worker of another host that picks it.
+# Failures on a host listed in <root>/bad_hosts/ do not count.
+# Exceptions of the drivers (not of the runs) in one study before the study
+# is parked, so one bad study cannot stop every worker.
+DRIVER_ERRORS_PARK = 3
+# Attempts in a row that end stopped or preempted without a new resume save
+# before an alert (a unit that makes no progress: the checkpoint interval is
+# longer than the time the workers get).
+NO_PROGRESS_ATTEMPTS = 3
 
 # --- Workers (pick.py, worker.py, status.py) --------------------------------
 LOCK_BEAT_SECONDS = 60.0  # a worker rewrites the lock of its unit this often
+# Beats in a row that fail (lock unreadable or missing, utime error) before
+# the worker gives the unit up (well under STALE_MINUTES).
+LOCK_BEAT_FAILURES = 5
 BREAK_LOCK_SECONDS = 120.0  # a stale lock breaker older than this is removed
+# The lock of `pick.advance` (one caller at a time): beaten this often and
+# stale after ADVANCE_STALE_SECONDS, so a killed holder blocks little.
+ADVANCE_BEAT_SECONDS = 20.0
+ADVANCE_STALE_SECONDS = 120.0
 PARK_STUDY_AFTER = 3  # parked trials before a search study is parked
-# Consecutive units of one worker ending parked or crashed before it stops
-# picking (a broken node: bad environment, full disk, missing mount).
+# Failed units (parked or crashed) in a row of one worker, from at least
+# two different studies, before it stops picking (a broken host: bad
+# environment, full disk, missing mount). Failures of a single study are the
+# study's (DRIVER_ERRORS_PARK); out of memory and a configuration mismatch
+# never count.
 WORKER_FAILURES = 2
+# Exceptions in a row of the worker loop itself (pick, advance) before the
+# worker stops with EXIT_BROKEN.
+MAX_LOOP_ERRORS = 10
 IDLE_MINUTES = 30.0  # a worker with nothing to pick exits after this
 POLL_SECONDS = 60.0  # wait between two picks of an idle worker
-EXIT_REQUEUE = 99  # worker exit code: stopped mid-unit, to be restarted
-EXIT_BROKEN = 98  # worker exit code: WORKER_FAILURES failed units in a row
+# Worker exit codes: 0 every unit done, idle or STOP file; EXIT_CONFIG a
+# resume state of another configuration (an operator decides); EXIT_BROKEN
+# a broken host (listed in <root>/bad_hosts/); EXIT_REQUEUE stopped mid-unit
+# (signal or lock lost), to be restarted.
+EXIT_CONFIG = 97
+EXIT_BROKEN = 98
+EXIT_REQUEUE = 99
 # Wall time between two resume saves of a run (run.py --checkpoint_seconds;
 # short, so a preempted run loses little).
 CHECKPOINT_SECONDS = 90.0

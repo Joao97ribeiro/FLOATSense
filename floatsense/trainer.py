@@ -150,6 +150,24 @@ def _atomic_save(obj, path: str) -> None:
     os.replace(tmp, path)
 
 
+def _writer_alive(path: str) -> bool:
+    """Whether the <pid> suffix of a temporary file of `_atomic_save` is
+    another live process on this host (a process of another user counts as
+    alive)."""
+    suffix = path.rsplit(".", 1)[-1]
+    if not suffix.isdigit() or int(suffix) in (0, os.getpid()):
+        return False
+    try:
+        os.kill(int(suffix), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OverflowError:
+        return False
+    return True
+
+
 def _ids_hash(train_ids: List[int], val_ids: Optional[List[int]]) -> str:
     """Digest of the training and validation simulations, in order."""
     ids = [[int(i) for i in train_ids], [int(i) for i in val_ids or []]]
@@ -269,7 +287,9 @@ class SequenceModelTrainer:
               every `checkpoint_seconds`) and continue from it if present;
               SIGUSR1 saves it at the end of the epoch and raises
               StoppedError. A resume state written with another run
-              configuration (see `_run_config`) raises ConfigMismatchError.
+              configuration (see `_run_config`) raises ConfigMismatchError;
+              `num_epochs` is part of it, so a run is extended in a new
+              output directory, never in place.
             max_params_m (float): Refuse a model with more trainable
               parameters, in millions (0 = no limit).
             save_epochs (List[int], optional): Epochs whose weights are also
@@ -442,7 +462,8 @@ class SequenceModelTrainer:
               `max_params_m`.
             StoppedError: SIGUSR1 in a resumable run (state saved).
             ConfigMismatchError: The resume state of the output directory
-              was written with another run configuration.
+              was written with another run configuration (another
+              `num_epochs` included: a longer run needs a new directory).
         """
         self._previous_handler = None
         try:
@@ -750,10 +771,38 @@ class SequenceModelTrainer:
 
     def _run_config(self, train_ids: List[int],
                     val_ids: Optional[List[int]]) -> Dict:
-        """Settings a resume state must have been written with."""
+        """Settings a resume state must have been written with.
+
+        Every setting that changes the weights or the selected epoch: the
+        tower, the task (inputs, target, scored window, damage metric), the
+        recipe and the training simulations. The number of epochs is one of
+        them, so a finished or interrupted run is never extended in place:
+        a longer run goes to a new output directory.
+        """
+
+        def as_list(values) -> Optional[List]:
+            return None if values is None else list(values)
+
         return {
+            "tower": getattr(self.release, "name", None),
             "model_name": self.model_name,
             "direction": self.direction,
+            "input_channels": as_list(self.input_channels),
+            "condition_channels": as_list(self.condition_channels),
+            "target_channel": self.target_channel,
+            "damage_gauge": self.damage_gauge,
+            "height_targets": bool(self.height_targets),
+            "height_factors": (None if self.height_factors is None else
+                               [float(f) for f in self.height_factors]),
+            "calibration_path": self.calibration_path,
+            "init_checkpoint": self.init_checkpoint,
+            "min_time": self.min_time,
+            "max_time": self.max_time,
+            "apply_lowpass": self.apply_lowpass,
+            "lowpass_hz": self.lowpass_hz,
+            "lowpass_order": self.lowpass_order,
+            "sn_intercepts_log10": as_list(self.sn_intercepts_log10),
+            "sn_slopes": as_list(self.sn_slopes),
             "model_kwargs": dict(self.model_kwargs),
             "condition_bound": self.condition_bound,
             "learning_rate": self.learning_rate,
@@ -767,7 +816,8 @@ class SequenceModelTrainer:
             "crop_length": self.crop_length,
             "loss_name": self.loss_name,
             "damage_loss_weight": self.damage_loss_weight,
-            "height_targets": bool(self.height_targets),
+            "damage_m": self.damage_m,
+            "damage_freq_exponent": self.damage_freq_exponent,
             "early_stopping_patience": self.early_stopping_patience,
             "val_every": self.val_every,
             "val_score": self.val_score,
@@ -776,14 +826,15 @@ class SequenceModelTrainer:
 
     def _check_run_config(self, resume_state: Dict) -> None:
         """Refuses a resume state (in progress or completed) of another run
-        configuration (states written before the configuration was stored
-        are not checked)."""
+        configuration (see `_run_config`). States written before the
+        configuration was stored are not checked, and only the settings a
+        state stored are compared (a state written before a setting was
+        added keeps resuming)."""
         saved = resume_state.get("config")
         if saved is None:
             return
         current = self._config
-        changed = sorted(k for k in set(saved) | set(current)
-                         if saved.get(k) != current.get(k))
+        changed = sorted(k for k in saved if saved[k] != current.get(k))
         if changed:
             details = ", ".join(
                 f"{k}: {saved.get(k)!r} -> {current.get(k)!r}" for k in changed)
@@ -794,7 +845,9 @@ class SequenceModelTrainer:
 
     def _remove_stale_temporaries(self) -> None:
         """Removes the <file>.tmp.<pid> left by a killed `_atomic_save` of
-        the files this run writes (only those, only in its directory)."""
+        the files this run writes (only those, only in its directory). A
+        temporary whose <pid> is another live process on this host is kept:
+        it may be the save in flight of a concurrent writer."""
         stems = [self.checkpoint_path(), self.resume_path()]
         patterns = [glob.escape(stem) + ".tmp.*" for stem in stems]
         patterns.append(
@@ -804,7 +857,7 @@ class SequenceModelTrainer:
             "[0-9]*.pt.tmp.*")
         for pattern in patterns:
             for path in glob.glob(pattern):
-                if os.path.isfile(path):
+                if os.path.isfile(path) and not _writer_alive(path):
                     os.remove(path)
 
     def _save_resume(self, epoch: int, optimizer, scheduler, history: Dict,

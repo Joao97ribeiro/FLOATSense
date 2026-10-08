@@ -492,18 +492,23 @@ space is in [`hpo/search_space.py`](./hpo/search_space.py).
    test split, into a sealed directory, in two variants: `primary_last`
    (primary, the headline: the last epoch) and `secondary_best`
    (secondary: the median best validation epoch of the confirmation).
-   The test opens only when every model and tower is trained; a parked
-   model and tower (see below) is recorded as missing.
+   The test opens only when every model and tower is trained; a shelved
+   model and tower (see *Failures and workers* below) is recorded as
+   missing, and so is a pair whose final seeds all diverged
+   (`sealed/SKIPPED.json`).
 4. **Leaderboard** ([`hpo/analyze.py`](./hpo/analyze.py)): the sealed
    runs are scored by the benchmark scorer (`scripts/benchmark/run.py`);
    per model, every metric at the base, z/H 0.78, the top and the mean
    of the 11 gauges (median over the seeds per tower, then mean over the
    towers), overall and per regime cell, the top three per criterion and
-   the best model of each family, one folder per test variant. The
+   the best model of each family, one folder per test variant. Only the
+   models scored on all three towers are ranked; the others are listed
+   below them, unranked, with `n_towers` and `missing_towers`. The
    selected configuration of each model and tower, the best validation
    score against the number of counted trials of each study, and the
    GPU-hours of the track (`gpu_hours.csv`: per model, tower and phase,
-   every attempt included, with totals) are written next to it. The
+   every attempt included, hard-killed ones and the test inference runs
+   too, with totals) are written next to it. The
    naive floor and the physics baseline are not tuned: their scores are
    those of the fixed-recipe benchmark.
 
@@ -515,9 +520,19 @@ unchanged: `--weight_decay` (AdamW), `--schedule` and `--warmup_epochs`,
 `--val_score=damage` (prints `VAL epoch=... r2_mean=... r2_top=...
 r2_base=...` lines), `--resume` (a resume state at every validation and
 every `--checkpoint_seconds` of wall time; the drivers pass 90 s),
-`--max_params_m` and `--save_epochs`. A run that
-diverges exits with code 3, a model above the cap with code 4. The
-drivers need `optuna>=4`; `--dry_run` runs each of them on a CPU stub:
+`--max_params_m` and `--save_epochs`. The parameter cap (60 M) does
+not bind for the approved grids: the largest model, the U-Net, has 55 M
+trainable parameters. Exit codes of `run.py`:
+
+| Code | Meaning |
+|---|---|
+| 0 | Done. |
+| 3 | Diverged: a non-finite training loss (or damage-validation prediction). This guard is on with the default flags too; the published code finished such a run and saved a non-finite checkpoint, so the two differ only for runs that diverge. |
+| 4 | Too large: more trainable parameters than `--max_params_m`. |
+| 5 | Stopped: SIGUSR1 with `--resume`; the resume state was saved at the end of the epoch and a relaunch continues from it. |
+| 6 | Config mismatch: with `--resume`, the resume state in `--output_dir` was written with another run configuration (tower, task, recipe, training simulations or `--num_epochs`). A run is never extended in place: a longer run goes to a new `--output_dir`. |
+
+The drivers need `optuna>=4`; `--dry_run` runs each of them on a CPU stub:
 
 ```bash
 python hpo/search.py --model=tcn --tower=opt2 --dataset_dir=data/FLOATSense
@@ -532,13 +547,44 @@ Each run directory holds `config.json` (the hyperparameters exactly as
 passed to `run.py`, and the command line) and `attempts.json` (one entry
 per attempt: start, end, seconds, host, GPU and status).
 
-A crashed run (out of memory included) is resumed from its checkpoint a
-few times and then parked with an alert record in `outputs/hpo/alerts/`;
-preemptions and hardware faults resume without counting. A run parked
-after failures on a single host gets one more chance on another host,
-and a worker whose units fail twice in a row stops with an alert. Workers
-(`hpo/worker.py`, one per GPU) pick the units of every phase from a
-shared root; `hpo/status.py` writes the status of the track.
+### Failures and workers
+
+A unit or study that stopped after failures is *shelved* (the files call
+it parked: `PARKED` markers, `outputs/hpo/parked/`; unrelated to the 22
+parked calibration runs of the dataset). A crashed run is resumed from
+its checkpoint a few times and then shelved with an alert record in
+`outputs/hpo/alerts/`; preemptions and hardware faults resume without
+counting. Out of memory is not retried and never blamed on the host: a
+search trial out of memory is a failed draw (not counted, like a model
+above the cap) and a study with too many of them is shelved; a
+confirmation or final unit (a fixed configuration) is shelved at once. A
+run whose resume state belongs to another configuration (exit code 6) is
+not shelved but held for an operator (`CONFIG_MISMATCH` marker in its
+run directory). A study is shelved after a few shelved trials, too many
+draws above the cap, repeated driver errors, too few eligible trials for
+a plan, no finite median in the confirmation, or a confirmation or final
+unit shelved for good; it is left out of its model's extension rule and
+has no winner. A unit or study shelved after failures on a single host
+gets one more chance on another host; until then the track is not
+finished (an operator can make the shelving final by emptying the
+`hosts` list of its marker). Nothing is un-shelved once
+`READY_FOR_TEST.json` or `sealed/` exists.
+
+Workers (`hpo/worker.py`, one per GPU) pick the units of every phase from
+a shared root; `hpo/status.py` writes the status of the track (studies,
+workers alive or dead, bad hosts, shelved units, alerts). A worker exits
+with:
+
+| Code | Meaning | Launcher |
+|---|---|---|
+| 0 | Every unit of its models done, idle, or `outputs/hpo/STOP` | Do not restart. |
+| 97 | A configuration mismatch: the unit is held for an operator | Restart after the operator removed the stale resume state and the marker. |
+| 98 | A broken host: failed units of two studies in a row, or repeated errors of the worker loop; the host is listed in `outputs/hpo/bad_hosts/<host>.json` and no worker starts on it | Do not requeue onto the same host; an operator removes the file to re-admit the host. |
+| 99 | Stopped mid-unit (signal or lost lock) | Requeue; the same `--owner` resumes its unit. |
+
+Runs save their resume state every `--checkpoint_seconds` (90 s by
+default, for preemptible GPUs; e.g. 300 s on local or non-preemptible
+ones), and a unit that keeps stopping without a new save gets an alert.
 
 ## Reproducibility
 

@@ -29,7 +29,11 @@ and recorded as FAIL with the user attribute over_cap (not counted, and
 not seen by TPE, whose startup counts completed and pruned trials only);
 the next trial draws again at once (an over-cap draw does not count toward
 --max_new), and the study stops drawing after MAX_OVER_CAP of them (it is
-then parked by hpo/pick.py). A crash is resumed up to MAX_ATTEMPTS times
+then parked by hpo/pick.py). A trial out of memory is FAIL with the user
+attribute oom (not counted, not retried, not a fault of the host); the
+study stops drawing after MAX_OOM of them (then parked). A trial whose
+resume state belongs to another configuration stays RUNNING, held for an
+operator (common.hold). A crash is resumed up to MAX_ATTEMPTS times
 (common.run_unit), then parked with an alert. A trial left RUNNING by a
 dead worker (stale heartbeat) is requeued with the same configuration and
 resumes from its checkpoint. A worker that holds the lock of the study
@@ -134,6 +138,16 @@ def over_cap(trial: optuna.trial.FrozenTrial) -> bool:
         trial.user_attrs.get("over_param_cap"))
 
 
+def oom(trial: optuna.trial.FrozenTrial) -> bool:
+    """A trial that ran out of memory (FAIL, not counted)."""
+    return bool(trial.user_attrs.get("oom"))
+
+
+def oom_count(study: optuna.Study) -> int:
+    """Trials of a study that ran out of memory."""
+    return sum(oom(t) for t in study.get_trials(deepcopy=False))
+
+
 def counted(trial: optuna.trial.FrozenTrial) -> bool:
     """A trial that spends budget: completed, or pruned by the median rule
     (never a draw rejected by the parameter cap)."""
@@ -220,13 +234,26 @@ def requeue_stale(study: optuna.Study, exclusive: bool = False) -> List[int]:
 
 
 def extension_path(root: str, model: str) -> str:
-    """Record of the extension of the three studies of a model."""
+    """Write-once decision of the extension rule for the three studies of a
+    model ('extended': true or false)."""
     return os.path.join(root, "extensions", f"{model}.json")
+
+
+def parked_path(root: str, model: str, tower: str) -> str:
+    """Marker of a parked (model, tower) study."""
+    return os.path.join(root, "parked", f"{model}_{tower}.json")
+
+
+def extension_decision(root: str, model: str) -> Optional[bool]:
+    """The extension decision of a model (None if not taken yet; a record
+    without 'extended' is an extension)."""
+    record = common.read_json(extension_path(root, model))
+    return None if record is None else bool(record.get("extended", True))
 
 
 def target_trials(root: str, model: str, n_trials: int) -> int:
     """Budget of each study of `model` (extended or not)."""
-    extended = os.path.exists(extension_path(root, model))
+    extended = bool(extension_decision(root, model))
     return n_trials + (C.EXTEND_BY if extended else 0)
 
 
@@ -245,14 +272,24 @@ def best_position(trials: List[optuna.trial.FrozenTrial],
 def maybe_extend(root: str,
                  model: str,
                  n_trials: int,
-                 towers: Optional[List[str]] = None) -> bool:
+                 towers: Optional[List[str]] = None,
+                 decide: bool = False) -> bool:
     """Applies the extension rule once the first `n_trials` of a study of
     `model` are done; returns True if the model is (now) extended.
-    `towers`: the studies that decide (default all; hpo/pick.py leaves out
-    the parked ones)."""
-    if os.path.exists(extension_path(root, model)):
-        return True
-    for tower in C.TOWERS_SEARCHED if towers is None else towers:
+    `towers`: the studies that decide (default the non-parked ones). The
+    decision is one write-once file: an extension is written as soon as a
+    study shows it; with `decide` (the gate of hpo/pick.py, every
+    non-parked study done) a 'not extended' decision is written too. A
+    decision is never taken again."""
+    decision = extension_decision(root, model)
+    if decision is not None:
+        return decision
+    if towers is None:
+        towers = [
+            t for t in C.TOWERS_SEARCHED
+            if not os.path.exists(parked_path(root, model, t))
+        ]
+    for tower in towers:
         study = open_study(root, model, tower, create=False)
         if study is None:
             continue
@@ -264,12 +301,23 @@ def maybe_extend(root: str,
             common.write_once(
                 extension_path(root, model), {
                     "model": model,
+                    "extended": True,
                     "tower": tower,
+                    "towers": list(towers),
                     "best_position": position,
                     "extend_by": C.EXTEND_BY,
                     "time": common.now()
                 })
-            return True
+            return bool(extension_decision(root, model))
+    if decide:
+        common.write_once(
+            extension_path(root, model), {
+                "model": model,
+                "extended": False,
+                "towers": list(towers),
+                "time": common.now()
+            })
+        return bool(extension_decision(root, model))
     return False
 
 
@@ -357,6 +405,9 @@ def _result_of(study: optuna.Study, result: Dict, args: argparse.Namespace,
     elif status == "too_large":
         attrs["over_cap"] = True
         state = TrialState.FAIL
+    elif status == "oom":
+        attrs["oom"] = True
+        state = TrialState.FAIL
     elif status != "ok":  # parked
         marker = common.read_json(os.path.join(run_dir, "PARKED")) or {}
         attrs["parked"] = True
@@ -428,11 +479,13 @@ def run_trial(study: optuna.Study,
         print(f"trial {trial.number}: finished elsewhere, result dropped",
               flush=True)
         return outcome
-    if status == "stopped":
-        print(f"trial {trial.number:3d} {args.model}/{args.tower} stopped",
+    if status in ("stopped", "config_mismatch"):
+        print(f"trial {trial.number:3d} {args.model}/{args.tower} {status}",
               flush=True)
         outcome["status"] = status
-        return outcome  # left RUNNING: the next worker resumes it
+        # Left RUNNING: the next worker resumes it (a held one, once an
+        # operator removed its CONFIG_MISMATCH marker).
+        return outcome
     status, attrs, value, state = _result_of(study, result, args, reported,
                                              run_dir)
     if not _tell(study, trial, attrs, owned, value, state):
@@ -518,7 +571,14 @@ def main(argv: Optional[List[str]] = None,
                 "the parameter cap, stopping",
                 flush=True)
             break
+        if oom_count(study) >= C.MAX_OOM:
+            print(
+                f"study {study.study_name}: {C.MAX_OOM} trials out of "
+                "memory, stopping",
+                flush=True)
+            break
         if not waiting and done + running >= target:
+            # Only the non-parked towers decide (maybe_extend's default).
             if (target == args.n_trials and not running and
                     maybe_extend(args.root, args.model, args.n_trials)):
                 continue  # the budget grew
@@ -529,7 +589,7 @@ def main(argv: Optional[List[str]] = None,
         outcome = run_trial(study, trial, args, owned)
         if outcomes is not None:
             outcomes.append(outcome)
-        if outcome["status"] == "lost":
+        if outcome["status"] in ("lost", "config_mismatch"):
             break
         if outcome["status"] != "too_large":  # over-cap: draw again
             started += 1

@@ -16,27 +16,37 @@ secondary_best/ (SECONDARY: the median best validation epoch of phase 2):
                       and the mean of the 11 gauges, median over the seeds
                       per tower, then mean over the scored towers (group
                       'all'); n_towers and missing_towers name the towers
-                      without a score (a parked (model, tower) has no
-                      winner: the mean is over the other towers, and a
-                      model with no scored tower has an empty row)
-  per_tower.csv       the same before the mean over towers
+                      without a score (a shelved (model, tower) has no
+                      winner, and a pair whose final seeds all diverged has
+                      no test score), n_seeds_<tower> the seeds scored per
+                      tower. Only the models scored on every tower are
+                      ranked (ranked = True, first, by the mean of 11);
+                      the others follow, unranked, by name (a model with no
+                      scored tower has an empty row)
+  per_tower.csv       the same before the mean over towers (with n_seeds)
   by_group.csv        the leaderboard per regime cell
-  top3.csv            the three best models per criterion (R^2 at the base,
-                      mean of 11, top; ties broken by the model name)
-  families.csv        the best model of each family per criterion
+  top3.csv            the three best ranked models per criterion (R^2 at
+                      the base, mean of 11, top; ties broken by the model
+                      name), with n_towers
+  families.csv        the best ranked model of each family per criterion,
+                      with n_towers
 
 and, once for the track:
 
   configs.csv         the selected configuration of each model and tower
-                      (phase 2), or 'parked'
+                      (phase 2) with its status: 'winner', 'shelved' (no
+                      configuration) or 'all_seeds_diverged' (every final
+                      seed diverged: no test score)
   curves.csv          best validation score so far against the counted
                       position of each counted trial (1..N), per study
   gpu_hours.csv       GPU-hours per model, tower and phase (search,
                       confirm, final), summed over every attempt of every
-                      run (pruned, crashed and preempted ones included, from
-                      the attempts.json of the runs), with the totals per
-                      model ('all' tower and phase) and overall ('all'
-                      model)
+                      run (pruned, crashed and preempted ones included, and
+                      hard-killed ones from their last heartbeat: 'killed'
+                      counts them; from the attempts.json of the runs), and
+                      the test inference runs (phase 'test'), with the
+                      totals per model ('all' tower and phase) and overall
+                      ('all' model)
 
 The tuned leaderboard ranks only the 20 learned models: the naive floor
 and the physics baseline are not tuned, and their scores are those of the
@@ -75,7 +85,12 @@ METRICS = ("r2_log_damage", "fraction_within_factor2", "median_damage_ratio",
            "mean_relative_error", "within_condition_correlation")
 CRITERIA = ("base", "mean11", "top")  # R^2 of log10 damage
 VARIANTS = final.VARIANTS  # primary first
-PHASE_DIRS = {"search": "trials", "confirm": "phase2", "final": "final"}
+PHASE_DIRS = {
+    "search": "trials",
+    "confirm": "phase2",
+    "final": "final",
+    "test": "test_runs"
+}
 
 
 def score(sealed_root: str, dataset_dir: str, out: str,
@@ -111,8 +126,10 @@ def per_tower(table: pd.DataFrame) -> pd.DataFrame:
                       ["model", "tower", "seed", "group", *METRICS]].assign(
                           position=position))
     long = pd.concat(rows, ignore_index=True)
-    return long.groupby(["model", "tower", "group", "position"],
-                        as_index=False)[list(METRICS)].median()
+    keys = ["model", "tower", "group", "position"]
+    out = long.groupby(keys, as_index=False)[list(METRICS)].median()
+    seeds = long.groupby(keys, as_index=False)["seed"].nunique()
+    return out.merge(seeds.rename(columns={"seed": "n_seeds"}), on=keys)
 
 
 def leaderboard(towers: pd.DataFrame) -> pd.DataFrame:
@@ -129,9 +146,24 @@ def leaderboard(towers: pd.DataFrame) -> pd.DataFrame:
     wide["n_towers"] = wide["model"].map(lambda m: len(scored[m]))
     wide["missing_towers"] = wide["model"].map(
         lambda m: ",".join(t for t in C.TOWERS_SEARCHED if t not in scored[m]))
-    return wide.sort_values(["r2_log_damage_mean11", "model"],
-                            ascending=[False, True],
-                            kind="mergesort").reset_index(drop=True)
+    if "n_seeds" in towers.columns:
+        seeds = towers.groupby(["model", "tower"])["n_seeds"].max()
+        for tower in C.TOWERS_SEARCHED:
+            wide[f"n_seeds_{tower}"] = wide["model"].map(
+                lambda m, t=tower: int(seeds.get((m, t), 0)))
+    return ordered(wide)
+
+
+def ordered(board: pd.DataFrame) -> pd.DataFrame:
+    """Ranked models (scored on every tower) first, by the mean of 11 (ties
+    by name); then the unranked ones by name."""
+    board = board.assign(ranked=board["n_towers"] == len(C.TOWERS_SEARCHED))
+    ranked = board[board["ranked"]].sort_values(
+        ["r2_log_damage_mean11", "model"],
+        ascending=[False, True],
+        kind="mergesort")
+    rest = board[~board["ranked"]].sort_values("model", kind="mergesort")
+    return pd.concat([ranked, rest], ignore_index=True)
 
 
 def with_missing(board: pd.DataFrame) -> pd.DataFrame:
@@ -144,14 +176,17 @@ def with_missing(board: pd.DataFrame) -> pd.DataFrame:
         "model": absent,
         "family": [S.FAMILIES[m] for m in absent],
         "n_towers": 0,
-        "missing_towers": ",".join(C.TOWERS_SEARCHED)
+        "missing_towers": ",".join(C.TOWERS_SEARCHED),
+        "ranked": False
     })
-    return pd.concat([board, rows], ignore_index=True)
+    return ordered(pd.concat([board, rows], ignore_index=True))
 
 
 def rankings(board: pd.DataFrame) -> tuple:
-    """Top-3 per criterion and best model of each family per criterion."""
-    learned = board[board["model"].isin(S.LEARNED)]
+    """Top-3 per criterion and best model of each family per criterion,
+    among the models scored on every tower."""
+    learned = board[board["model"].isin(S.LEARNED) &
+                    (board["n_towers"] == len(C.TOWERS_SEARCHED))]
     top3, families = [], []
     for criterion in CRITERIA:
         column = f"r2_log_damage_{criterion}"
@@ -163,39 +198,47 @@ def rankings(board: pd.DataFrame) -> tuple:
                 "criterion": criterion,
                 "rank": rank,
                 "model": row["model"],
-                "r2": row[column]
+                "r2": row[column],
+                "n_towers": row["n_towers"]
             })
         for family, group in ranked.groupby("family", sort=False):
             families.append({
                 "criterion": criterion,
                 "family": family,
                 "model": group.iloc[0]["model"],
-                "r2": group.iloc[0][column]
+                "r2": group.iloc[0][column],
+                "n_towers": group.iloc[0]["n_towers"]
             })
     return pd.DataFrame(top3), pd.DataFrame(families)
 
 
 def configs(root: str) -> pd.DataFrame:
-    """Selected configuration of every model and tower (phase 2); a parked
-    (model, tower) has a row with status 'parked' and no configuration."""
+    """Selected configuration of every model and tower (phase 2); a shelved
+    (model, tower) (parked marker, checked first: a pair can be shelved
+    after its winner) has a row with status 'shelved' and no configuration;
+    a winner whose final seeds all diverged has status
+    'all_seeds_diverged'."""
     rows = []
+    diverged = set(final.skipped(root)["all_seeds_diverged"])
     for model in S.LEARNED:
         for tower in C.TOWERS_SEARCHED:
-            record = common.read_json(confirm.winner_path(root, model, tower))
             parked = common.read_json(confirm.parked_path(root, model, tower))
+            if parked is not None:
+                rows.append({
+                    "model": model,
+                    "tower": tower,
+                    "status": "shelved",
+                    "reason": parked.get("reason")
+                })
+                continue
+            record = common.read_json(confirm.winner_path(root, model, tower))
             if record is None:
-                if parked is not None:
-                    rows.append({
-                        "model": model,
-                        "tower": tower,
-                        "status": "parked",
-                        "reason": parked.get("reason")
-                    })
                 continue
             rows.append({
                 "model": model,
                 "tower": tower,
-                "status": "winner",
+                "status": ("all_seeds_diverged"
+                           if f"{model}/{tower}" in diverged else "winner"),
                 "config": json.dumps(record["winner_config"]),
                 "val_median": record["winner_median"],
                 "margin_to_second": record["margin_to_second"],
@@ -246,14 +289,24 @@ def gpu_hours(root: str) -> pd.DataFrame:
             model, tower = study.rsplit("_", 1)
             events = (common.read_json(path) or {}).get("events", [])
             rows.append({
-                "model": model,
-                "tower": tower,
-                "phase": phase,
-                "runs": 1,
-                "attempts": len(events),
-                "gpu_hours": sum(e.get("seconds") or 0.0 for e in events) / 3600
+                "model":
+                    model,
+                "tower":
+                    tower,
+                "phase":
+                    phase,
+                "runs":
+                    1,
+                "attempts":
+                    len(events),
+                "killed":
+                    sum(common.event_status(e) == "killed" for e in events),
+                "gpu_hours":
+                    sum(e.get("seconds") or 0.0 for e in events) / 3600
             })
-    columns = ["model", "tower", "phase", "runs", "attempts", "gpu_hours"]
+    columns = [
+        "model", "tower", "phase", "runs", "attempts", "killed", "gpu_hours"
+    ]
     if not rows:
         return pd.DataFrame(columns=columns)
     table = pd.DataFrame(rows)
@@ -272,7 +325,7 @@ def gpu_hours(root: str) -> pd.DataFrame:
                                                         tower="all",
                                                         phase="all"))
     out = pd.concat(parts, ignore_index=True)[columns]
-    return out.astype({"runs": int, "attempts": int})
+    return out.astype({"runs": int, "attempts": int, "killed": int})
 
 
 def build(args: argparse.Namespace) -> Dict[str, pd.DataFrame]:
@@ -304,9 +357,10 @@ def build(args: argparse.Namespace) -> Dict[str, pd.DataFrame]:
         boards[variant] = board
         print(f"== {variant} ({final.VARIANT_LABELS[variant]}): R^2 of "
               "log10 damage (median over seeds, mean over towers)")
-        print(board[["model", "family"] +
-                    [f"r2_log_damage_{c}" for c in CRITERIA] +
-                    ["missing_towers"]].round(3).to_string(index=False))
+        print(
+            board[["model", "family"] +
+                  [f"r2_log_damage_{c}" for c in CRITERIA] +
+                  ["ranked", "missing_towers"]].round(3).to_string(index=False))
     configs(args.root).to_csv(os.path.join(args.out, "configs.csv"),
                               index=False)
     curves(args.root).to_csv(os.path.join(args.out, "curves.csv"), index=False)
@@ -394,7 +448,8 @@ def write_synthetic(root: str,
 
 def write_synthetic_attempts(root: str, rng: np.random.Generator) -> None:
     """attempts.json of synthetic runs of every phase (a few search trials,
-    the confirmation and final units), for gpu_hours.csv of a dry run."""
+    the confirmation and final units, the test inference runs), for
+    gpu_hours.csv of a dry run."""
     statuses = ("ok", "pruned", "crash", "preempted")
     for model in S.LEARNED:
         for tower in C.TOWERS_SEARCHED:
@@ -404,6 +459,9 @@ def write_synthetic_attempts(root: str, rng: np.random.Generator) -> None:
                      for r in range(C.N_TOP)
                      for k in range(C.N_SEEDS)]
             dirs += [("final", f"s{k}") for k in range(C.N_SEEDS)]
+            dirs += [("test_runs", f"{v}_s{k}")
+                     for v in VARIANTS
+                     for k in range(C.N_SEEDS)]
             for folder, name in dirs:
                 events = []
                 for status in rng.choice(statuses, rng.integers(1, 3)):

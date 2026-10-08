@@ -8,8 +8,11 @@ Writes <root>/status.json, status.txt and status.html: per study the
 counted, pruned, failed and running trials, the best validation score so
 far, the phase, the confirmation and final units done, the hours left and
 an ETA (from the measured trial durations of the study, else from the
-`cost` given per model, in hours per trial); the workers and their units;
-the parked units and studies; the recent alerts. No test output is read.
+`cost` given per model, in hours per trial); the workers and their units
+(a worker record not refreshed for STALE_MINUTES, without an exit code, is
+marked dead; a live worker refreshes it at every lock beat or idle poll);
+the hosts listed as bad; the shelved units and studies (PARKED markers in
+the files); the recent alerts. No test output is read.
 With advance (the default), the phases are moved forward first
 (pick.advance).
 """
@@ -69,7 +72,9 @@ def study_rows(states: List[Dict],
             "site": site,
             "study": f"{state['model']}_{state['tower']}",
             "model": state["model"],
-            "phase": state["phase"],
+            # 'parked' in the files, 'shelved' for the reader.
+            "phase":
+                ("shelved" if state["phase"] == "parked" else state["phase"]),
             "counted": state["counted"],
             "target": state["target"],
             "pruned": state["pruned"],
@@ -91,12 +96,23 @@ def study_rows(states: List[Dict],
 
 
 def read_workers(root: str) -> List[Dict]:
-    """Worker records with the age of their last change (minutes)."""
+    """Worker records with the age of their last change (minutes) and their
+    state: 'exited (<code>)', 'dead' (not refreshed for STALE_MINUTES) or
+    'alive'."""
     rows = []
     for path in sorted(glob.glob(os.path.join(root, "workers", "*.json"))):
-        record = common.read_json(path) or {}
-        record["age_min"] = round((time.time() - os.path.getmtime(path)) / 60,
-                                  1)
+        try:
+            record = common.read_json(path) or {}
+            age = (time.time() - os.path.getmtime(path)) / 60
+        except (OSError, ValueError):
+            continue  # being replaced
+        record["age_min"] = round(age, 1)
+        if record.get("exit") is not None:
+            record["state"] = f"exited ({record['exit']})"
+        elif age > C.STALE_MINUTES:
+            record["state"] = "dead"
+        else:
+            record["state"] = "alive"
         rows.append(record)
     return rows
 
@@ -148,6 +164,7 @@ def collect(root: str,
         "units_completed": len(ends),
         "last_completion": max(ends) if ends else None,
         "parked": parked_units(root),
+        "bad_hosts": sorted(common.bad_hosts(root)),
         "alerts": [
             os.path.basename(p) for p in alert_files(root)[-MAX_ALERTS_SHOWN:]
         ],
@@ -187,10 +204,11 @@ def as_text(status: Dict) -> str:
     lines += ["", "workers:"]
     lines += [
         f"  {w.get('owner')} {w.get('tag') or ''} {w.get('host')} "
-        f"{w.get('gpu') or ''} unit={w.get('unit')} ({w['age_min']} min ago)"
-        for w in status["workers"]
+        f"{w.get('gpu') or ''} unit={w.get('unit')} {w['state']} "
+        f"({w['age_min']} min ago)" for w in status["workers"]
     ]
-    lines += ["", "parked:"] + [f"  {p}" for p in status["parked"]]
+    lines += ["", "bad hosts:"] + [f"  {h}" for h in status["bad_hosts"]]
+    lines += ["", "shelved:"] + [f"  {p}" for p in status["parked"]]
     lines += ["", "recent alerts:"] + [f"  {a}" for a in status["alerts"]]
     return "\n".join(lines) + "\n"
 
@@ -216,13 +234,15 @@ th, td {{ padding: 4px 10px; border-bottom: 1px solid var(--line);
   text-align: left; white-space: nowrap; }}
 th {{ color: var(--muted); font-weight: 600; }}
 td.num {{ text-align: right; }}
-tr.parked td {{ color: var(--bad); }} tr.done td {{ color: var(--accent); }}
+tr.shelved td, tr.held td {{ color: var(--bad); }}
+tr.done td {{ color: var(--accent); }}
 </style></head><body>
 <h1>Validation-tuned track</h1>
 <p>{stamp}. {summary}</p>
 <h2>Studies</h2><div class="wrap"><table><tr>{head}</tr>{rows}</table></div>
 <h2>Workers</h2><div class="wrap"><table>{workers}</table></div>
-<h2>Parked</h2><p>{parked}</p>
+<h2>Bad hosts</h2><p>{bad_hosts}</p>
+<h2>Shelved</h2><p>{parked}</p>
 <h2>Recent alerts</h2><p>{alerts}</p>
 </body></html>
 """
@@ -241,13 +261,15 @@ def as_html(status: Dict) -> str:
         f"<tr><td>{esc(str(w.get('owner')))}</td><td>"
         f"{esc(str(w.get('tag') or ''))}</td><td>"
         f"{esc(str(w.get('gpu') or ''))}</td><td>{esc(str(w.get('unit')))}"
-        f"</td><td>{w['age_min']} min</td></tr>" for w in status["workers"])
+        f"</td><td>{esc(w['state'])}</td><td>{w['age_min']} min</td></tr>"
+        for w in status["workers"])
     return PAGE.format(stamp=esc(status["time"]),
                        summary=esc(summary(status)),
                        head="".join(f"<th>{c}</th>" for c in COLUMNS),
                        rows=rows,
                        workers=workers or "<tr><td>none</td></tr>",
                        parked=esc(", ".join(status["parked"]) or "none"),
+                       bad_hosts=esc(", ".join(status["bad_hosts"]) or "none"),
                        alerts="<br>".join(esc(a) for a in status["alerts"]) or
                        "none")
 

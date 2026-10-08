@@ -17,7 +17,9 @@
    ]
   },
   "param_sum": -19.9017334529035,
-  "param_abs_sum": 9320.771457997811
+  "param_abs_sum": 9320.771457997811,
+  "state_sha256": "f5e65739d2fd2d9500ebdc697a1da0dbfe5c622f61a61c272c107aadc189ff96",
+  "torch_rng_sha256": "0f1df4d181379bb1afe3d5fa74b3314409b1c7873f5da96277c09dcb50947bf7"
  },
  "transformer": {
   "history": {
@@ -37,6 +39,8 @@
    ]
   },
   "param_sum": 982.0926911837246,
-  "param_abs_sum": 34746.9945126798
+  "param_abs_sum": 34746.9945126798,
+  "state_sha256": "973c85609e9423746a16d713d920d2b37887942c08de5e32f4f9b4e400e0909a",
+  "torch_rng_sha256": "e816cd8a60785643512293cd176ef80cbc80ff17c53c5005dfb39cc3d362ad60"
  }
 }

@@ -12,12 +12,17 @@ handles failures:
 
   - NaN or divergence (exit code EXIT_DIVERGED) and a model above the
     parameter cap (EXIT_TOO_LARGE) are returned to the caller;
-  - a resume state of another configuration (EXIT_CONFIG_MISMATCH) parks
-    the unit at once (retrying cannot help);
-  - a crash (out of memory included) is resumed from the last checkpoint,
-    up to MAX_ATTEMPTS attempts; then the unit is parked (PARKED marker,
-    with the hosts of its failures) and an alert record is written to
-    <root>/alerts/;
+  - out of memory ('oom': "CUDA out of memory", OutOfMemoryError, "out of
+    memory" in the last lines) is returned to the caller, not retried and
+    not counted against the host (the configuration does not fit);
+  - a resume state of another configuration (EXIT_CONFIG_MISMATCH) is
+    returned as 'config_mismatch' with an alert and a CONFIG_MISMATCH
+    marker in the run directory; the unit is not parked, and no worker
+    picks it until an operator removes the marker (after removing the
+    resume state, or the run directory);
+  - a crash is resumed from the last checkpoint, up to MAX_ATTEMPTS
+    attempts; then the unit is parked (PARKED marker, with the hosts of its
+    failures) and an alert record is written to <root>/alerts/;
   - a preemption (the run killed by a signal) or a hardware fault (CUDA
     error, ECC, Xid) is resumed without counting as an attempt;
   - a stop request of the worker (`request_stop`: Slurm time limit,
@@ -29,12 +34,18 @@ Records of a unit, in its run directory: config.json (the hyperparameters
 as passed to run.py and the exact command, written before the run starts)
 and attempts.json (one entry per attempt: start, end, seconds, host, GPU
 and status, pruned and preempted attempts included; analyze.py sums them
-into GPU-hours).
+into GPU-hours). An attempt is recorded when it starts, with status
+'running', and its end and seconds are updated by the heartbeat; an open
+attempt older than STALE_MINUTES was hard-killed ('killed', `event_status`)
+and its seconds still count.
 
 A parked unit whose failures all came from a single host is un-parked once
 (`unpark`) when a worker of another host picks it (hpo/pick.py): the
 failures were probably the host's, not the unit's. A unit parked twice, or
-after failures on two hosts, stays parked.
+after failures on two hosts, stays parked. Failures on a host listed in
+<root>/bad_hosts/ (`bad_hosts`, written when a worker stops with
+EXIT_BROKEN) do not count: a unit parked by them only is un-parked by any
+other host. Nothing is un-parked once the test is ready (`test_frozen`).
 
 Every file the drivers share is written atomically (temporary file and
 rename), and the files that fix a decision (plans, sealed test results)
@@ -57,7 +68,7 @@ import time
 from typing import Callable, Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from floatsense import constants as FC
+from floatsense.constants import EXIT_CONFIG_MISMATCH
 from floatsense.constants import EXIT_DIVERGED
 from floatsense.constants import EXIT_STOPPED
 from floatsense.constants import EXIT_TOO_LARGE
@@ -77,6 +88,8 @@ HARDWARE = re.compile(
     r"uncorrectable ECC|ECC error|Xid|illegal memory access|"
     r"unspecified launch failure|CUDA-capable device|device not ready|"
     r"NCCL error|cudaErrorLaunchFailure|GPU is lost|Bus error", re.IGNORECASE)
+OOM = re.compile(r"CUDA out of memory|OutOfMemoryError|out of memory",
+                 re.IGNORECASE)
 HEARTBEAT_SECONDS = 30.0
 RETRY_SECONDS = 5.0  # pause before resuming a failed run
 TAIL_LINES = 60
@@ -85,11 +98,15 @@ STOP = threading.Event()
 _CHILDREN: set = set()
 # Seconds per validation of the dry-run stub (0: instantaneous).
 STUB_SECONDS = 0.0
-# Exit code of a resume refused because the stored run configuration differs
-# (6 if the trainer does not define it).
-EXIT_CONFIG_MISMATCH = getattr(FC, "EXIT_CONFIG_MISMATCH", 6)
 # Outcomes of an attempt that are not failures of the host.
-NOT_FAILURES = ("ok", "pruned", "stopped", "diverged", "too_large")
+NOT_FAILURES = ("ok", "pruned", "stopped", "diverged", "too_large", "oom",
+                "config_mismatch", "running")
+READY = "READY_FOR_TEST.json"  # marker: every final unit is trained
+# Marker of a unit whose resume state belongs to another configuration.
+HOLD = "CONFIG_MISMATCH"
+# Identity of the worker of this process (hpo/worker.py sets it): written
+# into the claims, so a worker releases only its own (any incarnation).
+OWNER = ""
 
 
 def now() -> str:
@@ -234,15 +251,20 @@ def is_stale(run_dir: str) -> bool:
     return heartbeat_age(run_dir) > C.STALE_MINUTES * 60
 
 
+def _process() -> str:
+    return f"{socket.gethostname()}:{os.getpid()}"
+
+
 def claim(run_dir: str) -> bool:
     """Claims a unit for this worker (another live worker keeps it).
 
     A claim whose heartbeat is stale is taken over: the old claim is
-    renamed away first, and only one worker can rename it.
+    renamed away first, and only one worker can rename it. The claim holds
+    '<OWNER>|<host>:<pid>'.
     """
     os.makedirs(run_dir, exist_ok=True)
     path = os.path.join(run_dir, "claim")
-    owner = f"{socket.gethostname()}:{os.getpid()}"
+    owner = f"{OWNER}|{_process()}"
     for _ in range(2):
         try:
             handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -261,11 +283,71 @@ def claim(run_dir: str) -> bool:
     return False
 
 
-def release(run_dir: str) -> None:
-    """Gives a claimed unit back."""
-    path = os.path.join(run_dir, "claim")
-    if os.path.exists(path):
-        os.remove(path)
+def claim_holder(run_dir: str) -> Optional[str]:
+    """Content of the claim of a unit (None if unclaimed or unreadable)."""
+    try:
+        with open(os.path.join(run_dir, "claim"), encoding="utf-8") as file:
+            return file.read()
+    except OSError:
+        return None
+
+
+def release(run_dir: str, owner: Optional[str] = None) -> bool:
+    """Gives a claimed unit back if the claim is ours: made by this process,
+    or (with `owner`) by any incarnation of that worker identity. A claim of
+    another process (e.g. a driver run by hand) is left alone.
+
+    Returns:
+        bool: True if no claim of ours is left (released, or none).
+    """
+    holder = claim_holder(run_dir)
+    if holder is None:
+        return True
+    name, _, process = holder.rpartition("|")
+    if process != _process() and not (owner and name == owner):
+        return False
+    try:
+        os.remove(os.path.join(run_dir, "claim"))
+    except FileNotFoundError:
+        pass
+    return True
+
+
+def busy(run_dir: str) -> bool:
+    """A unit claimed by another live process (not stale)."""
+    holder = claim_holder(run_dir)
+    if holder is None:
+        return False
+    return holder.rpartition("|")[2] != _process() and not is_stale(run_dir)
+
+
+def bad_hosts_dir(root: str) -> str:
+    """Records of the hosts a worker stopped on with EXIT_BROKEN."""
+    return os.path.join(root, "bad_hosts")
+
+
+def bad_hosts(root: str) -> frozenset:
+    """The hosts listed in <root>/bad_hosts/ (an operator removes a file to
+    re-admit a host)."""
+    try:
+        names = os.listdir(bad_hosts_dir(root))
+    except FileNotFoundError:
+        return frozenset()
+    return frozenset(n[:-5] for n in names if n.endswith(".json"))
+
+
+def add_bad_host(root: str, host: str, reason: str, details: Dict) -> str:
+    """Lists `host` in <root>/bad_hosts/; returns the record path."""
+    path = os.path.join(bad_hosts_dir(root), f"{host}.json")
+    write_json(path, {"host": host, "reason": reason, "time": now(), **details})
+    return path
+
+
+def test_frozen(root: str) -> bool:
+    """The test is ready (READY_FOR_TEST.json) or opened (sealed/): no
+    parked unit or study is un-parked any more."""
+    return (os.path.exists(os.path.join(root, READY)) or
+            os.path.exists(os.path.join(root, "sealed")))
 
 
 def touch(run_dir: str) -> None:
@@ -280,7 +362,7 @@ def classify(returncode: int, tail: str) -> str:
 
     Returns:
         str: 'ok', 'diverged', 'too_large', 'stopped', 'config_mismatch',
-          'preempted', 'hardware' or 'crash' (out of memory and every
+          'preempted', 'oom' (out of memory), 'hardware' or 'crash' (every
           other error).
     """
     if returncode == 0:
@@ -295,6 +377,8 @@ def classify(returncode: int, tail: str) -> str:
         return "too_large"
     if returncode < 0 and -returncode in PREEMPT_SIGNALS:
         return "preempted"
+    if OOM.search(tail):
+        return "oom"
     if HARDWARE.search(tail):
         return "hardware"
     return "crash"
@@ -354,16 +438,25 @@ def history_path(run_dir: str, model: str) -> str:
 
 
 class _Heartbeat:
-    """Touches the heartbeat of a unit while its run is alive."""
+    """Touches the heartbeat of a unit while its run is alive (and calls
+    `on_beat`, e.g. to update the open attempt record)."""
 
-    def __init__(self, run_dir: str):
+    def __init__(self,
+                 run_dir: str,
+                 on_beat: Optional[Callable[[], None]] = None):
         self.run_dir = run_dir
+        self.on_beat = on_beat
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self._beat, daemon=True)
 
     def _beat(self):
         while not self.stop.wait(HEARTBEAT_SECONDS):
-            touch(self.run_dir)
+            try:
+                touch(self.run_dir)
+                if self.on_beat is not None:
+                    self.on_beat()
+            except OSError as error:  # a transient file-system error
+                print(f"heartbeat of {self.run_dir}: {error}", flush=True)
 
     def __enter__(self):
         touch(self.run_dir)
@@ -380,6 +473,18 @@ def attempts_path(run_dir: str) -> str:
     return os.path.join(run_dir, "attempts.json")
 
 
+def resume_path(run_dir: str, model: str) -> str:
+    """Resume state of the trainer in a run directory."""
+    return os.path.join(run_dir, f"{model}_fa_resume.pt")
+
+
+def _mtime(path: str) -> Optional[float]:
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
+
+
 def read_attempts(run_dir: str) -> Dict:
     """The attempts record of a unit (empty if it never ran)."""
     record = read_json(attempts_path(run_dir)) or {}
@@ -389,29 +494,109 @@ def read_attempts(run_dir: str) -> Dict:
     return record
 
 
-def add_attempt(record: Dict, start: float, status: str,
-                returncode: Optional[int], gpu: str) -> None:
-    """Appends one attempt (wall-clock start and end, seconds, host, GPU,
-    status) to an attempts record."""
-    end = time.time()
-    record["events"].append({
+def open_attempt(record: Dict,
+                 start: float,
+                 gpu: str,
+                 resume_mtime: Optional[float] = None) -> Dict:
+    """Appends an open attempt (status 'running') to an attempts record and
+    returns it; `update_attempt` moves its end, `close_attempt` ends it."""
+    event = {
         "start": _iso(start),
-        "end": _iso(end),
-        "seconds": round(end - start, 1),
+        "end": _iso(start),
+        "seconds": 0.0,
         "host": socket.gethostname(),
         "gpu": gpu,
-        "status": status,
-        "returncode": returncode
-    })
+        "status": "running",
+        "returncode": None,
+        "resume_mtime": resume_mtime
+    }
+    record["events"].append(event)
+    return event
+
+
+def update_attempt(event: Dict, start: float) -> None:
+    """Moves the end of an open attempt to now."""
+    end = time.time()
+    event["end"] = _iso(end)
+    event["seconds"] = round(end - start, 1)
+
+
+def close_attempt(event: Dict,
+                  start: float,
+                  status: str,
+                  returncode: Optional[int],
+                  resume_mtime: Optional[float] = None) -> None:
+    """Ends an attempt: end, seconds, status, exit code and whether it
+    saved a new resume state."""
+    update_attempt(event, start)
+    event["status"] = status
+    event["returncode"] = returncode
+    event["saved"] = (resume_mtime is not None and
+                      resume_mtime != event.get("resume_mtime"))
+
+
+def add_attempt(record: Dict, start: float, status: str,
+                returncode: Optional[int], gpu: str) -> None:
+    """Appends one finished attempt (wall-clock start and end, seconds,
+    host, GPU, status) to an attempts record."""
+    close_attempt(open_attempt(record, start, gpu), start, status, returncode)
 
 
 def _iso(stamp: float) -> str:
     return datetime.datetime.fromtimestamp(stamp).isoformat(timespec="seconds")
 
 
+def event_status(event: Dict) -> str:
+    """Status of an attempt; an open one ('running') whose end was last
+    updated STALE_MINUTES ago was hard-killed: 'killed'."""
+    status = event.get("status") or "unknown"
+    if status != "running":
+        return status
+    try:
+        end = datetime.datetime.fromisoformat(event["end"])
+    except (KeyError, TypeError, ValueError):
+        return "killed"
+    age = (datetime.datetime.now() - end).total_seconds()
+    return "killed" if age > C.STALE_MINUTES * 60 else "running"
+
+
+def close_killed(record: Dict, resume_mtime: Optional[float] = None) -> None:
+    """Marks the open attempts of a unit 'killed' (called before a new
+    attempt: the caller holds the unit, so an open attempt is dead)."""
+    for event in record["events"]:
+        if event.get("status") == "running":
+            event["status"] = "killed"
+            event["saved"] = (resume_mtime is not None and
+                              resume_mtime != event.get("resume_mtime"))
+
+
+def check_progress(root: str, name: str, run_dir: str, record: Dict) -> bool:
+    """Alerts once if the last NO_PROGRESS_ATTEMPTS attempts all ended
+    stopped, preempted or killed without a new resume save (the unit makes
+    no progress: its checkpoint interval is longer than the time its
+    workers get). Returns True if it alerted now."""
+    last = record["events"][-C.NO_PROGRESS_ATTEMPTS:]
+    if (record.get("no_progress_alert") or len(last) < C.NO_PROGRESS_ATTEMPTS or
+            any(
+                e.get("status") not in ("stopped", "preempted",
+                                        "killed") or e.get("saved")
+                for e in last)):
+        return False
+    record["no_progress_alert"] = alert(
+        root, name, f"no progress: {len(last)} attempts in a row stopped "
+        "without a new resume save", {
+            "run_dir": run_dir,
+            "events": last,
+            "note": "lower --checkpoint_seconds or give the unit a longer "
+                    "worker"
+        })
+    return True
+
+
 def failure_hosts(record: Dict) -> List[str]:
     """Hosts of the failed attempts of a unit since its last un-parking."""
-    since = (record.get("unparked") or {}).get("events_before", 0)
+    since = record.get("since", (record.get("unparked") or
+                                 {}).get("events_before", 0))
     return sorted({
         e.get("host") or "unknown"
         for e in record["events"][since:]
@@ -422,10 +607,11 @@ def failure_hosts(record: Dict) -> List[str]:
 def park(root: str, name: str, run_dir: str, reason: str, record: Dict,
          details: Dict) -> str:
     """Parks a unit: alert record and PARKED marker (with the hosts of its
-    failures; none for a failure that is not the host's). Returns the alert
-    path."""
-    hosts = [] if reason == "config_mismatch" else failure_hosts(record)
-    path = alert(root, name, f"parked after {reason}", {
+    failures; none for a failure that is not the host's: out of memory).
+    Returns the alert path."""
+    hosts = [] if reason in ("config_mismatch",
+                             "oom") else failure_hosts(record)
+    path = alert(root, name, f"shelved after {reason}", {
         "run_dir": run_dir,
         "attempts": record,
         "hosts": hosts,
@@ -442,42 +628,128 @@ def park(root: str, name: str, run_dir: str, reason: str, record: Dict,
     return path
 
 
-def can_unpark(run_dir: str, host: str) -> bool:
+def live_hosts(hosts: List[str], bad=frozenset()) -> Optional[List[str]]:
+    """The hosts of a parking that count: those not listed as bad; None if
+    every host of a non-empty list is bad (the parking does not count)."""
+    live = [h for h in hosts if h not in bad]
+    return None if hosts and not live else live
+
+
+def can_unpark(run_dir: str, host: str, bad=frozenset()) -> bool:
     """A parked unit whose failures all came from one host other than
-    `host`, never un-parked before."""
+    `host`, never un-parked before; or whose failures all came from hosts
+    listed as bad (`bad`), whatever its history. A worker on a bad host
+    un-parks nothing."""
     marker = read_json(os.path.join(run_dir, "PARKED"))
-    if marker is None:
+    if marker is None or host in bad:
         return False
-    hosts = marker.get("hosts") or []
-    return (len(hosts) == 1 and hosts[0] != host and
+    live = live_hosts(marker.get("hosts") or [], bad)
+    if live is None:
+        return True
+    return (len(live) == 1 and live[0] != host and
             not read_attempts(run_dir).get("unparked"))
 
 
-def unpark(run_dir: str, host: str) -> bool:
-    """Un-parks a unit once (see `can_unpark`; the caller holds its lock):
-    the PARKED marker is renamed away and the failure counts restart.
+def unpark(run_dir: str, host: str, bad=frozenset()) -> bool:
+    """Un-parks a unit (see `can_unpark`; the caller holds its lock): the
+    PARKED marker is renamed away and the failure counts restart.
 
     Returns:
         bool: True if the unit was un-parked.
     """
-    if not can_unpark(run_dir, host):
+    if not can_unpark(run_dir, host, bad):
         return False
     marker = read_json(os.path.join(run_dir, "PARKED"))
     record = read_attempts(run_dir)
-    record["unparked"] = {
+    entry = {
         "time": now(),
         "host": host,
         "parked": marker,
         "events_before": len(record["events"])
     }
+    if live_hosts(marker.get("hosts") or [], bad) is None:
+        record.setdefault("unparked_bad_hosts", []).append(entry)
+    else:
+        record["unparked"] = entry
+    record["since"] = len(record["events"])
     record["crashes"] = record["free"] = 0
     write_json(attempts_path(run_dir), record)
     try:
         os.replace(os.path.join(run_dir, "PARKED"),
-                   os.path.join(run_dir, "PARKED.unparked"))
+                   os.path.join(run_dir, f"PARKED.unparked.{time.time():.0f}"))
     except FileNotFoundError:
         return False
     return True
+
+
+def held(run_dir: Optional[str]) -> bool:
+    """A unit held for an operator (CONFIG_MISMATCH marker)."""
+    return bool(run_dir) and os.path.exists(os.path.join(run_dir, HOLD))
+
+
+def hold(root: str, name: str, run_dir: str, details: Dict) -> str:
+    """Holds a unit whose resume state belongs to another configuration:
+    alert record and CONFIG_MISMATCH marker (no worker picks it until an
+    operator removes the marker). Returns the alert path."""
+    path = alert(
+        root, name, "resume state of another configuration: held for an "
+        "operator", {
+            "run_dir": run_dir,
+            "note": "remove the resume state (or the run directory), then "
+                    f"the {HOLD} marker",
+            **details
+        })
+    write_json(os.path.join(run_dir, HOLD), {"time": now(), "alert": path})
+    return path
+
+
+def _beat_attempt(record_path: str, record: Dict, event: Dict,
+                  start: float) -> None:
+    """Heartbeat of an open attempt: its end moved to now, the record
+    written (atomically)."""
+    update_attempt(event, start)
+    write_json(record_path, record)
+
+
+def _attempt(cmd: List[str], run_dir: str, env: Optional[Dict[str, str]],
+             on_val: Optional[Callable[[Dict], bool]],
+             on_beat: Callable[[], None]) -> tuple:
+    """Runs one attempt of a unit, logging and streaming its output.
+
+    Returns:
+        (int, str, bool, Optional[int]): exit code, last lines of the log,
+          stopped by `on_val` (pruned), trainable parameters (if printed).
+    """
+    tail: List[str] = []
+    stopped, params = False, None
+    with _Heartbeat(run_dir, on_beat), open(os.path.join(run_dir, "log.txt"),
+                                            "a",
+                                            encoding="utf-8") as log:
+        log.write(f"=== {now()} {' '.join(cmd)}\n")
+        with subprocess.Popen(cmd,
+                              stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT,
+                              text=True,
+                              bufsize=1,
+                              cwd=REPO,
+                              env=env) as process:
+            _CHILDREN.add(process)
+            if STOP.is_set():
+                process.send_signal(signal.SIGUSR1)
+            for line in process.stdout:
+                log.write(line)
+                tail = (tail + [line])[-TAIL_LINES:]
+                match = PARAMS_LINE.match(line)
+                if match:
+                    params = int(match.group(1))
+                scores = parse_val(line)
+                if scores and on_val is not None and on_val(scores):
+                    stopped = True
+                    process.terminate()
+                    break
+            returncode = process.wait()
+            _CHILDREN.discard(process)
+    return returncode, "".join(tail), stopped, params
 
 
 def run_unit(name: str,
@@ -504,9 +776,10 @@ def run_unit(name: str,
           config.json as passed to run.py, i.e. formatted).
 
     Returns:
-        dict: 'status' ('ok', 'pruned', 'diverged', 'too_large',
-          'stopped' or 'parked'), 'history' when ok, 'params' (trainable
-          count, when printed) and 'tail' (last lines of the log).
+        dict: 'status' ('ok', 'pruned', 'diverged', 'too_large', 'oom',
+          'stopped', 'config_mismatch' or 'parked'), 'history' when ok,
+          'params' (trainable count, when printed) and 'tail' (last lines
+          of the log).
     """
     os.makedirs(run_dir, exist_ok=True)
     write_json(
@@ -520,58 +793,35 @@ def run_unit(name: str,
     record = read_attempts(run_dir)
     params = None
     gpu = gpu_name()
+    resume = resume_path(run_dir, model)
     while True:
         if STOP.is_set():
             return {"status": "stopped", "params": params, "tail": ""}
-        tail: List[str] = []
-        stopped = False
+        close_killed(record, _mtime(resume))
         start = time.time()
-        with _Heartbeat(run_dir), open(os.path.join(run_dir, "log.txt"),
-                                       "a",
-                                       encoding="utf-8") as log:
-            log.write(f"=== {now()} {' '.join(cmd)}\n")
-            with subprocess.Popen(cmd,
-                                  stdout=subprocess.PIPE,
-                                  stderr=subprocess.STDOUT,
-                                  text=True,
-                                  bufsize=1,
-                                  cwd=REPO,
-                                  env=env) as process:
-                _CHILDREN.add(process)
-                if STOP.is_set():
-                    process.send_signal(signal.SIGUSR1)
-                for line in process.stdout:
-                    log.write(line)
-                    tail = (tail + [line])[-TAIL_LINES:]
-                    match = PARAMS_LINE.match(line)
-                    if match:
-                        params = int(match.group(1))
-                    scores = parse_val(line)
-                    if scores and on_val is not None and on_val(scores):
-                        stopped = True
-                        process.terminate()
-                        break
-                returncode = process.wait()
-                _CHILDREN.discard(process)
-        text = "".join(tail)
+        event = open_attempt(record, start, gpu, _mtime(resume))
+        write_json(record_path, record)
+        returncode, text, stopped, printed = _attempt(
+            cmd, run_dir, env, on_val,
+            functools.partial(_beat_attempt, record_path, record, event, start))
+        params = printed if printed is not None else params
         status = "pruned" if stopped else classify(returncode, text)
-        if (status not in ("ok", "pruned", "diverged", "too_large") and
-                STOP.is_set()):
+        if (status not in ("ok", "pruned", "diverged", "too_large", "oom",
+                           "config_mismatch") and STOP.is_set()):
             status = "stopped"  # the worker was asked to stop
-        add_attempt(record, start, status, returncode, gpu)
-        if status in ("ok", "pruned", "diverged", "too_large", "stopped"):
+        close_attempt(event, start, status, returncode, _mtime(resume))
+        check_progress(root, name, run_dir, record)
+        result = {"status": status, "params": params, "tail": text}
+        if status in ("ok", "pruned", "diverged", "too_large", "stopped",
+                      "oom"):
             write_json(record_path, record)
-            result = {"status": status, "params": params, "tail": text}
             if status == "ok":
                 result["history"] = read_json(history_path(run_dir, model))
             return result
         if status == "config_mismatch":
             write_json(record_path, record)
-            park(root, name, run_dir, status, record, {
-                "command": cmd,
-                "tail": text[-4000:]
-            })
-            return {"status": "parked", "params": params, "tail": text}
+            hold(root, name, run_dir, {"command": cmd, "tail": text[-4000:]})
+            return result
         key = "crashes" if status == "crash" else "free"
         record[key] += 1
         write_json(record_path, record)

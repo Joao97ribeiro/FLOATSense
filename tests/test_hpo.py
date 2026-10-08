@@ -1,5 +1,6 @@
 # pylint: disable=wrong-import-position,protected-access
 # pylint: disable=use-dict-literal
+# pylint: disable=too-many-lines
 """Tests of the drivers of the validation-tuned track (hpo/).
 
 Run from the repository root with `python -m unittest discover tests`.
@@ -9,6 +10,7 @@ optuna >= 4 and are skipped otherwise.
 """
 
 import argparse
+import datetime
 import os
 import random
 import signal
@@ -153,7 +155,12 @@ class CommonTest(unittest.TestCase):
                 "access was encountered"), "hardware")
         self.assertEqual(
             common.classify(1, "torch.OutOfMemoryError: CUDA out of memory"),
-            "crash")
+            "oom")
+        self.assertEqual(common.classify(1, "RuntimeError: out of memory"),
+                         "oom")
+        self.assertEqual(common.classify(1, "ValueError: bad shape"), "crash")
+        self.assertEqual(common.classify(FC.EXIT_CONFIG_MISMATCH, ""),
+                         "config_mismatch")
 
     def test_write_once_and_claim(self):
         """A plan is written once; a live claim is exclusive, a stale one
@@ -204,16 +211,32 @@ class CommonTest(unittest.TestCase):
             self.assertEqual(config["config"], {"lr": 0.00123457})
             self.assertEqual(config["command"][0], sys.executable)
 
-    def test_config_mismatch_parks_at_once(self):
-        """A refused resume is parked after one attempt and is not
-        un-parked (not a fault of the host)."""
+    def test_config_mismatch_is_held(self):
+        """A refused resume is not retried and not parked: the unit is held
+        for an operator (marker and alert) and no worker picks it."""
         with tempfile.TemporaryDirectory() as root:
             result = self.run_fake(
-                root, f"import sys; sys.exit({common.EXIT_CONFIG_MISMATCH})")
-            self.assertEqual(result["status"], "parked")
+                root, f"import sys; sys.exit({FC.EXIT_CONFIG_MISMATCH})")
+            self.assertEqual(result["status"], "config_mismatch")
             run_dir = os.path.join(root, "unit")
             self.assertEqual(len(common.read_attempts(run_dir)["events"]), 1)
-            self.assertFalse(common.can_unpark(run_dir, "elsewhere"))
+            self.assertFalse(os.path.exists(os.path.join(run_dir, "PARKED")))
+            self.assertTrue(common.held(run_dir))
+            self.assertEqual(len(os.listdir(os.path.join(root, "alerts"))), 1)
+
+    def test_oom_is_not_retried(self):
+        """Out of memory ends the unit at once: not retried, not parked,
+        not a failure of the host."""
+        with tempfile.TemporaryDirectory() as root:
+            result = self.run_fake(
+                root, "raise SystemExit('torch.OutOfMemoryError: CUDA out "
+                "of memory')")
+            self.assertEqual(result["status"], "oom")
+            run_dir = os.path.join(root, "unit")
+            record = common.read_attempts(run_dir)
+            self.assertEqual((len(record["events"]), record["crashes"]), (1, 0))
+            self.assertFalse(os.path.exists(os.path.join(run_dir, "PARKED")))
+            self.assertEqual(common.failure_hosts(record), [])
 
     def test_unpark_once_from_another_host(self):
         """A unit parked by crashes on one host is un-parked once, by
@@ -274,7 +297,7 @@ class CommonTest(unittest.TestCase):
                   "n = int(open(p).read()) if os.path.exists(p) else 0\n"
                   "open(p, 'w').write(str(n + 1))\n"
                   "if n < 2: os.kill(os.getpid(), signal.SIGTERM)\n"
-                  "raise MemoryError('CUDA out of memory')\n")
+                  "raise RuntimeError('boom')\n")
         with tempfile.TemporaryDirectory() as root:
             result = self.run_fake(root, script)
             self.assertEqual(result["status"], "parked")
@@ -688,24 +711,127 @@ class PickTest(unittest.TestCase):
         self.assertTrue(state["unparked"])
         self.assertEqual(state["phase"], "search")
 
+    def worker(self, *extra):
+        """worker.main on the test root, without waits."""
+        return worker.main([
+            f"--root={self.root}", "--models=tcn", "--dry_run", "--owner=w",
+            "--poll_seconds=0", *extra
+        ])
+
     def test_worker_breaker(self):
-        """A worker whose units keep parking stops with EXIT_BROKEN and an
-        alert, after WORKER_FAILURES units."""
+        """A worker whose units of two studies park stops with EXIT_BROKEN,
+        an alert and its host listed as bad; it then refuses to start."""
         calls = []
 
         def parked(args, unit, lock=None):
-            del args, lock
+            del lock
             calls.append(unit)
+            confirm.park_study(args.root, unit.model, unit.tower, "test")
             return "parked"
 
         with mock.patch.object(worker, "run", parked):
-            code = worker.main([
-                f"--root={self.root}", "--models=tcn", "--dry_run", "--owner=w"
-            ])
-        self.assertEqual(code, C.EXIT_BROKEN)
+            self.assertEqual(self.worker(), C.EXIT_BROKEN)
         self.assertEqual(len(calls), C.WORKER_FAILURES)
         alerts = os.listdir(os.path.join(self.root, "alerts"))
         self.assertTrue(any(a.endswith("worker_w.json") for a in alerts))
+        self.assertIn(socket.gethostname(), common.bad_hosts(self.root))
+        record = common.read_json(pick.worker_path(self.root, "w"))
+        self.assertEqual(record["exit"], C.EXIT_BROKEN)
+        with mock.patch.object(worker, "run", parked):
+            self.assertEqual(self.worker(), C.EXIT_BROKEN)
+        self.assertEqual(len(calls), C.WORKER_FAILURES)
+
+    def test_one_bad_study_does_not_break_the_worker(self):
+        """Driver errors in one study park that study (not the worker);
+        the breaker needs failures of two studies. A study parked on a
+        host listed as bad is not parked for good."""
+        calls = []
+
+        def crash(args, unit, lock=None):
+            del args, lock
+            calls.append(pick.unit_id(unit))
+            raise RuntimeError("driver bug")
+
+        with mock.patch.object(worker, "run", crash):
+            self.assertEqual(self.worker(), C.EXIT_BROKEN)
+        first = calls[0]
+        self.assertEqual(calls.count(first), C.DRIVER_ERRORS_PARK)
+        self.assertEqual(len(calls), C.DRIVER_ERRORS_PARK + 1)
+        model, tower = first.split("/")[1].rsplit("_", 1)
+        marker = common.read_json(confirm.parked_path(self.root, model, tower))
+        self.assertEqual(marker["hosts"], [socket.gethostname()])
+        bad = common.bad_hosts(self.root)
+        self.assertFalse(pick.study_park_final(self.root, model, tower, bad))
+        # Parked again after an un-parking: final, unless its failures
+        # were all on a bad host.
+        common.write_json(pick.unparked_path(self.root, model, tower),
+                          {"parked": {}})
+        self.assertTrue(pick.study_park_final(self.root, model, tower))
+        self.assertFalse(pick.study_park_final(self.root, model, tower, bad))
+
+    def test_loop_errors_back_off_then_break(self):
+        """Exceptions of the worker loop are retried; MAX_LOOP_ERRORS in a
+        row stop the worker with EXIT_BROKEN."""
+        calls = []
+
+        def failing(*args, **kwargs):
+            del args, kwargs
+            calls.append(1)
+            if len(calls) == 1:
+                raise OSError("stale file handle")
+            return None, None
+
+        with mock.patch.object(pick, "pick", failing):
+            self.assertEqual(self.worker("--idle_minutes=0"), 0)
+        self.assertEqual(len(calls), 2)
+        with mock.patch.object(pick, "pick", side_effect=OSError("nfs")), \
+                mock.patch.object(C, "MAX_LOOP_ERRORS", 3):
+            self.assertEqual(self.worker(), C.EXIT_BROKEN)
+        self.assertIn(socket.gethostname(), common.bad_hosts(self.root))
+
+    def test_idle_exit_alerts_when_work_remains(self):
+        """An idle exit with work left writes an alert; the exit code is in
+        the worker record; a record not refreshed is dead."""
+        with mock.patch.object(pick, "pick", return_value=(None, None)):
+            self.assertEqual(self.worker("--idle_minutes=0"), 0)
+        alerts = [
+            common.read_json(os.path.join(self.root, "alerts", a))
+            for a in os.listdir(os.path.join(self.root, "alerts"))
+        ]
+        self.assertTrue(any("idle" in a["reason"] for a in alerts))
+        workers = hpo_status.read_workers(self.root)
+        self.assertEqual(workers[0]["state"], "exited (0)")
+        path = pick.worker_path(self.root, "x")
+        common.write_json(path, {"owner": "x"})
+        old = time.time() - 2 * C.STALE_MINUTES * 60
+        os.utime(path, (old, old))
+        states = {
+            w["owner"]: w["state"] for w in hpo_status.read_workers(self.root)
+        }
+        self.assertEqual(states["x"], "dead")
+
+    def test_config_mismatch_stops_worker(self):
+        """A configuration mismatch stops the worker with EXIT_CONFIG; a
+        held unit is not pending."""
+        with mock.patch.object(worker, "run", return_value="config_mismatch"):
+            self.assertEqual(self.worker(), C.EXIT_CONFIG)
+        unit = pick.Unit("final", "tcn", "opt2", None, 0)
+        run_dir = pick.run_dir(self.root, unit)
+        self.assertTrue(pick.pending(self.root, unit, 10))
+        common.hold(self.root, "u", run_dir, {})
+        self.assertFalse(pick.pending(self.root, unit, 10))
+
+    def test_advance_lock_short_staleness(self):
+        """The advance lock of a killed holder is taken over after
+        ADVANCE_STALE_SECONDS, not STALE_MINUTES."""
+        dead = pick.Lock(self.root, "advance", "dead", 0)
+        self.assertTrue(dead.acquire())
+        old = time.time() - 2 * C.ADVANCE_STALE_SECONDS
+        os.utime(dead.path, (old, old))
+        pick.advance(self.root, ["tcn"], 10)
+        self.assertTrue(
+            os.path.exists(os.path.join(self.root, "locks", "takeovers.log")))
+        self.assertFalse(os.path.exists(dead.path))
 
     def test_hours_left_with_zero_cost(self):
         """A model of cost 0 does not divide by zero."""
@@ -737,7 +863,7 @@ class AnalyzeTest(unittest.TestCase):
         """gpu_hours.csv of the dry run: every phase, consistent totals."""
         hours = pd.read_csv(os.path.join(out, "gpu_hours.csv"))
         self.assertEqual(set(hours["phase"]),
-                         {"search", "confirm", "final", "all"})
+                         {"search", "confirm", "final", "test", "all"})
         total = hours[(hours["model"] == "all") &
                       (hours["phase"] == "all")]["gpu_hours"].iloc[0]
         per_unit = hours[(hours["model"] != "all") &
@@ -810,10 +936,16 @@ class AnalyzeTest(unittest.TestCase):
         self.assertEqual(row.loc["fits", "missing_towers"], "opt2")
         self.assertEqual(row.loc["fits", "n_towers"], 2)
         self.assertEqual(row.loc["mamba", "missing_towers"], "ref,opt1,opt2")
-        self.assertEqual(list(board["model"][:3]), ["fits", "lstm", "tcn"])
-        top3, _ = analyze.rankings(board.drop(columns="group", errors="ignore"))
+        # Only the models of every tower are ranked; the others follow.
+        self.assertEqual(list(board["model"][:2]), ["lstm", "tcn"])
+        self.assertEqual(list(board["ranked"][:3]), [True, True, False])
+        self.assertFalse(row.loc["fits", "ranked"])
+        top3, families = analyze.rankings(
+            board.drop(columns="group", errors="ignore"))
         self.assertEqual(list(top3[top3["criterion"] == "top"]["model"]),
-                         ["fits", "lstm", "tcn"])
+                         ["lstm", "tcn"])
+        self.assertTrue((top3["n_towers"] == 3).all())
+        self.assertNotIn("fits", set(families["model"]))
 
     def test_curves_and_gpu_hours_of_a_search(self):
         """Curves use the counted position of counted trials; the dry run
@@ -832,6 +964,306 @@ class AnalyzeTest(unittest.TestCase):
                         (hours["phase"] == "search")]
             self.assertEqual(int(row["runs"].iloc[0]), 8)
             self.assertEqual(int(row["attempts"].iloc[0]), 8)
+
+
+class RobustnessTest(unittest.TestCase):
+    """Lock beats, out of memory, claims, extension decisions, final
+    parkings, attempts and the test records."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
+        self.root = self.tmp.name
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def beat_until(self, beater, condition, seconds=5.0):
+        """Runs `beater` until `condition()` or `seconds`."""
+        end = time.time() + seconds
+        with beater:
+            while not condition() and time.time() < end:
+                time.sleep(0.01)
+
+    def test_beater_survives_transient_errors(self):
+        """OSErrors of utime and unreadable lock files are retried: the
+        lock is not lost; another token loses it at once; a lock unclear
+        LOCK_BEAT_FAILURES times in a row is given up."""
+        lock = pick.Lock(self.root, "u", "me", 0)
+        self.assertTrue(lock.acquire())
+        utime, read = os.utime, pick.read_lock
+        calls = {"utime": 0, "read": 0}
+
+        def flaky_utime(*args, **kwargs):
+            calls["utime"] += 1
+            if calls["utime"] <= 3:
+                raise OSError("stale file handle")
+            return utime(*args, **kwargs)
+
+        def flaky_read(path):
+            calls["read"] += 1
+            return {} if calls["read"] in (5, 6) else read(path)
+
+        lost = []
+        beater = pick.Beater(lock, lambda: lost.append(1), interval=0.01)
+        with mock.patch.object(pick.os, "utime", flaky_utime), \
+                mock.patch.object(pick, "read_lock", flaky_read):
+            self.beat_until(beater, lambda: calls["read"] > 12)
+        self.assertFalse(beater.lost)
+        self.assertEqual(lost, [])
+        self.assertTrue(lock.owned())
+        answers = [{}]
+        with mock.patch.object(
+                pick, "read_lock", lambda path: answers.pop()
+                if answers else read(path)):
+            self.assertTrue(lock.owned(wait=0.0))
+        # Taken over: readable, another token.
+        common.write_json(lock.path, {"token": "other"})
+        beater = pick.Beater(lock, lambda: lost.append(1), interval=0.01)
+        self.beat_until(beater, lambda: beater.lost)
+        self.assertTrue(beater.lost)
+        self.assertEqual(beater.failures, 0)
+        self.assertFalse(lock.owned(wait=0.0))
+        # Missing for good: given up after LOCK_BEAT_FAILURES beats.
+        os.remove(lock.path)
+        beater = pick.Beater(lock, lambda: lost.append(1), interval=0.01)
+        self.beat_until(beater, lambda: beater.lost)
+        self.assertTrue(beater.lost)
+        self.assertEqual(beater.failures, C.LOCK_BEAT_FAILURES)
+
+    def search(self, *extra, tower="opt2"):
+        """search.main in dry-run mode on the test root."""
+        return search.main([
+            "--model=tcn", f"--tower={tower}", "--dry_run",
+            f"--root={self.root}", "--n_trials=10", *extra
+        ])
+
+    def test_oom_trials(self):
+        """An out-of-memory trial is FAIL (oom), not counted; MAX_OOM of
+        them stop the study, which is then parked (not on the host)."""
+        stub = common.stub_unit
+        calls = {"n": 0}
+
+        def two_oom(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                return {"status": "oom", "params": 10, "tail": ""}
+            return stub(*args, **kwargs)
+
+        with mock.patch.object(common, "stub_unit", two_oom):
+            study = self.search()
+        ooms = [t for t in study.trials if search.oom(t)]
+        self.assertEqual(len(ooms), 2)
+        self.assertTrue(all(t.state.name == "FAIL" for t in ooms))
+        self.assertEqual(sum(search.counted(t) for t in study.trials), 10)
+        oom = {"status": "oom", "params": 10, "tail": ""}
+        with mock.patch.object(common, "stub_unit", lambda *a, **k: oom):
+            study = self.search("--max_new=100", tower="ref")
+        self.assertEqual(len(study.trials), C.MAX_OOM)
+        state = pick.study_state(self.root, "tcn", "ref", 10)
+        self.assertFalse(state["search_pending"])
+        reason, hosts = pick.park_reason(state)
+        self.assertIn("out of memory", reason)
+        self.assertEqual(hosts, [])
+        # Once the budget is counted, failed draws no longer park (P4).
+        self.assertIsNone(pick.park_reason({**state, "counted": 10}))
+
+    def plan(self, n_seeds=1):
+        """A frozen one-configuration plan of tcn/opt2."""
+        common.write_json(
+            confirm.plan_path(self.root, "tcn", "opt2"), {
+                "configs": [{
+                    "rank": 0,
+                    "config": S.FIXED_RECIPE
+                }],
+                "n_seeds": n_seeds,
+                "epochs": 10
+            })
+
+    def worker_args(self):
+        """Worker options of the test root."""
+        return worker.parse_args(
+            [f"--root={self.root}", "--models=tcn", "--dry_run", "--owner=w"])
+
+    def test_oom_confirm_unit_parks_without_host(self):
+        """A confirmation unit out of memory is parked at once, with no
+        host (final, not a failure of the host)."""
+        self.plan()
+        unit = pick.Unit("confirm", "tcn", "opt2", 0, 0)
+        oom = {"status": "oom", "params": 10, "tail": "CUDA out of memory"}
+        with mock.patch.object(common, "stub_unit", lambda *a, **k: oom):
+            status = worker.run(self.worker_args(), unit)
+        self.assertEqual(status, "oom")
+        run_dir = pick.run_dir(self.root, unit)
+        marker = common.read_json(os.path.join(run_dir, "PARKED"))
+        self.assertEqual((marker["reason"], marker["hosts"]), ("oom", []))
+        self.assertTrue(pick.park_final(run_dir))
+
+    def test_claims_of_others_are_kept(self):
+        """A worker releases only its own claims (any incarnation); a claim
+        of a live process by hand makes the unit busy."""
+        self.plan()
+        unit = pick.Unit("confirm", "tcn", "opt2", 0, 0)
+        run_dir = pick.run_dir(self.root, unit)
+        os.makedirs(run_dir)
+        path = os.path.join(run_dir, "claim")
+        with open(path, "w", encoding="utf-8") as file:
+            file.write("|elsewhere:1")
+        common.touch(run_dir)
+        self.assertFalse(common.release(run_dir, owner="w"))
+        self.assertTrue(common.busy(run_dir))
+        self.assertEqual(worker.run(self.worker_args(), unit), "busy")
+        self.assertTrue(os.path.exists(path))
+        with open(path, "w", encoding="utf-8") as file:
+            file.write("w|elsewhere:1")  # an earlier incarnation
+        self.assertTrue(common.release(run_dir, owner="w"))
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(worker.run(self.worker_args(), unit), "done")
+
+    def full_study(self, tower, values):
+        """A finished fits study with these values."""
+        add_trials(search.open_study(self.root, "fits", tower), values)
+
+    def test_extension_decided_once(self):
+        """The gate writes the extension decision once ('not extended'
+        too); a tower un-parked later does not reopen it, and a parked
+        tower never decides."""
+        late = [0.0] * 9 + [1.0]
+        with mock.patch.object(C, "EXTEND_AFTER", 5):
+            confirm.park_study(self.root, "fits", "opt2", "test", ["x"])
+            self.full_study("opt2", late)
+            self.assertFalse(search.maybe_extend(self.root, "fits", 10))
+            self.full_study("ref", [1.0] + [0.0] * 9)
+            self.full_study("opt1", [1.0] + [0.0] * 9)
+            pick.advance(self.root, ["fits"], 10)
+            decision = common.read_json(search.extension_path(
+                self.root, "fits"))
+            self.assertFalse(decision["extended"])
+            self.assertEqual(decision["towers"], ["ref", "opt1"])
+            os.remove(confirm.parked_path(self.root, "fits", "opt2"))
+            self.assertFalse(search.maybe_extend(self.root, "fits", 10))
+            pick.advance(self.root, ["fits"], 10)
+            self.assertEqual(search.target_trials(self.root, "fits", 10), 10)
+
+    def test_parking_final_and_frozen(self):
+        """A study parked on one host is not terminal (all_done waits for
+        an un-parking); once the test is ready, every parking is final
+        and nothing is un-parked."""
+        for tower in C.TOWERS_SEARCHED:
+            confirm.park_study(self.root, "tcn", tower, "test", ["elsewhere"])
+        self.assertFalse(pick.all_done(self.root, ["tcn"], 10))
+        common.write_json(pick.ready_path(self.root), {})
+        self.assertTrue(pick.all_done(self.root, ["tcn"], 10))
+        state = pick.study_state(self.root, "tcn", "ref", 10)
+        self.assertFalse(pick.unpark_study(self.root, state, "me"))
+        unit_dir = confirm.unit_dir(self.root, "tcn", "opt2", 0, 0)
+        common.write_json(os.path.join(unit_dir, "PARKED"),
+                          {"hosts": ["elsewhere"]})
+        self.assertTrue(common.can_unpark(unit_dir, "me"))
+        self.assertFalse(
+            pick.pending(self.root, pick.Unit("confirm", "tcn", "opt2", 0, 0),
+                         10, "me"))
+
+    def test_open_test_keeps_missing_pairs_out(self):
+        """A pair recorded as parked in MISSING.json is never scored (even
+        if un-parked since); SKIPPED.json lists the diverged seeds."""
+        for model in S.LEARNED:
+            for tower in C.TOWERS_SEARCHED:
+                if (model, tower) not in (("tcn", "opt2"), ("tcn", "ref")):
+                    confirm.park_study(self.root, model, tower, "test")
+        common.write_json(os.path.join(self.root, "sealed", "MISSING.json"),
+                          {"parked": {
+                              "tcn/opt2": {}
+                          }})
+        common.write_json(
+            confirm.winner_path(self.root, "tcn", "ref"), {
+                "winner_config": S.FIXED_RECIPE,
+                "winner_median": 0.5,
+                "margin_to_second": None,
+                "best_epoch": 10
+            })
+        for seed in range(C.N_SEEDS):
+            common.write_json(
+                os.path.join(final.unit_dir(self.root, "tcn", "ref", seed),
+                             "result.json"), {
+                                 "status": "diverged",
+                                 "epochs": 10,
+                                 "best_epoch": 10
+                             })
+        final.main(["--open_test", f"--root={self.root}", "--dry_run"])
+        self.assertFalse(
+            os.path.exists(
+                os.path.join(
+                    final.sealed_dir(self.root, "primary_last", "opt2", 0),
+                    "SEALED_tcn.json")))
+        skipped = common.read_json(
+            os.path.join(self.root, "sealed", "SKIPPED.json"))
+        self.assertEqual(skipped["all_seeds_diverged"], ["tcn/ref"])
+        self.assertEqual(len(skipped["seeds"]), C.N_SEEDS)
+        configs = analyze.configs(self.root).set_index(["model", "tower"])
+        self.assertEqual(configs.loc[("tcn", "ref"), "status"],
+                         "all_seeds_diverged")
+        # A pair shelved after its winner is 'shelved' (parked first).
+        confirm.park_study(self.root, "tcn", "ref", "late")
+        configs = analyze.configs(self.root).set_index(["model", "tower"])
+        self.assertEqual(configs.loc[("tcn", "ref"), "status"], "shelved")
+
+    def test_open_attempts_and_killed(self):
+        """An attempt is recorded open ('running') while it runs, updated by
+        the heartbeat; an open attempt left by a hard kill is 'killed' and
+        its seconds count; no progress over attempts alerts once."""
+        run_dir = os.path.join(self.root, "unit")
+        script = ("import json, os, sys, time\n"
+                  "time.sleep(0.5)\n"
+                  "e = json.load(open(os.path.join(sys.argv[1], "
+                  "'attempts.json')))['events'][-1]\n"
+                  "print(e['status'], e['seconds'])\n")
+        with mock.patch.object(common, "HEARTBEAT_SECONDS", 0.1):
+            result = common.run_unit("u",
+                                     [sys.executable, "-c", script, run_dir],
+                                     run_dir, self.root, "tcn")
+        status, seconds = result["tail"].split()
+        self.assertEqual(status, "running")
+        self.assertGreater(float(seconds), 0.0)
+        old = datetime.datetime.now() - datetime.timedelta(minutes=2 *
+                                                           C.STALE_MINUTES)
+        event = {
+            "start": old.isoformat(),
+            "end": old.isoformat(),
+            "seconds": 3600.0,
+            "status": "running"
+        }
+        self.assertEqual(common.event_status(event), "killed")
+        common.write_json(
+            os.path.join(self.root, "trials", "tcn_opt2", "t000",
+                         "attempts.json"), {"events": [event]})
+        hours = analyze.gpu_hours(self.root)
+        row = hours[(hours["model"] == "tcn") & (hours["phase"] == "search")]
+        self.assertEqual(int(row["killed"].iloc[0]), 1)
+        self.assertAlmostEqual(row["gpu_hours"].iloc[0], 1.0)
+        record = {"events": [{"status": "preempted", "saved": False}] * 3}
+        self.assertTrue(common.check_progress(self.root, "u", run_dir, record))
+        self.assertFalse(common.check_progress(self.root, "u", run_dir, record))
+        record = {"events": [{"status": "preempted", "saved": True}] * 3}
+        self.assertFalse(common.check_progress(self.root, "u", run_dir, record))
+
+    def test_test_inference_is_recorded(self):
+        """The inference runs of the test are recorded (phase 'test' of
+        gpu_hours.csv)."""
+        run_dir = final.unit_dir(self.root, "tcn", "opt2", 0)
+        common.write_json(os.path.join(run_dir, "result.json"), {
+            "status": "ok",
+            "epochs": 10,
+            "best_epoch": 10
+        })
+        with open(os.path.join(run_dir, "tcn_fa.pt"), "w",
+                  encoding="utf-8") as file:
+            file.write("weights")
+        args = final.parse_args(["--open_test", f"--root={self.root}"])
+        with mock.patch.object(final.subprocess, "call", return_value=0):
+            final.score(args, "tcn", "opt2", 0, "primary_last")
+        hours = analyze.gpu_hours(self.root)
+        row = hours[(hours["model"] == "tcn") & (hours["phase"] == "test")]
+        self.assertEqual(int(row["attempts"].iloc[0]), 1)
 
 
 if __name__ == "__main__":

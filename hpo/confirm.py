@@ -59,9 +59,7 @@ def unit_dir(root: str, model: str, tower: str, rank: int, seed: int) -> str:
     return os.path.join(study_dir(root, model, tower), f"c{rank}_s{seed}")
 
 
-def parked_path(root: str, model: str, tower: str) -> str:
-    """Marker of a parked (model, tower) study."""
-    return os.path.join(root, "parked", f"{model}_{tower}.json")
+parked_path = search.parked_path
 
 
 def park_study(root: str,
@@ -79,7 +77,7 @@ def park_study(root: str,
     }):
         return False
     common.alert(
-        root, f"study/{model}_{tower}", f"study parked: {reason}", {
+        root, f"study/{model}_{tower}", f"study shelved: {reason}", {
             "note": f"the other towers of {model} go on without it; "
                     f"{model}/{tower} has no winner and is missing in the "
                     "leaderboard",
@@ -151,8 +149,9 @@ def run_one(args: argparse.Namespace, plan: Dict, rank: int,
     result_path = os.path.join(run_dir, "result.json")
     if os.path.exists(result_path):
         return common.read_json(result_path)
-    if os.path.exists(os.path.join(run_dir, "PARKED")):
-        print(f"c{rank}_s{seed} parked, see {args.root}/alerts", flush=True)
+    if os.path.exists(os.path.join(run_dir, "PARKED")) or common.held(run_dir):
+        print(f"c{rank}_s{seed} shelved or held, see {args.root}/alerts",
+              flush=True)
         return None
     if not common.claim(run_dir):
         return None
@@ -174,7 +173,13 @@ def run_one(args: argparse.Namespace, plan: Dict, rank: int,
                 args.root,
                 args.model,
                 config=cfg)
-        if result["status"] in ("parked", "stopped"):
+        if result["status"] == "oom":  # a fixed configuration: no retry
+            common.park(args.root,
+                        f"phase2/{args.model}_{args.tower}/c{rank}_s{seed}",
+                        run_dir, "oom", common.read_attempts(run_dir),
+                        {"tail": result.get("tail", "")[-4000:]})
+            return None
+        if result["status"] in ("parked", "stopped", "config_mismatch"):
             return None
         record = {"rank": rank, "seed": seed, "status": result["status"]}
         curve = (result.get("history") or {}).get("val_r2", [])

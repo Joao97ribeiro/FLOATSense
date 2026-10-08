@@ -9,9 +9,13 @@ runs in tests/data/trainer_fingerprints.json), AdamW without weight decay
 is Adam, the schedule, the damage validation (equal to `evaluate`), the
 resume (equal to an uninterrupted run, refused for another run
 configuration), the kept epochs, the parameter cap and the NaN guard with
-their exit codes, and the loading of a checkpoint written by the published
-trainer (tests/data/main_dlinear_fa.pt).
+their exit codes, the SIGUSR1 handler of scripts/train/run.py, and the
+loading of a checkpoint written by the published trainer
+(tests/data/main_dlinear_fa.pt, with the predictions, damage CSV and
+summary the published code computed from it).
 """
+
+import hashlib
 
 import json
 import os
@@ -48,6 +52,7 @@ FINGERPRINTS = os.path.join(os.path.dirname(__file__), "data",
 REPO = os.path.join(os.path.dirname(__file__), "..")
 MAIN_CHECKPOINT = os.path.join(os.path.dirname(__file__), "data",
                                "main_dlinear_fa")
+OTHER_TOWER = synthetic.TOWER + "2"  # a copy of the synthetic tower
 TINY = {"hidden_channels": 8, "num_levels": 3, "dropout": 0.1}
 TMP = None
 TOWER = None
@@ -58,6 +63,8 @@ def setUpModule():  # pylint: disable=invalid-name
     global TMP, TOWER  # pylint: disable=global-statement
     TMP = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
     synthetic.write_tower(TMP.name)
+    shutil.copytree(os.path.join(TMP.name, synthetic.TOWER),
+                    os.path.join(TMP.name, OTHER_TOWER))
     TOWER = load_tower(TMP.name, synthetic.TOWER)
 
 
@@ -120,12 +127,35 @@ def state(trainer: SequenceModelTrainer):
     return {k: v.clone() for k, v in trainer.model.state_dict().items()}
 
 
+def state_sha256(state_dict) -> str:
+    """Digest of the names, dtypes, shapes and bytes of a state_dict."""
+    digest = hashlib.sha256()
+    for key, value in state_dict.items():
+        value = value.detach().cpu().contiguous()
+        digest.update(key.encode())
+        digest.update(str(value.dtype).encode())
+        digest.update(json.dumps(list(value.shape)).encode())
+        digest.update(value.numpy().tobytes())
+    return digest.hexdigest()
+
+
+def dead_pid() -> int:
+    """The pid of a process that has exited."""
+    process = subprocess.run(
+        [sys.executable, "-c", "import os; print(os.getpid())"],
+        capture_output=True,
+        text=True,
+        check=True)
+    return int(process.stdout)
+
+
 class DefaultsTest(unittest.TestCase):
     """The published recipe is unchanged."""
 
     def test_bit_identical_to_published(self):
-        """Same losses and weights as the published trainer, run for run
-        (Adam, no clipping, constant rate, validation by loss)."""
+        """Same losses, weights and torch random state after training as
+        the published trainer, run for run (Adam, no clipping, constant
+        rate, validation by loss)."""
         with open(FINGERPRINTS, encoding="utf-8") as file:
             reference = json.load(file)
         train_ids, val_ids = ids()
@@ -134,6 +164,11 @@ class DefaultsTest(unittest.TestCase):
                     tempfile.TemporaryDirectory() as out:
                 trainer = make(out, model_name=model, num_epochs=2, val_every=1)
                 history = trainer.train(train_ids, val_ids)
+                rng = hashlib.sha256(
+                    torch.get_rng_state().numpy().tobytes()).hexdigest()
+                self.assertEqual(rng, expected["torch_rng_sha256"])
+                self.assertEqual(state_sha256(trainer.model.state_dict()),
+                                 expected["state_sha256"])
                 self.assertEqual(history["train_loss"],
                                  expected["history"]["train_loss"])
                 self.assertEqual([list(v) for v in history["val_loss"]],
@@ -332,15 +367,49 @@ class TunedRunTest(unittest.TestCase):
             tuned(self.out.name, model_kwargs=dict(TINY,
                                                    dropout=0.2)).train(*ids())
 
+    def test_config_mismatch_task(self):
+        """A completed run is refused for more epochs (a longer run goes to
+        a new directory), another tower, inputs, scored window or damage
+        proxy."""
+        other = load_tower(TMP.name, OTHER_TOWER)
+        for kwargs, key in [
+            (dict(num_epochs=6), "num_epochs"),
+            (dict(release=other), "tower"),
+            (dict(input_channels=["tower_top_afa_mod", "rotor_speed"]),
+             "input_channels"),
+            (dict(min_time=100.0), "min_time"),
+            (dict(damage_m=3.0), "damage_m"),
+        ]:
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(ConfigMismatchError, key):
+                    tuned(self.out.name, **kwargs).train(*ids())
+
+    def test_older_config_accepted(self):
+        """A resume state stored before a setting was added (or before the
+        configuration was stored) still resumes."""
+        for drop in (["tower", "damage_m", "min_time"], None):
+            with self.subTest(drop=drop):
+                out = self.interrupted(1e9)
+                path = tuned(out).resume_path()
+                saved = torch.load(path, weights_only=False)
+                if drop is None:
+                    del saved["config"]
+                else:
+                    for key in drop:
+                        del saved["config"][key]
+                torch.save(saved, path)
+                self.assert_same_run(*self.resumed_in(out))
+
     def test_stale_temporaries_removed(self):
         """Temporary files of a killed save of this run are removed; other
         files are kept."""
         out = tempfile.mkdtemp(dir=self.out.name)
         trainer = tuned(out, num_epochs=1, val_every=1, save_epochs=[])
+        pid = dead_pid()
         stale = [
-            trainer.checkpoint_path() + ".tmp.11",
-            trainer.resume_path() + ".tmp.12",
-            trainer.checkpoint_path(7) + ".tmp.13",
+            trainer.checkpoint_path() + f".tmp.{pid}",
+            trainer.resume_path() + f".tmp.{os.getpid()}",
+            trainer.checkpoint_path(7) + f".tmp.{pid}",
         ]
         kept = [
             os.path.join(out, "lstm_fa.pt.tmp.14"),
@@ -358,6 +427,31 @@ class TunedRunTest(unittest.TestCase):
             self.assertFalse(os.path.exists(path), path)
         for path in kept:
             self.assertTrue(os.path.exists(path), path)
+
+    def test_live_writer_temporaries_kept(self):
+        """A temporary file whose pid is another live process (a concurrent
+        writer's save in flight) is kept, also when the process belongs to
+        another user; one of an exited process is removed."""
+        out = tempfile.mkdtemp(dir=self.out.name)
+        trainer = tuned(out, num_epochs=1, val_every=1, save_epochs=[])
+        live = trainer.checkpoint_path() + f".tmp.{os.getppid()}"
+        other_user = trainer.resume_path() + ".tmp.1"
+        stale = trainer.resume_path() + f".tmp.{dead_pid()}"
+        for path in (live, other_user, stale):
+            with open(path, "w", encoding="utf-8") as file:
+                file.write("partial")
+        kill = os.kill
+
+        def kill_as_other_user(pid, sig):
+            if pid == 1:
+                raise PermissionError
+            return kill(pid, sig)
+
+        with mock.patch("floatsense.trainer.os.kill", kill_as_other_user):
+            trainer._remove_stale_temporaries()
+        self.assertTrue(os.path.exists(live))
+        self.assertTrue(os.path.exists(other_user))
+        self.assertFalse(os.path.exists(stale))
 
     def test_stop_request_saves_and_resumes(self):
         """SIGUSR1: the epoch ends, the state is saved, the run stops; the
@@ -497,12 +591,18 @@ class GuardsTest(unittest.TestCase):
                                 "--resume",
                                 "--learning_rate=2e-3",
                                 out=out), C.EXIT_CONFIG_MISMATCH)
+            self.assertEqual(
+                self.run_script(small,
+                                "--resume",
+                                f"--tower={OTHER_TOWER}",
+                                out=out), C.EXIT_CONFIG_MISMATCH)
 
 
 # Runs main() of scripts/train/run.py with a recording trainer: prints the
 # trainer arguments, the SIGUSR1 handler while the tower loads and during
-# train(), and the handler after main(). With 'kill', SIGUSR1 arrives while
-# the tower loads.
+# each train(), and the handler after main(). With 'kill', SIGUSR1 arrives
+# while the tower loads; with 'kill_train', during the second train() (the
+# default action of SIGUSR1 would end the process).
 RUN_MAIN = """
 import json, os, signal, sys
 sys.path.insert(0, os.path.join({repo!r}, "scripts", "train"))
@@ -519,7 +619,11 @@ class Recorder:
     def __init__(self, **kwargs):
         seen["checkpoint_seconds"] = kwargs["checkpoint_seconds"]
     def train(self, *args):
-        seen["training"] = signal.getsignal(signal.SIGUSR1) is T.request_stop
+        seen.setdefault("training", []).append(
+            signal.getsignal(signal.SIGUSR1) is T.request_stop)
+        if {kill_train!r} and len(seen["training"]) == 2:
+            os.kill(os.getpid(), signal.SIGUSR1)
+            seen["stop_requested"] = T.STOP_REQUESTED.is_set()
 run.load_tower, run.SequenceModelTrainer = load_tower, Recorder
 run.FLAGS(["run"] + sys.argv[1:])
 try:
@@ -534,12 +638,12 @@ print("SEEN " + json.dumps(seen))
 class ScriptSignalTest(unittest.TestCase):
     """--checkpoint_seconds and the SIGUSR1 handler of run.py."""
 
-    def run_main(self, *flags, kill=False) -> dict:
+    def run_main(self, *flags, kill=False, kill_train=False) -> dict:
         """What the recording trainer saw (see RUN_MAIN)."""
         with tempfile.TemporaryDirectory() as out:
             result = subprocess.run([
                 sys.executable, "-c",
-                RUN_MAIN.format(repo=REPO, kill=kill),
+                RUN_MAIN.format(repo=REPO, kill=kill, kill_train=kill_train),
                 f"--dataset_dir={TMP.name}", f"--tower={synthetic.TOWER}",
                 f"--output_dir={out}", "--run_evaluation=False", *flags
             ],
@@ -568,12 +672,23 @@ class ScriptSignalTest(unittest.TestCase):
             seen, {
                 "loading": True,
                 "checkpoint_seconds": C.CHECKPOINT_SECONDS,
-                "training": True,
+                "training": [True],
                 "after": True
             })
         seen = self.run_main()
         self.assertFalse(seen["loading"])
-        self.assertFalse(seen["training"])
+        self.assertEqual(seen["training"], [False])
+
+    def test_handler_over_models_and_directions(self):
+        """The handler stays installed over every model and direction and
+        is restored once, after the last: SIGUSR1 during a later run
+        requests a stop instead of ending the process."""
+        for flag in ("--models=tcn,lstm", "--directions=fa,ss"):
+            with self.subTest(flag=flag):
+                seen = self.run_main("--resume", flag, kill_train=True)
+                self.assertEqual(seen["training"], [True, True])
+                self.assertTrue(seen["stop_requested"])
+                self.assertTrue(seen["after"])
 
     def test_signal_during_startup(self):
         """SIGUSR1 while the data loads: clean stop (EXIT_STOPPED), no
@@ -587,10 +702,12 @@ class MainCheckpointTest(unittest.TestCase):
     """A checkpoint written by the published trainer (no model_kwargs)."""
 
     def test_loads_with_identical_predictions(self):
-        """Same normalized predictions and damage as the published code
-        (tests/data/main_dlinear_fa.json, written by it)."""
+        """Exactly the normalized predictions, damage CSV and summary the
+        published code computes from it (tests/data/main_dlinear_fa.npz,
+        .csv and .json)."""
         with open(MAIN_CHECKPOINT + ".json", encoding="utf-8") as file:
             expected = json.load(file)
+        predictions = np.load(MAIN_CHECKPOINT + ".npz")
         with tempfile.TemporaryDirectory() as out:
             trainer = make(out, model_name="dlinear", num_epochs=1)
             shutil.copy(MAIN_CHECKPOINT + ".pt", trainer.checkpoint_path())
@@ -605,29 +722,18 @@ class MainCheckpointTest(unittest.TestCase):
             with torch.no_grad():
                 for index, sim_id in enumerate(dataset.sim_ids):
                     prediction = trainer._predict_window(
-                        dataset, index, dataset[index]).astype(np.float64)
-                    want = expected["predictions"][str(int(sim_id))]
-                    self.assertAlmostEqual(float(prediction.sum()),
-                                           want["sum"],
-                                           delta=1e-6 * abs(want["sum"]))
-                    self.assertAlmostEqual(float(np.abs(prediction).sum()),
-                                           want["abs_sum"],
-                                           delta=1e-6 * want["abs_sum"])
-                    np.testing.assert_allclose(prediction[:4],
-                                               want["head"],
-                                               rtol=1e-6)
-                    np.testing.assert_allclose(prediction[-4:],
-                                               want["tail"],
-                                               rtol=1e-6)
+                        dataset, index, dataset[index])
+                    want = predictions[f"sim_{int(sim_id)}"]
+                    self.assertEqual(prediction.dtype, want.dtype)
+                    np.testing.assert_array_equal(prediction, want)
             summary = trainer.evaluate(test_ids, tag="main")
-            frame = pd.read_csv(
-                os.path.join(out, "damage_comparison_dlinear_fa_main.csv"))
-            np.testing.assert_allclose(frame[expected["damage_column"]],
-                                       expected["damage_rec"],
-                                       rtol=1e-6)
-            self.assertAlmostEqual(summary["r2_log_damage"],
-                                   expected["r2_log_damage"],
-                                   places=6)
+            with open(
+                    os.path.join(out, "damage_comparison_dlinear_fa_main.csv"),
+                    "rb") as file:
+                written = file.read()
+            with open(MAIN_CHECKPOINT + ".csv", "rb") as file:
+                self.assertEqual(written, file.read())
+            self.assertEqual(summary, expected)
 
 
 @unittest.skipUnless(os.environ.get("FLOATSENSE_DATA"),

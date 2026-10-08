@@ -16,8 +16,13 @@ in <root>/sealed/MISSING.json:
 Each test score is written into a sealed directory,
 <root>/sealed/<variant>/<tower>/seed<k>/, in the layout of the
 within-tower runs (damage_comparison_<model>_fa.csv), with a
-SEALED_<model>.json marker; a sealed score is never computed again. Two
-variants are scored:
+SEALED_<model>.json marker; a sealed score is never computed again. A
+pair listed as parked in MISSING.json is never scored, even if it is
+un-parked later. A seed whose retraining diverged is skipped; the skipped
+seeds, and the pairs whose seeds all diverged (missing towers of the
+leaderboard), are listed in <root>/sealed/SKIPPED.json. The inference runs
+of the test are recorded in <root>/test_runs/<model>_<tower>/<variant>_s<k>/
+attempts.json (phase 'test' of gpu_hours.csv). Two variants are scored:
 
   primary_last     PRIMARY: the weights of the last epoch (the headline);
   secondary_best   SECONDARY: the weights of the median best validation
@@ -32,6 +37,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from typing import Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -79,8 +85,9 @@ def train(args: argparse.Namespace,
             return
         run_dir = unit_dir(args.root, model, tower, seed)
         result_path = os.path.join(run_dir, "result.json")
-        if os.path.exists(result_path) or os.path.exists(
-                os.path.join(run_dir, "PARKED")) or not common.claim(run_dir):
+        if (os.path.exists(result_path) or
+                os.path.exists(os.path.join(run_dir, "PARKED")) or
+                common.held(run_dir) or not common.claim(run_dir)):
             continue
         try:
             if args.dry_run:
@@ -107,7 +114,12 @@ def train(args: argparse.Namespace,
                                          args.root,
                                          model,
                                          config=record["winner_config"])
-            if result["status"] not in ("parked", "stopped"):
+            if result["status"] == "oom":  # a fixed configuration: no retry
+                common.park(args.root, f"final/{model}_{tower}/s{seed}",
+                            run_dir, "oom", common.read_attempts(run_dir),
+                            {"tail": result.get("tail", "")[-4000:]})
+            elif result["status"] not in ("parked", "stopped",
+                                          "config_mismatch"):
                 common.write_once(
                     result_path, {
                         "status": result["status"],
@@ -130,6 +142,22 @@ def _link(source: str, target: str) -> None:
         os.link(source, target)
     except OSError:
         shutil.copy2(source, target)
+
+
+def test_run_dir(root: str, model: str, tower: str, variant: str,
+                 seed: int) -> str:
+    """Directory of the attempts record of one test inference run."""
+    return os.path.join(root, "test_runs", f"{model}_{tower}",
+                        f"{variant}_s{seed}")
+
+
+def record_test(run_dir: str, start: float, code: int) -> None:
+    """Appends one test inference run (started at `start`, exit `code`) to
+    the attempts record of `run_dir`."""
+    record = common.read_attempts(run_dir)
+    common.add_attempt(record, start, "ok" if code == 0 else "crash", code,
+                       common.gpu_name())
+    common.write_json(common.attempts_path(run_dir), record)
 
 
 def score(args: argparse.Namespace, model: str, tower: str, seed: int,
@@ -159,12 +187,15 @@ def score(args: argparse.Namespace, model: str, tower: str, seed: int,
             f"--test_split={C.TEST_SPLIT}", f"--seed={seed}",
             f"--output_dir={out}", "--run_training=False"
         ] + shlex.split(args.extra)
+        start = time.time()
         with open(os.path.join(out, f"log_{model}.txt"), "w",
                   encoding="utf-8") as log:
             code = subprocess.call(cmd,
                                    stdout=log,
                                    stderr=subprocess.STDOUT,
                                    cwd=common.REPO)
+        record_test(test_run_dir(args.root, model, tower, variant, seed), start,
+                    code)
         if code:
             common.alert(args.root, f"test/{variant}/{model}_{tower}/s{seed}",
                          "test scoring failed", {"command": cmd})
@@ -217,27 +248,53 @@ def missing_units(root: str) -> tuple:
     return missing, parked
 
 
+def skipped(root: str) -> Dict:
+    """The final seeds that did not train to the end (diverged), and the
+    pairs whose seeds all did (no test score: a missing tower)."""
+    seeds, pairs = [], []
+    for model in S.LEARNED:
+        for tower in C.TOWERS_SEARCHED:
+            statuses = [(common.read_json(
+                os.path.join(unit_dir(root, model, tower, seed), "result.json"))
+                         or {}).get("status") for seed in range(C.N_SEEDS)]
+            bad = [
+                f"{model}/{tower}/s{seed}"
+                for seed, status in enumerate(statuses)
+                if status is not None and status != "ok"
+            ]
+            seeds += bad
+            if len(bad) == C.N_SEEDS:
+                pairs.append(f"{model}/{tower}")
+    return {"seeds": seeds, "all_seeds_diverged": pairs}
+
+
 def open_test(args: argparse.Namespace) -> None:
     """Opens the test split once for every learned model and tower (parked
-    pairs recorded as missing)."""
+    pairs recorded as missing; a pair recorded as parked in MISSING.json is
+    never scored, even if it was un-parked since)."""
+    path = os.path.join(args.root, "sealed", "MISSING.json")
+    stored = (common.read_json(path) or {}).get("parked", {})
     missing, parked = missing_units(args.root)
+    missing = [m for m in missing if "/".join(m.split("/")[:2]) not in stored]
     if missing:
         sys.exit(f"the test opens when every model and tower is trained; "
                  f"missing: {', '.join(missing)}")
-    common.write_once(os.path.join(args.root, "sealed", "MISSING.json"), {
-        "parked": parked,
-        "time": common.now()
+    common.write_once(path, {"parked": parked, "time": common.now()})
+    excluded = set(parked) | set(
+        (common.read_json(path) or {}).get("parked", {}))
+    common.write_once(os.path.join(args.root, "sealed", "SKIPPED.json"), {
+        **skipped(args.root), "time": common.now()
     })
     for model in S.LEARNED:
         for tower in C.TOWERS_SEARCHED:
-            if f"{model}/{tower}" in parked:
+            if f"{model}/{tower}" in excluded:
                 continue
             for seed in range(C.N_SEEDS):
                 for variant in VARIANTS:
                     score(args, model, tower, seed, variant)
     print(f"test scored into {os.path.join(args.root, 'sealed')} "
           f"({', '.join(VARIANT_LABELS[v] for v in VARIANTS)}); "
-          f"missing (parked): {', '.join(sorted(parked)) or 'none'}")
+          f"missing (shelved): {', '.join(sorted(excluded)) or 'none'}")
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:

@@ -22,6 +22,20 @@ Examples:
   # sensor ablation: both accelerometer axes and SCADA
   python scripts/train/run.py ... --input_channels=tower_top_afa_mod,\
       tower_top_ass_mod,rotor_speed,blade_pitch,wind_speed
+
+Exit codes:
+  0  Done.
+  3  Diverged: a non-finite training loss (or damage-validation prediction).
+     This guard is on with the default flags too: the published code
+     finished such a run and saved a non-finite checkpoint, so the two
+     differ only for runs that diverge.
+  4  Too large: more trainable parameters than --max_params_m.
+  5  Stopped: SIGUSR1 with --resume; the resume state was saved at the end
+     of the epoch and a relaunch continues from it.
+  6  Config mismatch: with --resume, the resume state in --output_dir was
+     written with another run configuration (tower, task, recipe, training
+     simulations or --num_epochs). A run is never extended in place: a
+     longer run goes to a new --output_dir.
 """
 
 import os
@@ -105,17 +119,17 @@ flags.DEFINE_enum(
 flags.DEFINE_bool(
     "resume", False, "Keep a resume state (every validation and every "
     "--checkpoint_seconds) and continue from it if present; SIGUSR1 saves "
-    "it at the end of the epoch and exits with code 5 (code 6 if the resume "
-    "state in --output_dir was written with another run configuration).")
+    "it at the end of the epoch and exits with code 5. A resume state in "
+    "--output_dir written with another run configuration, another "
+    "--num_epochs included, exits with code 6: extend a run in a new "
+    "--output_dir.")
 flags.DEFINE_float(
     "checkpoint_seconds", C.CHECKPOINT_SECONDS,
     "With --resume, wall time between two saves of the resume state, "
     "checked at the end of each epoch [s] (0 = after every epoch).")
 flags.DEFINE_float(
     "max_params_m", 0.0, "Exit (code 4) if the model has more trainable "
-    "parameters, in millions (0 = no limit). A non-finite training loss "
-    "always exits with code 3 (the published code finished such a run; "
-    "this differs from the published code only for runs that diverge).")
+    "parameters, in millions (0 = no limit).")
 flags.DEFINE_list(
     "save_epochs", [], "Epochs whose weights are also kept as "
     "<model>_<direction>_epoch<e>.pt.")
@@ -163,11 +177,20 @@ def floats(values: List[str]) -> List[float]:
 
 def main(_):
     """Trains and evaluates the requested models and directions."""
-    # A resumable run stops cleanly on SIGUSR1 from the start, also while
-    # the data and the normalization stats load (restored after training).
+    # A resumable run stops cleanly on SIGUSR1 from the start to the end,
+    # also while the data loads and between models and directions.
     previous_handler = None
     if FLAGS.resume and FLAGS.run_training:
         previous_handler = (signal.signal(signal.SIGUSR1, request_stop),)
+    try:
+        train_and_evaluate()
+    finally:
+        if previous_handler is not None:
+            signal.signal(signal.SIGUSR1, previous_handler[0])
+
+
+def train_and_evaluate():
+    """`main` with the SIGUSR1 handler of a resumable run installed."""
     output_dir = FLAGS.output_dir or os.path.join(
         FLAGS.output_root, FLAGS.tower, f"seed{FLAGS.seed}")
     # The hybrids read the physics calibrated on the same split as the model
@@ -318,10 +341,6 @@ def main(_):
                 except StoppedError as error:
                     logging.warning("Stopped: %s", error)
                     sys.exit(C.EXIT_STOPPED)
-                finally:
-                    if previous_handler is not None:
-                        signal.signal(signal.SIGUSR1, previous_handler[0])
-                        previous_handler = None
             else:
                 trainer.load_checkpoint()
             if not FLAGS.run_evaluation:
