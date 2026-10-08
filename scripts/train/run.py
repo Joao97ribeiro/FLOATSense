@@ -25,6 +25,7 @@ Examples:
 """
 
 import os
+import signal
 import sys
 from typing import List
 
@@ -39,9 +40,12 @@ from floatsense import SequenceModelTrainer
 from floatsense import load_tower
 from floatsense.models import LENGTH_FIXED_MODELS
 from floatsense.models import parse_model_kwargs
+from floatsense.trainer import STOP_REQUESTED
+from floatsense.trainer import ConfigMismatchError
 from floatsense.trainer import DivergedError
 from floatsense.trainer import ModelTooLargeError
 from floatsense.trainer import StoppedError
+from floatsense.trainer import request_stop
 from floatsense.release import split_tag
 from floatsense.heights import calibrate_profile
 
@@ -100,11 +104,18 @@ flags.DEFINE_enum(
     "damage (R^2 of log10 damage over the 11 gauges, printed as VAL lines).")
 flags.DEFINE_bool(
     "resume", False, "Keep a resume state (every validation and every "
-    "5 minutes) and continue from it if present; SIGUSR1 saves it at the "
-    "end of the epoch and exits with code 5.")
+    "--checkpoint_seconds) and continue from it if present; SIGUSR1 saves "
+    "it at the end of the epoch and exits with code 5 (code 6 if the resume "
+    "state in --output_dir was written with another run configuration).")
+flags.DEFINE_float(
+    "checkpoint_seconds", C.CHECKPOINT_SECONDS,
+    "With --resume, wall time between two saves of the resume state, "
+    "checked at the end of each epoch [s] (0 = after every epoch).")
 flags.DEFINE_float(
     "max_params_m", 0.0, "Exit (code 4) if the model has more trainable "
-    "parameters, in millions (0 = no limit).")
+    "parameters, in millions (0 = no limit). A non-finite training loss "
+    "always exits with code 3 (the published code finished such a run; "
+    "this differs from the published code only for runs that diverge).")
 flags.DEFINE_list(
     "save_epochs", [], "Epochs whose weights are also kept as "
     "<model>_<direction>_epoch<e>.pt.")
@@ -152,6 +163,11 @@ def floats(values: List[str]) -> List[float]:
 
 def main(_):
     """Trains and evaluates the requested models and directions."""
+    # A resumable run stops cleanly on SIGUSR1 from the start, also while
+    # the data and the normalization stats load (restored after training).
+    previous_handler = None
+    if FLAGS.resume and FLAGS.run_training:
+        previous_handler = (signal.signal(signal.SIGUSR1, request_stop),)
     output_dir = FLAGS.output_dir or os.path.join(
         FLAGS.output_root, FLAGS.tower, f"seed{FLAGS.seed}")
     # The hybrids read the physics calibrated on the same split as the model
@@ -278,7 +294,8 @@ def main(_):
                 val_score=FLAGS.val_score,
                 resume=FLAGS.resume,
                 max_params_m=FLAGS.max_params_m,
-                save_epochs=[int(e) for e in FLAGS.save_epochs])
+                save_epochs=[int(e) for e in FLAGS.save_epochs],
+                checkpoint_seconds=FLAGS.checkpoint_seconds)
             if FLAGS.run_training:
                 logging.info("Training %s (%s).", model_name, direction)
                 val_ids = (source.split_ids(FLAGS.val_split)
@@ -286,7 +303,12 @@ def main(_):
                 if val_ids and FLAGS.max_eval_sims:
                     val_ids = val_ids[:FLAGS.max_eval_sims]
                 try:
+                    if STOP_REQUESTED.is_set():
+                        raise StoppedError("Stopped before training.")
                     trainer.train(train_ids, val_ids)
+                except ConfigMismatchError as error:
+                    logging.error("Config mismatch: %s", error)
+                    sys.exit(C.EXIT_CONFIG_MISMATCH)
                 except DivergedError as error:
                     logging.error("Diverged: %s", error)
                     sys.exit(C.EXIT_DIVERGED)
@@ -296,6 +318,10 @@ def main(_):
                 except StoppedError as error:
                     logging.warning("Stopped: %s", error)
                     sys.exit(C.EXIT_STOPPED)
+                finally:
+                    if previous_handler is not None:
+                        signal.signal(signal.SIGUSR1, previous_handler[0])
+                        previous_handler = None
             else:
                 trainer.load_checkpoint()
             if not FLAGS.run_evaluation:

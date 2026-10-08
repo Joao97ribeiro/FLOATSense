@@ -6,23 +6,41 @@ Scores the sealed test outputs of phase 3 (hpo/final.py) with the scorer of
 the benchmark (scripts/benchmark/run.py: R^2 of log10 damage, median damage
 ratio, fraction within a factor of two with cluster-bootstrap intervals,
 mean relative error and within-condition correlation, per gauge and regime
-cell) and builds the leaderboard of the track, for the headline variant
-(last epoch) and the secondary one (median best validation epoch):
+cell) and builds the leaderboard of the track for each test variant, in
+its own folder: primary_last/ (PRIMARY, the headline: the last epoch) and
+secondary_best/ (SECONDARY: the median best validation epoch of phase 2):
 
   scores.csv          per model, tower, seed, gauge and group (the
                       benchmark table of the sealed runs)
   leaderboard.csv     per model: each metric at the base, z/H 0.78, the top
                       and the mean of the 11 gauges, median over the seeds
-                      per tower, then mean over the towers (group 'all')
+                      per tower, then mean over the scored towers (group
+                      'all'); n_towers and missing_towers name the towers
+                      without a score (a parked (model, tower) has no
+                      winner: the mean is over the other towers, and a
+                      model with no scored tower has an empty row)
   per_tower.csv       the same before the mean over towers
   by_group.csv        the leaderboard per regime cell
   top3.csv            the three best models per criterion (R^2 at the base,
-                      mean of 11, top)
+                      mean of 11, top; ties broken by the model name)
   families.csv        the best model of each family per criterion
 
-and, once for the track, configs.csv (the selected configuration of each
-model and tower, from phase 2) and curves.csv (best validation score so far
-against the trial number, per study).
+and, once for the track:
+
+  configs.csv         the selected configuration of each model and tower
+                      (phase 2), or 'parked'
+  curves.csv          best validation score so far against the counted
+                      position of each counted trial (1..N), per study
+  gpu_hours.csv       GPU-hours per model, tower and phase (search,
+                      confirm, final), summed over every attempt of every
+                      run (pruned, crashed and preempted ones included, from
+                      the attempts.json of the runs), with the totals per
+                      model ('all' tower and phase) and overall ('all'
+                      model)
+
+The tuned leaderboard ranks only the 20 learned models: the naive floor
+and the physics baseline are not tuned, and their scores are those of the
+fixed-recipe benchmark results (scripts/benchmark/run.py).
 
     python hpo/analyze.py --root=outputs/hpo --dataset_dir=data/FLOATSense
     python hpo/analyze.py --dry_run --out=/tmp/leaderboard   # synthetic
@@ -45,6 +63,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from hpo import common
 from hpo import confirm
 from hpo import constants as C
+from hpo import final
 from hpo import search
 from hpo import search_space as S
 
@@ -55,14 +74,14 @@ POSITIONS = {"base": "tower_bottom", "z078": "tower_8", "top": "tower_top"}
 METRICS = ("r2_log_damage", "fraction_within_factor2", "median_damage_ratio",
            "mean_relative_error", "within_condition_correlation")
 CRITERIA = ("base", "mean11", "top")  # R^2 of log10 damage
-VARIANTS = ("last", "best")
-FLOOR = "naive"
+VARIANTS = final.VARIANTS  # primary first
+PHASE_DIRS = {"search": "trials", "confirm": "phase2", "final": "final"}
 
 
 def score(sealed_root: str, dataset_dir: str, out: str,
           num_resamples: int) -> pd.DataFrame:
     """Runs the benchmark scorer on a sealed tree; returns the 'fa' rows
-    of the learned models (and the floor), with tower and seed columns."""
+    of the learned models, with tower and seed columns."""
     path = os.path.join(out, "benchmark.csv")
     subprocess.run([
         sys.executable, BENCHMARK, f"--dataset_dir={dataset_dir}",
@@ -73,7 +92,7 @@ def score(sealed_root: str, dataset_dir: str, out: str,
                    cwd=common.REPO)
     table = pd.read_csv(path)
     table = table[(table["direction"] == "fa") &
-                  table["model"].isin(list(S.LEARNED) + [FLOOR])].copy()
+                  table["model"].isin(S.LEARNED)].copy()
     parts = table["run"].str.split("/", expand=True)
     table["tower"] = parts[0]
     table["seed"] = parts[1].str.replace("seed", "").astype(int)
@@ -97,16 +116,37 @@ def per_tower(table: pd.DataFrame) -> pd.DataFrame:
 
 
 def leaderboard(towers: pd.DataFrame) -> pd.DataFrame:
-    """Mean over the towers of the per-tower medians, one row per model and
-    group, one column per metric and position."""
+    """Mean over the scored towers of the per-tower medians, one row per
+    model and group, one column per metric and position; n_towers and
+    missing_towers name the towers without a score."""
     mean = towers.groupby(["model", "group", "position"],
                           as_index=False)[list(METRICS)].mean()
     wide = mean.pivot(index=["model", "group"], columns="position")
     wide.columns = [f"{metric}_{position}" for metric, position in wide.columns]
     wide = wide.reset_index()
-    wide["family"] = wide["model"].map(S.FAMILIES).fillna("floor")
-    return wide.sort_values("r2_log_damage_mean11",
-                            ascending=False).reset_index(drop=True)
+    wide["family"] = wide["model"].map(S.FAMILIES)
+    scored = towers.groupby("model")["tower"].agg(set)
+    wide["n_towers"] = wide["model"].map(lambda m: len(scored[m]))
+    wide["missing_towers"] = wide["model"].map(
+        lambda m: ",".join(t for t in C.TOWERS_SEARCHED if t not in scored[m]))
+    return wide.sort_values(["r2_log_damage_mean11", "model"],
+                            ascending=[False, True],
+                            kind="mergesort").reset_index(drop=True)
+
+
+def with_missing(board: pd.DataFrame) -> pd.DataFrame:
+    """Adds an empty row for each learned model without any scored tower
+    (every tower parked)."""
+    absent = [m for m in S.LEARNED if m not in set(board["model"])]
+    if not absent:
+        return board
+    rows = pd.DataFrame({
+        "model": absent,
+        "family": [S.FAMILIES[m] for m in absent],
+        "n_towers": 0,
+        "missing_towers": ",".join(C.TOWERS_SEARCHED)
+    })
+    return pd.concat([board, rows], ignore_index=True)
 
 
 def rankings(board: pd.DataFrame) -> tuple:
@@ -115,7 +155,9 @@ def rankings(board: pd.DataFrame) -> tuple:
     top3, families = [], []
     for criterion in CRITERIA:
         column = f"r2_log_damage_{criterion}"
-        ranked = learned.sort_values(column, ascending=False)
+        # Stable, ties broken by the model name.
+        ranked = learned.dropna(subset=[column]).sort_values(
+            [column, "model"], ascending=[False, True], kind="mergesort")
         for rank, (_, row) in enumerate(ranked.head(3).iterrows(), 1):
             top3.append({
                 "criterion": criterion,
@@ -134,16 +176,26 @@ def rankings(board: pd.DataFrame) -> tuple:
 
 
 def configs(root: str) -> pd.DataFrame:
-    """Selected configuration of every model and tower (phase 2)."""
+    """Selected configuration of every model and tower (phase 2); a parked
+    (model, tower) has a row with status 'parked' and no configuration."""
     rows = []
     for model in S.LEARNED:
         for tower in C.TOWERS_SEARCHED:
             record = common.read_json(confirm.winner_path(root, model, tower))
+            parked = common.read_json(confirm.parked_path(root, model, tower))
             if record is None:
+                if parked is not None:
+                    rows.append({
+                        "model": model,
+                        "tower": tower,
+                        "status": "parked",
+                        "reason": parked.get("reason")
+                    })
                 continue
             rows.append({
                 "model": model,
                 "tower": tower,
+                "status": "winner",
                 "config": json.dumps(record["winner_config"]),
                 "val_median": record["winner_median"],
                 "margin_to_second": record["margin_to_second"],
@@ -153,7 +205,9 @@ def configs(root: str) -> pd.DataFrame:
 
 
 def curves(root: str) -> pd.DataFrame:
-    """Best validation score so far against the trial number, per study."""
+    """Best validation score so far against the counted position (1..N) of
+    the counted trials, per study (failed, over-cap and requeued trials are
+    left out; 'trial' keeps the Optuna number)."""
     rows = []
     for model in S.LEARNED:
         for tower in C.TOWERS_SEARCHED:
@@ -161,19 +215,64 @@ def curves(root: str) -> pd.DataFrame:
             if study is None:
                 continue
             best = -np.inf
-            for trial in sorted(study.get_trials(deepcopy=False),
-                                key=lambda t: t.number):
+            trials = [
+                t for t in sorted(study.get_trials(deepcopy=False),
+                                  key=lambda t: t.number) if search.counted(t)
+            ]
+            for position, trial in enumerate(trials, 1):
                 if search.eligible(trial):
                     best = max(best, trial.value)
                 rows.append({
                     "model": model,
                     "tower": tower,
+                    "position": position,
                     "trial": trial.number,
                     "state": trial.state.name,
                     "value": trial.value,
                     "best_so_far": best if np.isfinite(best) else None
                 })
     return pd.DataFrame(rows)
+
+
+def gpu_hours(root: str) -> pd.DataFrame:
+    """GPU-hours per model, tower and phase over every attempt of every run
+    (attempts.json; one GPU per run), with totals per model and overall."""
+    rows = []
+    for phase, folder in PHASE_DIRS.items():
+        for path in sorted(
+                glob.glob(os.path.join(root, folder, "*", "*",
+                                       "attempts.json"))):
+            study = os.path.basename(os.path.dirname(os.path.dirname(path)))
+            model, tower = study.rsplit("_", 1)
+            events = (common.read_json(path) or {}).get("events", [])
+            rows.append({
+                "model": model,
+                "tower": tower,
+                "phase": phase,
+                "runs": 1,
+                "attempts": len(events),
+                "gpu_hours": sum(e.get("seconds") or 0.0 for e in events) / 3600
+            })
+    columns = ["model", "tower", "phase", "runs", "attempts", "gpu_hours"]
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    table = pd.DataFrame(rows)
+    keys = ["model", "tower", "phase"]
+    parts = [table.groupby(keys, as_index=False)[columns[3:]].sum()]
+    parts.append(
+        table.groupby("model",
+                      as_index=False)[columns[3:]].sum().assign(tower="all",
+                                                                phase="all"))
+    parts.append(
+        table.groupby("phase",
+                      as_index=False)[columns[3:]].sum().assign(model="all",
+                                                                tower="all"))
+    parts.append(
+        pd.DataFrame([table[columns[3:]].sum()]).assign(model="all",
+                                                        tower="all",
+                                                        phase="all"))
+    out = pd.concat(parts, ignore_index=True)[columns]
+    return out.astype({"runs": int, "attempts": int})
 
 
 def build(args: argparse.Namespace) -> Dict[str, pd.DataFrame]:
@@ -196,21 +295,26 @@ def build(args: argparse.Namespace) -> Dict[str, pd.DataFrame]:
         board = leaderboard(towers)
         board[board["group"] != "all"].to_csv(os.path.join(out, "by_group.csv"),
                                               index=False)
-        board = board[board["group"] == "all"].drop(columns="group")
+        board = with_missing(board[board["group"] == "all"].drop(
+            columns="group")).assign(variant=variant)
         board.to_csv(os.path.join(out, "leaderboard.csv"), index=False)
         top3, families = rankings(board)
         top3.to_csv(os.path.join(out, "top3.csv"), index=False)
         families.to_csv(os.path.join(out, "families.csv"), index=False)
         boards[variant] = board
-        print(f"== {variant}: R^2 of log10 damage (median over seeds, mean "
-              "over towers)")
-        print(
-            board[["model", "family"] +
-                  [f"r2_log_damage_{c}" for c in CRITERIA]].round(3).to_string(
-                      index=False))
+        print(f"== {variant} ({final.VARIANT_LABELS[variant]}): R^2 of "
+              "log10 damage (median over seeds, mean over towers)")
+        print(board[["model", "family"] +
+                    [f"r2_log_damage_{c}" for c in CRITERIA] +
+                    ["missing_towers"]].round(3).to_string(index=False))
     configs(args.root).to_csv(os.path.join(args.out, "configs.csv"),
                               index=False)
     curves(args.root).to_csv(os.path.join(args.out, "curves.csv"), index=False)
+    hours = gpu_hours(args.root)
+    hours.to_csv(os.path.join(args.out, "gpu_hours.csv"), index=False)
+    total = hours[(hours["model"] == "all") & (hours["phase"] == "all")]
+    if len(total):
+        print(f"GPU-hours (every attempt): {total['gpu_hours'].iloc[0]:.1f}")
     return boards
 
 
@@ -225,7 +329,6 @@ def write_synthetic(root: str,
     dataset_dir = os.path.join(root, "data")
     heights = np.linspace(1.0, 150.0, len(GAUGES))
     quality = dict(zip(S.LEARNED, np.linspace(0.05, 0.6, len(S.LEARNED))))
-    quality[FLOOR] = 0.8
     for tower in C.TOWERS_SEARCHED:
         folder = os.path.join(dataset_dir, tower)
         os.makedirs(folder, exist_ok=True)
@@ -285,7 +388,40 @@ def write_synthetic(root: str,
                     "margin_to_second": 0.01,
                     "best_epoch": 250
                 })
+    write_synthetic_attempts(root, rng)
     return dataset_dir
+
+
+def write_synthetic_attempts(root: str, rng: np.random.Generator) -> None:
+    """attempts.json of synthetic runs of every phase (a few search trials,
+    the confirmation and final units), for gpu_hours.csv of a dry run."""
+    statuses = ("ok", "pruned", "crash", "preempted")
+    for model in S.LEARNED:
+        for tower in C.TOWERS_SEARCHED:
+            study = f"{model}_{tower}"
+            dirs = [("trials", f"t{n:03d}") for n in range(4)]
+            dirs += [("phase2", f"c{r}_s{k}")
+                     for r in range(C.N_TOP)
+                     for k in range(C.N_SEEDS)]
+            dirs += [("final", f"s{k}") for k in range(C.N_SEEDS)]
+            for folder, name in dirs:
+                events = []
+                for status in rng.choice(statuses, rng.integers(1, 3)):
+                    seconds = float(rng.uniform(600, 3600))
+                    events.append({
+                        "start": common.now(),
+                        "end": common.now(),
+                        "seconds": round(seconds, 1),
+                        "host": "synthetic",
+                        "gpu": "none",
+                        "status": str(status)
+                    })
+                common.write_json(
+                    os.path.join(root, folder, study, name, "attempts.json"), {
+                        "crashes": 0,
+                        "free": 0,
+                        "events": events
+                    })
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:

@@ -4,12 +4,15 @@
 
 Run from the repository root with `python -m unittest discover tests`.
 CPU only. The defaults must rebuild the published models exactly: the
-seeded state_dict shapes, parameter sums and outputs are compared with the
-fingerprints of the published code (tests/data/model_fingerprints.json).
+seeded state_dict shapes, parameter sums and outputs (in eval mode, and in
+train mode with the torch random state after it, which pins the dropout
+defaults) are compared with the fingerprints of the published code
+(tests/data/model_fingerprints.json).
 The pretrained encoders (Chronos, MOMENT, TimesFM) load Hugging Face
 weights and run only with FLOATSENSE_PRETRAINED=1.
 """
 
+import hashlib
 import itertools
 import json
 import os
@@ -58,13 +61,18 @@ def forward(model: torch.nn.Module, length: int, seed: int = 1):
 
 
 def fingerprint(name: str, **model_kwargs) -> dict:
-    """Seeded state_dict shapes, parameter sums and output of a model."""
+    """Seeded state_dict shapes, parameter sums and output of a model, in
+    eval mode and then in train mode (with the random state it leaves)."""
     torch.manual_seed(0)
     model = build_model(name, LENGTH, CHANNELS, CONDITION,
                         **model_kwargs).eval()
     state = model.state_dict()
     floats = [v.double() for v in state.values() if v.is_floating_point()]
     output = forward(model, LENGTH).double()
+    model.train()
+    torch.manual_seed(2)
+    train_output = forward(model, LENGTH).double()
+    rng = hashlib.sha256(torch.get_rng_state().numpy().tobytes()).hexdigest()
     return {
         "shapes": {
             k: list(v.shape) for k, v in state.items()
@@ -74,6 +82,9 @@ def fingerprint(name: str, **model_kwargs) -> dict:
         "out_sum": float(output.sum()),
         "out_abs_sum": float(output.abs().sum()),
         "out_head": output.flatten()[:8].tolist(),
+        "train_out_sum": float(train_output.sum()),
+        "train_out_abs_sum": float(train_output.abs().sum()),
+        "train_rng": rng,
     }
 
 
@@ -110,13 +121,16 @@ class DefaultsTest(unittest.TestCase):
                 actual = fingerprint(name)
                 self.assertEqual(actual["shapes"], expected["shapes"])
                 for key in ("param_sum", "param_abs_sum", "out_sum",
-                            "out_abs_sum"):
+                            "out_abs_sum", "train_out_sum",
+                            "train_out_abs_sum"):
                     self.assertAlmostEqual(actual[key],
                                            expected[key],
                                            delta=1e-6 *
                                            max(1.0, abs(expected[key])))
                 for got, want in zip(actual["out_head"], expected["out_head"]):
                     self.assertAlmostEqual(got, want, delta=1e-6)
+                # Same random draws in train mode (dropout and the like).
+                self.assertEqual(actual["train_rng"], expected["train_rng"])
 
     def test_published_values_as_kwargs(self):
         """Passing the published knobs explicitly changes nothing."""
@@ -249,7 +263,8 @@ class ParseKwargsTest(unittest.TestCase):
         ][0]
         parsed = parse_model_kwargs(arg.split("=", 1)[1])
         self.assertEqual(parsed["hidden_channels"], 64)
-        self.assertAlmostEqual(parsed["dropout"], 0.123456789)
+        # as_args writes 6 significant digits.
+        self.assertAlmostEqual(parsed["dropout"], 0.123456789, places=5)
 
 
 if __name__ == "__main__":

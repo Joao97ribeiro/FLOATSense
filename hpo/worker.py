@@ -15,6 +15,16 @@ at once; which models a worker takes and how it is launched (a job
 scheduler, one process per GPU) are left to the site. A site can import
 `main` and pass a cost per model (pick order, slowest first).
 
+Identity: --owner is the identity of the job (e.g. slurm-<job id>; it
+survives a requeue) and --restart its incarnation (default: the Slurm
+restart count, 0 outside Slurm). A lock of the same owner with another
+restart count belongs to a dead incarnation and is taken back at once.
+
+Progress on preemptible GPUs: every run gets --checkpoint_seconds
+(default CHECKPOINT_SECONDS, 90 s), the wall time between two resume saves
+of the trainer, so a run killed without notice loses at most that much
+(plus the epoch in progress at a stop request).
+
 Stopping:
   - SIGUSR1 or SIGTERM (Slurm time limit or preemption, Ctrl-C): the
     running trainer gets SIGUSR1, ends its epoch, saves its resume state
@@ -25,7 +35,13 @@ Stopping:
   - nothing to pick for --idle_minutes, or every unit of its models done:
     exits (0).
   - its lock taken over by another worker (it was believed dead): stops
-    its unit at once and exits.
+    its unit at once and exits (EXIT_REQUEUE); a result of the unit that
+    arrives after the takeover is dropped, not recorded.
+  - WORKER_FAILURES units in a row parked or crashed on this worker (a
+    broken node: bad environment, full disk, missing mount): stops picking,
+    writes an alert record (host, GPU, last errors) and exits with
+    EXIT_BROKEN, so it does not park the units of healthy nodes. The units
+    it parked are un-parked once by a worker of another host (hpo/pick.py).
 
 Records: <root>/workers/<owner>.json (current unit, host, GPU) and one
 event line per unit in <root>/events/<owner>.jsonl (start, end, status,
@@ -37,9 +53,9 @@ import json
 import os
 import signal
 import socket
-import subprocess
 import sys
 import time
+import traceback
 from typing import Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -63,29 +79,14 @@ def _on_signal(signum, frame) -> None:
                         1 else signal.SIGTERM)
 
 
-def gpu_name() -> Optional[str]:
-    """Name of the visible GPU (None without one)."""
-    if not os.environ.get("CUDA_VISIBLE_DEVICES"):
-        return None
-    try:
-        out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False).stdout
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return out.strip().splitlines()[0] if out.strip() else None
-
-
 def driver_args(args: argparse.Namespace, unit: pick.Unit,
                 driver: str) -> List[str]:
     """Command-line options of a driver for one unit."""
     out = [
         f"--model={unit.model}", f"--tower={unit.tower}", f"--root={args.root}",
         f"--dataset_dir={args.dataset_dir}", f"--python={args.python}",
-        f"--extra={args.extra}"
+        f"--extra={args.extra}",
+        f"--checkpoint_seconds={args.checkpoint_seconds}"
     ]
     if driver != "final":
         out.append(f"--n_trials={args.n_trials}")
@@ -94,12 +95,25 @@ def driver_args(args: argparse.Namespace, unit: pick.Unit,
     return out
 
 
-def run(args: argparse.Namespace, unit: pick.Unit) -> str:
-    """Runs one unit through its driver; returns its status."""
+def run(args: argparse.Namespace,
+        unit: pick.Unit,
+        lock: Optional[pick.Lock] = None) -> str:
+    """Runs one unit through its driver; returns its status: 'trial' (a
+    search trial told), 'done', 'parked', 'stopped', 'lost' (the result
+    dropped after a lock takeover), 'empty' (no trial to run: nothing was
+    done) or 'unfinished'."""
     if unit.phase == "search":
-        search.main(
-            driver_args(args, unit, "search") + ["--max_new=1", "--exclusive"])
-        return "stopped" if common.STOP.is_set() else "trial"
+        outcomes: List[Dict] = []
+        search.main(driver_args(args, unit, "search") +
+                    ["--max_new=1", "--exclusive"],
+                    outcomes=outcomes,
+                    owned=lock.held if lock is not None else None)
+        if common.STOP.is_set():
+            return "stopped"
+        if not outcomes:
+            return "empty"
+        last = outcomes[-1]["status"]
+        return last if last in ("parked", "stopped", "lost") else "trial"
     run_dir = pick.run_dir(args.root, unit)
     # The lock of the unit is held: a claim left in the run directory by a
     # dead worker is void.
@@ -143,9 +157,35 @@ def event(args: argparse.Namespace, entry: dict) -> None:
         file.write(json.dumps({"owner": args.owner, **entry}) + "\n")
 
 
+def last_error(args: argparse.Namespace, unit: pick.Unit) -> str:
+    """The end of the log of the last parked run of a unit (from its alert
+    record), for the alert of a broken worker."""
+    if unit.phase == "search":
+        study = search.open_study(args.root,
+                                  unit.model,
+                                  unit.tower,
+                                  create=False)
+        parked = [
+            t for t in (study.get_trials(deepcopy=False) if study else [])
+            if t.user_attrs.get("parked")
+        ]
+        run_dir = (search.trial_run_dir(parked[-1]) if parked else None)
+    else:
+        run_dir = pick.run_dir(args.root, unit)
+    marker = common.read_json(os.path.join(run_dir,
+                                           "PARKED")) if run_dir else None
+    details = common.read_json(marker["alert"]) if marker else None
+    return (details or {}).get("tail", "")[-1500:]
+
+
 def run_locked(args: argparse.Namespace, unit: pick.Unit, lock: pick.Lock,
-               gpu: Optional[str]) -> str:
-    """Runs a unit while beating its lock; records it."""
+               gpu: Optional[str]) -> Dict:
+    """Runs a unit while beating its lock; records it.
+
+    Returns:
+        dict: 'status' (see `run`, or 'crash' when the driver raised) and
+          'error' (the traceback of a crash, the log tail of a parked unit).
+    """
     record(args, unit, gpu)
     start = time.time()
     event(args, {"unit": pick.unit_id(unit), "start": common.now(), "gpu": gpu})
@@ -155,8 +195,17 @@ def run_locked(args: argparse.Namespace, unit: pick.Unit, lock: pick.Lock,
               flush=True)
         common.request_stop(signal.SIGTERM)
 
+    error = ""
     with pick.Beater(lock, lost) as beater:
-        status = run(args, unit)
+        try:
+            status = run(args, unit, lock)
+        except Exception:  # pylint: disable=broad-exception-caught
+            # A driver error (full disk, missing mount, bad environment):
+            # counted by the failure breaker of the worker.
+            status, error = "crash", traceback.format_exc()[-1500:]
+            print(error, flush=True)
+    if status == "parked":
+        error = last_error(args, unit)
     if beater.lost:
         status = "lost"
     else:
@@ -172,7 +221,7 @@ def run_locked(args: argparse.Namespace, unit: pick.Unit, lock: pick.Lock,
             "gpu": gpu
         })
     print(f"worker {args.owner}: {pick.unit_id(unit)} {status}", flush=True)
-    return status
+    return {"status": status, "error": error}
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -184,10 +233,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                         help="Stable identity (e.g. slurm-<job id>).")
     parser.add_argument("--restart",
                         type=int,
-                        default=int(
-                            os.environ.get("SLURM_RESTART_COUNT",
-                                           int(time.time()))),
-                        help="Incarnation of the owner (larger is newer).")
+                        default=int(os.environ.get("SLURM_RESTART_COUNT") or 0),
+                        help="Incarnation of the owner (Slurm restart count; "
+                        "a lock of the same owner with another count is "
+                        "taken back at once).")
     parser.add_argument("--models",
                         default="all",
                         help="Models of this worker (comma list or all).")
@@ -208,6 +257,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                         type=float,
                         default=0.0,
                         help="Seconds per validation of the dry-run stub.")
+    parser.add_argument("--checkpoint_seconds",
+                        type=float,
+                        default=C.CHECKPOINT_SECONDS,
+                        help="Wall time between two resume saves of every "
+                        "run (run.py --checkpoint_seconds).")
     parser.add_argument("--idle_minutes", type=float, default=C.IDLE_MINUTES)
     parser.add_argument("--poll_seconds", type=float, default=C.POLL_SECONDS)
     parser.add_argument("--max_units",
@@ -223,6 +277,39 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     return args
 
 
+def _nothing_left(args: argparse.Namespace, idle_since: float) -> bool:
+    """Nothing to pick: True (exit) if every unit is done or the worker
+    has been idle for --idle_minutes."""
+    if pick.all_done(args.root, args.models, args.n_trials):
+        print(f"worker {args.owner}: every unit done", flush=True)
+        return True
+    if time.monotonic() - idle_since > args.idle_minutes * 60:
+        print(f"worker {args.owner}: idle, exiting", flush=True)
+        return True
+    return False
+
+
+def broken(args: argparse.Namespace, failures: List[Dict],
+           gpu: Optional[str]) -> bool:
+    """The failure breaker: True (with an alert record: host, GPU, the
+    units and their last errors) once WORKER_FAILURES units in a row ended
+    parked or crashed on this worker."""
+    if len(failures) < C.WORKER_FAILURES:
+        return False
+    path = common.alert(
+        args.root, f"worker/{args.owner}",
+        f"worker stopped: {len(failures)} failed units in a row", {
+            "owner": args.owner,
+            "gpu": gpu,
+            "failures": failures
+        })
+    print(
+        f"worker {args.owner}: {len(failures)} failed units in a row, "
+        f"exiting (alert {path})",
+        flush=True)
+    return True
+
+
 def main(argv: Optional[List[str]] = None,
          cost: Optional[Dict[str, float]] = None) -> int:
     """Picks and runs units until done, idle, stopped or signalled.
@@ -233,13 +320,15 @@ def main(argv: Optional[List[str]] = None,
           order: most work left first).
 
     Returns:
-        int: 0 (done, idle or STOP file) or EXIT_REQUEUE (signalled).
+        int: 0 (done, idle or STOP file), EXIT_REQUEUE (signalled, or its
+          lock taken over) or EXIT_BROKEN (WORKER_FAILURES failed units in
+          a row).
     """
     args = parse_args(argv)
     for sig in (signal.SIGUSR1, signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, _on_signal)
     common.STUB_SECONDS = args.stub_seconds
-    gpu = None if args.dry_run else gpu_name()
+    gpu = None if args.dry_run else common.gpu_name()
     print(
         f"worker {args.owner} ({args.tag or 'untagged'}, restart "
         f"{args.restart}): "
@@ -247,6 +336,7 @@ def main(argv: Optional[List[str]] = None,
         flush=True)
     idle_since = time.monotonic()
     done = 0
+    failures: List[Dict] = []  # consecutive failed units of this worker
     while True:
         if common.STOP.is_set():
             return C.EXIT_REQUEUE
@@ -257,17 +347,23 @@ def main(argv: Optional[List[str]] = None,
         unit, lock = pick.pick(args.root, args.owner, args.restart, args.models,
                                args.n_trials, cost)
         if unit is None:
-            if pick.all_done(args.root, args.models, args.n_trials):
-                print(f"worker {args.owner}: every unit done", flush=True)
-                return 0
-            if time.monotonic() - idle_since > args.idle_minutes * 60:
-                print(f"worker {args.owner}: idle, exiting", flush=True)
+            if _nothing_left(args, idle_since):
                 return 0
             common.STOP.wait(args.poll_seconds)
             continue
-        status = run_locked(args, unit, lock, gpu)
+        outcome = run_locked(args, unit, lock, gpu)
+        status = outcome["status"]
         if status in ("stopped", "lost"):
             return C.EXIT_REQUEUE
+        if status == "empty":  # nothing was run: do not spin
+            common.STOP.wait(args.poll_seconds)
+            continue
+        if status in ("parked", "crash"):
+            failures.append({"unit": pick.unit_id(unit), **outcome})
+            if broken(args, failures, gpu):
+                return C.EXIT_BROKEN
+        elif status in ("done", "trial"):
+            failures = []
         idle_since = time.monotonic()
         done += 1
         if args.max_units and done >= args.max_units:

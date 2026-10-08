@@ -52,7 +52,10 @@ def hours_left(state: Dict,
     per_trial = state["hours_per_trial"] or (cost or {}).get(state["model"])
     if per_trial is None:
         return None
-    return state["work_left"] / state["cost"] * per_trial
+    # Trial-equivalents left (work_left is in units of the model's cost,
+    # which may be 0).
+    trials = pick.work_left({**state, "cost": 1.0})
+    return trials * per_trial
 
 
 def study_rows(states: List[Dict],

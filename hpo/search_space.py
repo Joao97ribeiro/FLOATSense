@@ -210,8 +210,20 @@ def suggest(trial, model):
     return out
 
 
+def formatted(cfg):
+    """The configuration with every float at 6 significant digits: the
+    values passed to scripts/train/run.py, stored as the trial's 'config'
+    and in the run's config.json (Optuna keeps the unrounded draw in the
+    trial's params; formatting it again gives the same values)."""
+    return {
+        k: float(f"{v:.6g}") if isinstance(v, float) else v
+        for k, v in cfg.items()
+    }
+
+
 def as_args(cfg):
-    """The configuration as scripts/train/run.py arguments."""
+    """The configuration as scripts/train/run.py arguments (formatted)."""
+    cfg = formatted(cfg)
     wd = cfg["wd"] if cfg.get("use_wd") else 0.0
     args = [
         f"--learning_rate={cfg['lr']:.6g}", f"--weight_decay={wd:.6g}",

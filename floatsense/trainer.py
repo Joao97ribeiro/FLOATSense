@@ -14,8 +14,16 @@ evaluates it on held-out simulations with the same fatigue-damage metrics
 as the physics baseline (R^2 of log10 damage, median damage ratio, fraction
 within a factor of 2), writing a per-simulation damage CSV with the same
 columns as the physics baseline.
+
+With the default arguments a run reproduces the published trainer bit for
+bit, with one exception: a non-finite training loss raises DivergedError
+(exit code 3 in scripts/train/run.py), where the published code finished
+the run and saved a non-finite checkpoint. The two differ only for runs
+that diverge.
 """
 
+import glob
+import hashlib
 import json
 import math
 import multiprocessing
@@ -72,11 +80,17 @@ class StoppedError(RuntimeError):
     """Stopped on request (SIGUSR1) after saving the resume state."""
 
 
-# Set by SIGUSR1 in a resumable run: finish the epoch, save, stop.
+class ConfigMismatchError(ValueError):
+    """The resume state in the output directory belongs to another run
+    configuration."""
+
+
+# Set by SIGUSR1 in a resumable run: finish the epoch, save, stop. Cleared
+# when `train` returns or raises, so a request never outlives its run.
 STOP_REQUESTED = threading.Event()
 
 
-def _request_stop(signum, frame) -> None:
+def request_stop(signum, frame) -> None:
     """SIGUSR1 handler of a resumable run."""
     del signum, frame
     STOP_REQUESTED.set()
@@ -118,10 +132,11 @@ def _rng_state() -> Dict:
 
 
 def _set_rng_state(state: Dict) -> None:
-    """Restores the streams saved by `_rng_state`."""
-    torch.set_rng_state(state["torch"])
+    """Restores the streams saved by `_rng_state` (the generator states
+    must be CPU ByteTensors, wherever they were loaded)."""
+    torch.set_rng_state(state["torch"].cpu())
     if state["cuda"] is not None and torch.cuda.is_available():
-        torch.cuda.set_rng_state_all(state["cuda"])
+        torch.cuda.set_rng_state_all([s.cpu() for s in state["cuda"]])
     np.random.set_state(state["numpy"])
     random.setstate(state["python"])
 
@@ -133,6 +148,12 @@ def _atomic_save(obj, path: str) -> None:
     tmp = f"{path}.tmp.{os.getpid()}"
     torch.save(obj, tmp)
     os.replace(tmp, path)
+
+
+def _ids_hash(train_ids: List[int], val_ids: Optional[List[int]]) -> str:
+    """Digest of the training and validation simulations, in order."""
+    ids = [[int(i) for i in train_ids], [int(i) for i in val_ids or []]]
+    return hashlib.sha256(json.dumps(ids).encode()).hexdigest()
 
 
 class SequenceModelTrainer:
@@ -181,7 +202,8 @@ class SequenceModelTrainer:
                  val_score: str = "loss",
                  resume: bool = False,
                  max_params_m: float = 0.0,
-                 save_epochs: Optional[List[int]] = None):
+                 save_epochs: Optional[List[int]] = None,
+                 checkpoint_seconds: Optional[float] = None):
         """Initializes the trainer.
 
         Args:
@@ -244,13 +266,17 @@ class SequenceModelTrainer:
               normalized crops) or 'damage' (R^2 of log10 damage over the
               11 gauges, the benchmark metric).
             resume (bool): Keep a resume state (at every validation and
-              every CHECKPOINT_SECONDS) and continue from it if present;
+              every `checkpoint_seconds`) and continue from it if present;
               SIGUSR1 saves it at the end of the epoch and raises
-              StoppedError.
+              StoppedError. A resume state written with another run
+              configuration (see `_run_config`) raises ConfigMismatchError.
             max_params_m (float): Refuse a model with more trainable
               parameters, in millions (0 = no limit).
             save_epochs (List[int], optional): Epochs whose weights are also
               kept as <model>_<direction>_epoch<e>.pt.
+            checkpoint_seconds (float, optional): Wall time between two
+              saves of the resume state, checked at the end of each epoch
+              (default CHECKPOINT_SECONDS; 0 saves after every epoch).
         """
         self.release = release
         self.output_dir = output_dir
@@ -302,6 +328,9 @@ class SequenceModelTrainer:
         self.resume = resume
         self.max_params_m = max_params_m
         self.save_epochs = set(save_epochs or [])
+        self.checkpoint_seconds = checkpoint_seconds
+        self._previous_handler = None
+        self._config = None
         self.model = None
         self.norm_stats = None
         self._eval_length = None
@@ -403,7 +432,30 @@ class SequenceModelTrainer:
             dict: Per-epoch mean training loss under 'train_loss' and, with
             `val_ids`, the validation loss under 'val_loss' (epoch, value)
             or the damage scores under 'val_r2' (one dict per validation).
+
+        Raises:
+            DivergedError: A training loss or a damage-validation prediction
+              is not finite. This guard is always on: the published code
+              finished such a run with a non-finite checkpoint, so the
+              default flags differ from it only for runs that diverge.
+            ModelTooLargeError: More trainable parameters than
+              `max_params_m`.
+            StoppedError: SIGUSR1 in a resumable run (state saved).
+            ConfigMismatchError: The resume state of the output directory
+              was written with another run configuration.
         """
+        self._previous_handler = None
+        try:
+            return self._train(train_ids, val_ids)
+        finally:
+            STOP_REQUESTED.clear()
+            if self._previous_handler is not None:
+                signal.signal(signal.SIGUSR1, self._previous_handler[0])
+                self._previous_handler = None
+
+    def _train(self, train_ids: List[int],
+               val_ids: Optional[List[int]]) -> Dict[str, List[float]]:
+        """`train`, whose stop request is cleared by the caller."""
         if self.deterministic:
             # Same seed, same GPU type -> same weights: deterministic cuDNN
             # and CUDA kernels (ops without one only warn).
@@ -426,7 +478,11 @@ class SequenceModelTrainer:
             raise ValueError(f"{self.model_name} reads the first input channel "
                              f"as the acceleration: put {probe.accel_channel} "
                              "first in --input_channels.")
+        self._remove_stale_temporaries()
+        self._config = self._run_config(train_ids, val_ids)
         resume_state = self._load_resume()
+        if resume_state is not None:
+            self._check_run_config(resume_state)
         if resume_state is not None and resume_state.get("completed"):
             # Finished before: the final checkpoint is the result.
             self.load_checkpoint()
@@ -521,9 +577,13 @@ class SequenceModelTrainer:
                 flush=True)
             self._print_val_history(history)
         last_save = time.monotonic()
+        checkpoint_seconds = (CHECKPOINT_SECONDS if self.checkpoint_seconds
+                              is None else self.checkpoint_seconds)
         if (self.resume and
                 threading.current_thread() is threading.main_thread()):
-            signal.signal(signal.SIGUSR1, _request_stop)
+            # Restored by `train` when the run returns or raises.
+            self._previous_handler = (signal.signal(signal.SIGUSR1,
+                                                    request_stop),)
         for epoch in range(start_epoch, self.num_epochs):
             self.model.train()
             losses = []
@@ -593,7 +653,7 @@ class SequenceModelTrainer:
                 self.save_checkpoint(self.checkpoint_path(epoch + 1))
             stop_now = self.resume and STOP_REQUESTED.is_set()
             if self.resume and (val_now or stop_now or time.monotonic() -
-                                last_save >= CHECKPOINT_SECONDS):
+                                last_save >= checkpoint_seconds):
                 self._save_resume(epoch + 1, optimizer, scheduler, history,
                                   (best_val, best_epoch), best_state)
                 last_save = time.monotonic()
@@ -622,10 +682,12 @@ class SequenceModelTrainer:
             json.dump(history, file)
         if self.resume:
             # The weights are in the final checkpoint; keep only the record.
-            _atomic_save({
-                "completed": True,
-                "history": history
-            }, self.resume_path())
+            _atomic_save(
+                {
+                    "completed": True,
+                    "history": history,
+                    "config": self._config
+                }, self.resume_path())
         return history
 
     def _build_model(self, num_samples: int, num_inputs: int,
@@ -675,12 +737,75 @@ class SequenceModelTrainer:
                             f"{self.model_name}_{self.direction}_resume.pt")
 
     def _load_resume(self) -> Optional[Dict]:
-        """The resume state, if `resume` is on and one was saved."""
+        """The resume state, if `resume` is on and one was saved.
+
+        Loaded on the CPU: the random generator states must stay CPU
+        ByteTensors, and load_state_dict copies the rest to the device.
+        """
         if not self.resume or not os.path.exists(self.resume_path()):
             return None
         return torch.load(self.resume_path(),
-                          map_location=self.device,
+                          map_location="cpu",
                           weights_only=False)
+
+    def _run_config(self, train_ids: List[int],
+                    val_ids: Optional[List[int]]) -> Dict:
+        """Settings a resume state must have been written with."""
+        return {
+            "model_name": self.model_name,
+            "direction": self.direction,
+            "model_kwargs": dict(self.model_kwargs),
+            "condition_bound": self.condition_bound,
+            "learning_rate": self.learning_rate,
+            "weight_decay": self.weight_decay,
+            "schedule": self.schedule,
+            "warmup_epochs": self.warmup_epochs,
+            "num_epochs": self.num_epochs,
+            "seed": self.seed,
+            "grad_clip": self.grad_clip,
+            "batch_size": self.batch_size,
+            "crop_length": self.crop_length,
+            "loss_name": self.loss_name,
+            "damage_loss_weight": self.damage_loss_weight,
+            "height_targets": bool(self.height_targets),
+            "early_stopping_patience": self.early_stopping_patience,
+            "val_every": self.val_every,
+            "val_score": self.val_score,
+            "ids_hash": _ids_hash(train_ids, val_ids),
+        }
+
+    def _check_run_config(self, resume_state: Dict) -> None:
+        """Refuses a resume state (in progress or completed) of another run
+        configuration (states written before the configuration was stored
+        are not checked)."""
+        saved = resume_state.get("config")
+        if saved is None:
+            return
+        current = self._config
+        changed = sorted(k for k in set(saved) | set(current)
+                         if saved.get(k) != current.get(k))
+        if changed:
+            details = ", ".join(
+                f"{k}: {saved.get(k)!r} -> {current.get(k)!r}" for k in changed)
+            raise ConfigMismatchError(
+                f"{self.resume_path()} was written by another run "
+                f"configuration ({details}); use another output directory "
+                "or remove the resume state.")
+
+    def _remove_stale_temporaries(self) -> None:
+        """Removes the <file>.tmp.<pid> left by a killed `_atomic_save` of
+        the files this run writes (only those, only in its directory)."""
+        stems = [self.checkpoint_path(), self.resume_path()]
+        patterns = [glob.escape(stem) + ".tmp.*" for stem in stems]
+        patterns.append(
+            glob.escape(
+                os.path.join(self.output_dir,
+                             f"{self.model_name}_{self.direction}_epoch")) +
+            "[0-9]*.pt.tmp.*")
+        for pattern in patterns:
+            for path in glob.glob(pattern):
+                if os.path.isfile(path):
+                    os.remove(path)
 
     def _save_resume(self, epoch: int, optimizer, scheduler, history: Dict,
                      best: tuple, best_state: Optional[Dict]) -> None:
@@ -697,6 +822,7 @@ class SequenceModelTrainer:
                 "best_state": best_state,
                 "norm_stats": self.norm_stats,
                 "model_kwargs": self.model_kwargs,
+                "config": self._config,
                 "rng": _rng_state(),
             }, self.resume_path())
 
@@ -806,7 +932,9 @@ class SequenceModelTrainer:
         curve), with the forward passes batched over the 11 gauges, the
         true damage read once from damage.parquet and no file written. The
         random streams and the train mode are restored, so validating does
-        not change the training run.
+        not change the training run. On a GPU the batched kernels can differ
+        from the per-item passes of `evaluate`, so the scores can differ at
+        float tolerance.
 
         Returns:
             dict: r2_gauges (base to top), r2_mean, r2_top and r2_base.

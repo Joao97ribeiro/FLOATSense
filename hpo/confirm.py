@@ -14,7 +14,12 @@ last-epoch validation score; never by the best seed.
 
 The plan (the N_TOP configurations) is written once (--freeze), when the
 study has its full budget and nothing running, so every worker confirms
-the same configurations. A unit is one (configuration, seed); workers claim
+the same configurations; they are taken among the first `target` counted
+trials (by number), the trials that decided the extension rule. If the
+winner's median is not finite (most seeds diverged), the (model, tower)
+is parked with an alert instead of naming a winner; a parked (model,
+tower) has no winner and is recorded as missing in the test and the
+leaderboard. A unit is one (configuration, seed); workers claim
 units, so several can share a study. The winner record also holds the
 median best validation epoch (rounded to BEST_EPOCH_ROUND), the secondary
 test epoch of phase 3. --dry_run trains nothing (common.stub_unit).
@@ -54,6 +59,35 @@ def unit_dir(root: str, model: str, tower: str, rank: int, seed: int) -> str:
     return os.path.join(study_dir(root, model, tower), f"c{rank}_s{seed}")
 
 
+def parked_path(root: str, model: str, tower: str) -> str:
+    """Marker of a parked (model, tower) study."""
+    return os.path.join(root, "parked", f"{model}_{tower}.json")
+
+
+def park_study(root: str,
+               model: str,
+               tower: str,
+               reason: str,
+               hosts: Optional[List[str]] = None) -> bool:
+    """Parks a study once, with an alert; True if this call parked it.
+    `hosts`: hosts of the failures that parked it (hpo/pick.py un-parks a
+    study once if they are a single host)."""
+    if not common.write_once(parked_path(root, model, tower), {
+            "reason": reason,
+            "hosts": sorted(hosts or []),
+            "time": common.now()
+    }):
+        return False
+    common.alert(
+        root, f"study/{model}_{tower}", f"study parked: {reason}", {
+            "note": f"the other towers of {model} go on without it; "
+                    f"{model}/{tower} has no winner and is missing in the "
+                    "leaderboard",
+            "hosts": sorted(hosts or [])
+        })
+    return True
+
+
 def units(plan: Dict) -> List[tuple]:
     """(rank, seed) of every unit of a plan."""
     return [(c["rank"], seed)
@@ -77,7 +111,11 @@ def freeze(args: argparse.Namespace) -> Dict:
     if done < target or running or waiting:
         sys.exit(f"search not finished: {done}/{target} trials counted, "
                  f"{running} running, {waiting} waiting")
-    trials = sorted([t for t in study.trials if search.eligible(t)],
+    first = [
+        t for t in sorted(study.trials, key=lambda t: t.number)
+        if search.counted(t)
+    ][:target]
+    trials = sorted([t for t in first if search.eligible(t)],
                     key=lambda t: (-t.value, t.number))
     if len(trials) < C.N_TOP:
         sys.exit(f"{len(trials)} eligible trials, fewer than {C.N_TOP}")
@@ -121,15 +159,21 @@ def run_one(args: argparse.Namespace, plan: Dict, rank: int,
     try:
         cfg = plan["configs"][rank]["config"]
         if args.dry_run:
-            result = common.stub_unit(cfg, 100 + 10 * rank + seed,
-                                      plan["epochs"])
+            result = common.stub_unit(cfg,
+                                      100 + 10 * rank + seed,
+                                      plan["epochs"],
+                                      run_dir=run_dir)
         else:
             cmd = common.train_command(args, args.model, args.tower, run_dir,
                                        cfg, C.SEARCH_TRAIN_SPLIT,
                                        plan["epochs"], seed)
             result = common.run_unit(
-                f"phase2/{args.model}_{args.tower}/c{rank}_s{seed}", cmd,
-                run_dir, args.root, args.model)
+                f"phase2/{args.model}_{args.tower}/c{rank}_s{seed}",
+                cmd,
+                run_dir,
+                args.root,
+                args.model,
+                config=cfg)
         if result["status"] in ("parked", "stopped"):
             return None
         record = {"rank": rank, "seed": seed, "status": result["status"]}
@@ -155,7 +199,8 @@ def run_one(args: argparse.Namespace, plan: Dict, rank: int,
 
 def summarize(args: argparse.Namespace, plan: Dict) -> Optional[Dict]:
     """The winner: highest median over seeds of the last-epoch score (a
-    diverged seed counts as -inf); written once."""
+    diverged seed counts as -inf); written once. If that median is not
+    finite, the study is parked (no winner) and None is returned."""
     existing = common.read_json(winner_path(args.root, args.model, args.tower))
     if existing is not None:
         return existing
@@ -187,6 +232,10 @@ def summarize(args: argparse.Namespace, plan: Dict) -> Optional[Dict]:
         })
     rows.sort(key=lambda r: (-r["median"], r["rank"]))
     winner = rows[0]
+    if not np.isfinite(winner["median"]):
+        park_study(args.root, args.model, args.tower,
+                   "no finite median over the seeds of phase 2")
+        return None
     record = {
         "model": args.model,
         "tower": args.tower,
@@ -223,6 +272,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--dry_run", action="store_true")
     parser.add_argument("--n_trials", type=int, default=C.N_TRIALS)
     parser.add_argument("--epochs", type=int, default=C.EPOCHS_FINAL)
+    parser.add_argument("--checkpoint_seconds",
+                        type=float,
+                        default=C.CHECKPOINT_SECONDS,
+                        help="Wall time between two resume saves of a run.")
     return parser.parse_args(argv)
 
 

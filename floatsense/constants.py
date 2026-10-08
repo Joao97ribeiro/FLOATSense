@@ -49,3 +49,4 @@ CHECKPOINT_SECONDS = 300.0  # resume state at least this often [s wall time]
 EXIT_DIVERGED = 3  # exit code: non-finite loss or validation prediction
 EXIT_TOO_LARGE = 4  # exit code: more trainable parameters than --max_params_m
 EXIT_STOPPED = 5  # exit code: SIGUSR1, resume state saved at the epoch end
+EXIT_CONFIG_MISMATCH = 6  # exit code: resume state of another run config

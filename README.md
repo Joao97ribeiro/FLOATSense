@@ -103,7 +103,7 @@ accelerometer axis improves the top at every budget.
 ```
 floatsense/        Python package (data reader, models, training, physics baseline, metrics)
 scripts/           Pipeline entry points — see "Scripts" below
-hpo/               Validation-tuned track: search, confirmation, test, decision rule
+hpo/               Validation-tuned track: search, confirmation, test, leaderboard
 splits/            Model-selection and few-shot splits (lists of sim_id, same on every tower)
 towers/            ElastoDyn tower mass density of each tower (physics height factor)
 docs/              Figures used in this README
@@ -467,8 +467,9 @@ rate 1e-3, 50 epochs). The validation-tuned track is a second
 leaderboard: each of the 20 learned models gets the same tuning effort
 and a longer training. It uses only the validation split (`splits/val`)
 to choose, and opens the test split once, at the end.
-Every number of the protocol is in
-[`hpo/search_space.py`](./hpo/search_space.py).
+Every number of the protocol (trials, epochs, seeds, splits, failures,
+workers) is in [`hpo/constants.py`](./hpo/constants.py); the search
+space is in [`hpo/search_space.py`](./hpo/search_space.py).
 
 1. **Search** ([`hpo/search.py`](./hpo/search.py)): one Optuna study
    per model and tower, the same number of trials for every model, the
@@ -479,25 +480,32 @@ Every number of the protocol is in
    its value), a constant or cosine schedule with warm-up, and a few
    architecture knobs per model. Fixed for every model: AdamW, gradient
    clipping, the batch size, the crops, the loss, the inputs and the
-   targets. Models above a parameter cap are rejected before training.
-   If a study's best trial comes late, the three studies of that model
-   get more trials.
+   targets. Models above a parameter cap are rejected before training
+   (a failed trial, not counted). If a study's best trial comes late,
+   the studies of that model get more trials.
 2. **Confirmation** ([`hpo/confirm.py`](./hpo/confirm.py)): the best
    configurations of each study, frozen once, are retrained with several
    seeds and the full epoch budget; the winner has the highest median
    validation score over the seeds.
 3. **Test** ([`hpo/final.py`](./hpo/final.py)): each winner is retrained
    on the full training split with several seeds and scored once on the
-   test split, at the last epoch and at the median best validation epoch
-   of the confirmation, into a sealed directory.
+   test split, into a sealed directory, in two variants: `primary_last`
+   (primary, the headline: the last epoch) and `secondary_best`
+   (secondary: the median best validation epoch of the confirmation).
+   The test opens only when every model and tower is trained; a parked
+   model and tower (see below) is recorded as missing.
 4. **Leaderboard** ([`hpo/analyze.py`](./hpo/analyze.py)): the sealed
    runs are scored by the benchmark scorer (`scripts/benchmark/run.py`);
    per model, every metric at the base, z/H 0.78, the top and the mean
    of the 11 gauges (median over the seeds per tower, then mean over the
    towers), overall and per regime cell, the top three per criterion and
-   the best model of each family. The selected configuration of each
-   model and tower and the best validation score against the number of
-   trials of each study are written next to it.
+   the best model of each family, one folder per test variant. The
+   selected configuration of each model and tower, the best validation
+   score against the number of counted trials of each study, and the
+   GPU-hours of the track (`gpu_hours.csv`: per model, tower and phase,
+   every attempt included, with totals) are written next to it. The
+   naive floor and the physics baseline are not tuned: their scores are
+   those of the fixed-recipe benchmark.
 
 The trainer options of the track are plain flags of
 `scripts/train/run.py`, off by default so the benchmark runs are
@@ -506,7 +514,8 @@ unchanged: `--weight_decay` (AdamW), `--schedule` and `--warmup_epochs`,
 `hidden_channels=96,num_levels=7,dropout=0.1`; stored in the checkpoint),
 `--val_score=damage` (prints `VAL epoch=... r2_mean=... r2_top=...
 r2_base=...` lines), `--resume` (a resume state at every validation and
-every five minutes), `--max_params_m` and `--save_epochs`. A run that
+every `--checkpoint_seconds` of wall time; the drivers pass 90 s),
+`--max_params_m` and `--save_epochs`. A run that
 diverges exits with code 3, a model above the cap with code 4. The
 drivers need `optuna>=4`; `--dry_run` runs each of them on a CPU stub:
 
@@ -519,9 +528,17 @@ python hpo/final.py --open_test                           # once, at the end
 python hpo/analyze.py --root=outputs/hpo --dataset_dir=data/FLOATSense
 ```
 
+Each run directory holds `config.json` (the hyperparameters exactly as
+passed to `run.py`, and the command line) and `attempts.json` (one entry
+per attempt: start, end, seconds, host, GPU and status).
+
 A crashed run (out of memory included) is resumed from its checkpoint a
 few times and then parked with an alert record in `outputs/hpo/alerts/`;
-preemptions and hardware faults resume without counting.
+preemptions and hardware faults resume without counting. A run parked
+after failures on a single host gets one more chance on another host,
+and a worker whose units fail twice in a row stops with an alert. Workers
+(`hpo/worker.py`, one per GPU) pick the units of every phase from a
+shared root; `hpo/status.py` writes the status of the track.
 
 ## Reproducibility
 
