@@ -101,6 +101,8 @@ def driver_args(args: argparse.Namespace, unit: pick.Unit,
     ]
     if driver != "final":
         out.append(f"--n_trials={args.n_trials}")
+    epochs = args.epochs_trial if driver == "search" else args.epochs_final
+    out.append(f"--epochs={epochs}")
     if args.dry_run:
         out.append("--dry_run")
     return out
@@ -303,6 +305,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                         help="Python that runs scripts/train/run.py.")
     parser.add_argument("--extra", default="")
     parser.add_argument("--n_trials", type=int, default=C.N_TRIALS)
+    parser.add_argument("--epochs_trial",
+                        type=int,
+                        default=C.EPOCHS_TRIAL,
+                        help="Epochs of a search trial (the protocol's "
+                        "value; lower only for a smoke test).")
+    parser.add_argument("--epochs_final",
+                        type=int,
+                        default=C.EPOCHS_FINAL,
+                        help="Epochs of a confirmation or final run (the "
+                        "protocol's value; lower only for a smoke test).")
     parser.add_argument("--dry_run",
                         action="store_true",
                         help="CPU stub instead of training.")
