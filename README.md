@@ -572,9 +572,12 @@ and `hpo/status.py` writes the status of the track (studies, workers alive
 or dead, shelved units and studies, recent alerts). Workers on several
 machines can share a root on a shared file system; launching and
 restarting them is left to the launcher (`--owner` keeps the identity of
-a worker across its restarts, `--restart` counts them). Every alert is a
-record in `outputs/hpo/alerts/`, named by the unit id that
-`hpo/pick.py --retry` accepts.
+a worker across its restarts; the launcher passes `--restart`, the count
+of those restarts, e.g. the scheduler's restart counter, default 0). Every
+alert is a record in `outputs/hpo/alerts/`. Alerts about a unit are named
+by the unit id that `hpo/pick.py --retry` accepts; an alert about a search
+trial carries the study's id and the trial's run directory (`t<n>`) in its
+details. Worker and advance alerts are named after the worker or model.
 
 - **Crashes.** A crashed run is resumed from its checkpoint up to
   `MAX_ATTEMPTS` (3) times and then *shelved* (a `SHELVED` marker in its
