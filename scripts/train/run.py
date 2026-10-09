@@ -25,6 +25,8 @@ Examples:
 
 Exit codes:
   0  Done.
+  1  Invalid setup, e.g. --init_checkpoint_dir holds the checkpoint this run
+     writes (it is in --output_dir): fine-tune into another --output_dir.
   3  Diverged: a non-finite training loss (or damage-validation prediction).
      This guard is on with the default flags too: the published code
      finished such a run and saved a non-finite checkpoint, so the two
@@ -183,14 +185,15 @@ def main(_):
     """Trains and evaluates the requested models and directions."""
     # A resumable run stops cleanly on SIGUSR1 from the start to the end,
     # also while the data loads and between models and directions.
+    install_handler = FLAGS.resume and FLAGS.run_training
     previous_handler = None
-    if FLAGS.resume and FLAGS.run_training:
-        previous_handler = (signal.signal(signal.SIGUSR1, request_stop),)
+    if install_handler:
+        previous_handler = signal.signal(signal.SIGUSR1, request_stop)
     try:
         train_and_evaluate()
     finally:
-        if previous_handler is not None:
-            signal.signal(signal.SIGUSR1, previous_handler[0])
+        if install_handler:
+            signal.signal(signal.SIGUSR1, previous_handler)
 
 
 def train_and_evaluate():

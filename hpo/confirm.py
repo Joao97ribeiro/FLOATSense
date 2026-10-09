@@ -18,7 +18,7 @@ drawing, search.capped) and nothing running, so every worker confirms
 the same configurations; they are taken among the first `target` counted
 trials (by number), the trials that decided the extension rule. If the
 winner's median is not finite (most seeds diverged), the (model, tower)
-is parked with an alert instead of naming a winner; a parked (model,
+is shelved with an alert instead of naming a winner; a shelved (model,
 tower) has no winner and is recorded as missing in the test and the
 leaderboard. A unit is one (configuration, seed); workers claim
 units, so several can share a study. The winner record also holds the
@@ -29,7 +29,6 @@ test epoch of phase 3. --dry_run trains nothing (common.stub_unit).
 import argparse
 import os
 import sys
-import uuid
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -42,7 +41,7 @@ from hpo import search
 
 def study_dir(root: str, model: str, tower: str) -> str:
     """Phase-2 directory of a (model, tower)."""
-    return os.path.join(root, "phase2", f"{model}_{tower}")
+    return os.path.join(root, common.CONFIRM_DIR, common.study_id(model, tower))
 
 
 def plan_path(root: str, model: str, tower: str) -> str:
@@ -56,39 +55,8 @@ def winner_path(root: str, model: str, tower: str) -> str:
 
 
 def unit_dir(root: str, model: str, tower: str, rank: int, seed: int) -> str:
-    """Run directory of one (configuration, seed)."""
-    return os.path.join(study_dir(root, model, tower), f"c{rank}_s{seed}")
-
-
-parked_path = search.parked_path
-
-
-def park_study(root: str,
-               model: str,
-               tower: str,
-               reason: str,
-               retry: bool = False) -> bool:
-    """Parks a study once, with an alert; True if this call parked it.
-    `retry`: a parking after failures (parked trials), retried once by
-    hpo/pick.py; any other parking is final."""
-    if not common.write_once(
-            parked_path(root, model, tower),
-        {
-            "reason": reason,
-            "retry": retry,
-            "time": common.now(),
-            "id":
-                uuid.uuid4().hex  # tells two parkings apart
-        }):
-        return False
-    common.alert(
-        root, f"study/{model}_{tower}", f"study shelved: {reason}", {
-            "note": f"the other towers of {model} go on without it; "
-                    f"{model}/{tower} has no winner and is missing in the "
-                    "leaderboard" +
-                    (" unless its retry succeeds" if retry else ""),
-        })
-    return True
+    """Run directory of one (configuration, seed): <root>/<its unit id>."""
+    return os.path.join(root, common.confirm_id(model, tower, rank, seed))
 
 
 def units(plan: Dict) -> List[tuple]:
@@ -118,6 +86,7 @@ def freeze(args: argparse.Namespace) -> Dict:
         (done < target and not stopped)):
         sys.exit(f"search not finished: {done}/{target} trials counted, "
                  f"{running} running, {waiting} waiting")
+    early = bool(stopped) and done < target
     first = [
         t for t in sorted(study.trials, key=lambda t: t.number)
         if search.counted(t)
@@ -136,7 +105,8 @@ def freeze(args: argparse.Namespace) -> Dict:
         "n_trials_counted": done,
         "target": target,
         # Why the study stopped drawing before its target (else None).
-        "stopped_early": stopped if done < target else None,
+        "stopped_early": stopped["message"] if early else None,
+        "stopped_early_kind": stopped["kind"] if early else None,
         "n_seeds": C.N_SEEDS,
         "epochs": args.epochs,
         "margin_top_to_next": margin,
@@ -158,36 +128,38 @@ def run_one(args: argparse.Namespace, plan: Dict, rank: int,
             seed: int) -> Optional[Dict]:
     """Trains one unit (if not done and not claimed) and records it."""
     run_dir = unit_dir(args.root, args.model, args.tower, rank, seed)
-    result_path = os.path.join(run_dir, "result.json")
+    result_path = common.result_path(run_dir)
     if os.path.exists(result_path):
         return common.read_json(result_path)
-    if os.path.exists(os.path.join(run_dir, "PARKED")) or common.held(run_dir):
+    if common.is_shelved(run_dir) or common.held(run_dir):
         print(f"c{rank}_s{seed} shelved or held, see {args.root}/alerts",
               flush=True)
         return None
-    if not common.claim(run_dir):
+    if not common.claim(run_dir, args.owner):
         return None
     try:
         cfg = plan["configs"][rank]["config"]
         if args.dry_run:
+            key = C.STUB_KEY_CONFIRM + C.STUB_KEY_RANK * rank + seed
             result = common.stub_unit(cfg,
-                                      100 + 10 * rank + seed,
+                                      key,
                                       plan["epochs"],
-                                      run_dir=run_dir)
+                                      run_dir=run_dir,
+                                      seconds=args.stub_seconds)
         else:
             cmd = common.train_command(args, args.model, args.tower, run_dir,
                                        cfg, C.SEARCH_TRAIN_SPLIT,
                                        plan["epochs"], seed)
-            result = common.run_unit(
-                f"phase2/{args.model}_{args.tower}/c{rank}_s{seed}",
-                cmd,
-                run_dir,
-                args.root,
-                args.model,
-                config=cfg,
-                owned=lambda: common.owns_claim(run_dir),
-                oom_ends=False)
-        if result["status"] in ("parked", "stopped", "config_mismatch"):
+            result = common.run_unit(common.confirm_id(args.model, args.tower,
+                                                       rank, seed),
+                                     cmd,
+                                     run_dir,
+                                     args.root,
+                                     args.model,
+                                     config=cfg,
+                                     owned=lambda: common.owns_claim(run_dir),
+                                     oom_ends=False)
+        if result["status"] in ("shelved", "stopped", "config_mismatch"):
             return None
         record = {"rank": rank, "seed": seed, "status": result["status"]}
         curve = (result.get("history") or {}).get("val_r2", [])
@@ -213,7 +185,7 @@ def run_one(args: argparse.Namespace, plan: Dict, rank: int,
 def summarize(args: argparse.Namespace, plan: Dict) -> Optional[Dict]:
     """The winner: highest median over seeds of the last-epoch score (a
     diverged seed counts as -inf); written once. If that median is not
-    finite, the study is parked (no winner) and None is returned."""
+    finite, the study is shelved (no winner) and None is returned."""
     existing = common.read_json(winner_path(args.root, args.model, args.tower))
     if existing is not None:
         return existing
@@ -221,10 +193,9 @@ def summarize(args: argparse.Namespace, plan: Dict) -> Optional[Dict]:
     for config in plan["configs"]:
         records = [
             common.read_json(
-                os.path.join(
+                common.result_path(
                     unit_dir(args.root, args.model, args.tower, config["rank"],
-                             seed), "result.json"))
-            for seed in range(plan["n_seeds"])
+                             seed))) for seed in range(plan["n_seeds"])
         ]
         if any(r is None for r in records):
             print(f"config {config['rank']}: "
@@ -246,8 +217,9 @@ def summarize(args: argparse.Namespace, plan: Dict) -> Optional[Dict]:
     rows.sort(key=lambda r: (-r["median"], r["rank"]))
     winner = rows[0]
     if not np.isfinite(winner["median"]):
-        park_study(args.root, args.model, args.tower,
-                   "no finite median over the seeds of phase 2")
+        common.shelve_study(args.root, args.model, args.tower,
+                            "no_finite_median",
+                            "no finite median over the seeds of phase 2")
         return None
     record = {
         "model": args.model,

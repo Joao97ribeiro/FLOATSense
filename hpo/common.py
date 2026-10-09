@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 # pylint: disable=too-many-arguments
 # pylint: disable=too-many-positional-arguments
 # pylint: disable=too-many-locals
@@ -19,18 +20,18 @@ handles failures:
     configuration of phases 2 and 3) it is always resumed as a crash;
   - a resume state of another configuration (EXIT_CONFIG_MISMATCH) is
     returned as 'config_mismatch' with an alert and a CONFIG_MISMATCH
-    marker in the run directory; the unit is not parked, and no worker
+    marker in the run directory; the unit is not shelved, and no worker
     picks it until an operator removes the marker (after removing the
     resume state, or the run directory);
   - a crash is resumed from the last checkpoint, up to MAX_ATTEMPTS
-    attempts; then the unit is parked (PARKED marker) and an alert record
+    attempts; then the unit is shelved (SHELVED marker) and an alert record
     is written to <root>/alerts/;
   - a preemption (the run killed by a signal) or a hardware fault (CUDA
     error, ECC, Xid) is resumed without counting as an attempt;
-  - a stop request of the worker (`request_stop`: a time limit, a
-    preemption notice) is passed to the run as SIGUSR1 (the
-    trainer saves at the end of the epoch and exits with EXIT_STOPPED);
-    the unit returns 'stopped' and is resumed by the next worker.
+  - a stop request of the worker (`request_stop`: a signal) is passed to
+    the run as SIGUSR1 (the trainer saves at the end of the epoch and exits
+    with EXIT_STOPPED); the unit returns 'stopped' and is resumed by the
+    next worker.
 
 Records of a unit, in its run directory: config.json (the hyperparameters
 as passed to run.py and the exact command, written before the run starts)
@@ -38,16 +39,21 @@ and attempts.json (one entry per attempt: start, end, seconds, host, GPU
 and status, pruned and preempted attempts included; analyze.py sums them
 into GPU-hours). An attempt is recorded when it starts, with status
 'running', and its end and seconds are updated by the heartbeat; an open
-attempt older than STALE_MINUTES was hard-killed ('killed', `event_status`)
+attempt older than STALE_SECONDS was hard-killed ('killed', `event_status`)
 and its seconds still count. The record is written only while the unit is
 still ours (`owned`), merged by attempt with the file (`save_attempts`).
 
-A parked unit is retried once (`retry_unit`, called by hpo/pick.py
-RETRY_SHELVED_AFTER after its parking) with its failure counts reset; a
-second parking is final, and so is every parking once the test is ready
-(`test_frozen`). An operator retries a unit at any time with
+A shelved unit is retried once (`retry_unit`, called by hpo/pick.py
+RETRY_SHELVED_AFTER after its shelving) with its failure counts reset; a
+second shelving is for good, and so is every shelving once the test is
+ready (`test_frozen`). An operator retries a unit at any time with
 `python hpo/pick.py --retry=<unit>` (never by removing the marker alone:
-the failure counts would stay).
+the failure counts would stay). A shelving (of a unit or a study) records
+its kind (the failure that caused it) and a message.
+
+The layout of the root is defined here once: a unit id
+(`search_id`, `confirm_id`, `final_id`) is also the path of a
+confirmation or final run directory under the root.
 
 Every file the drivers share is written atomically (temporary file and
 rename), and the files that fix a decision (plans, sealed test results)
@@ -68,14 +74,12 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import uuid
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Sequence
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from floatsense.constants import EXIT_CONFIG_MISMATCH
-from floatsense.constants import EXIT_DIVERGED
-from floatsense.constants import EXIT_STOPPED
-from floatsense.constants import EXIT_TOO_LARGE
+from floatsense import constants as FC
 from hpo import constants as C
 from hpo import search_space as S
 
@@ -85,7 +89,7 @@ CONFIG = os.path.join(REPO, "scripts", "train", "config.cfg")
 VAL_LINE = re.compile(r"^VAL epoch=(\d+) r2_mean=(\S+) r2_top=(\S+) "
                       r"r2_base=(\S+)(?: r2_gauges=(\S+))?")
 PARAMS_LINE = re.compile(r"^PARAMS trainable=(\d+)")
-# Signals of a preemption (a scheduler sends TERM, then KILL after a grace
+# Signals of a preemption (the run is sent TERM, then KILL after a grace
 # time).
 PREEMPT_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGUSR1,
                    signal.SIGUSR2)
@@ -95,20 +99,84 @@ HARDWARE = re.compile(
     r"NCCL error|cudaErrorLaunchFailure|GPU is lost|Bus error", re.IGNORECASE)
 OOM = re.compile(r"CUDA out of memory|OutOfMemoryError|out of memory",
                  re.IGNORECASE)
-HEARTBEAT_SECONDS = 30.0
-RETRY_SECONDS = 5.0  # pause before resuming a failed run
-TAIL_LINES = 60
+# Statuses of an attempt that end its unit whatever the worker does; any
+# other status becomes 'stopped' once the worker was asked to stop.
+FINAL_STATUSES = ("ok", "pruned", "diverged", "too_large", "config_mismatch")
 # A stop request of the worker; the runs it started get SIGUSR1.
 STOP = threading.Event()
 _CHILDREN: set = set()
-# Seconds per validation of the dry-run stub (0: instantaneous).
-STUB_SECONDS = 0.0
+
+# --- Layout of the root -------------------------------------------------------
+TRIALS_DIR = "trials"  # search runs: trials/<study>/t<number>
+CONFIRM_DIR = "confirm"  # confirm/<study>/: plan, winner, c<rank>_s<seed>
+FINAL_DIR = "final"  # final/<study>/s<seed>
+TEST_RUNS_DIR = "test_runs"  # test_runs/<study>/<variant>_s<seed>
+PHASE_DIRS = {"search": TRIALS_DIR, "confirm": CONFIRM_DIR, "final": FINAL_DIR}
+SEALED_DIR = "sealed"  # the test scores (hpo/final.py)
+SHELVED_DIR = "shelved"  # shelved studies: shelved/<study>.json
 READY = "READY_FOR_TEST.json"  # marker: every final unit is trained
-# Marker of a unit whose resume state belongs to another configuration.
-HOLD = "CONFIG_MISMATCH"
-# Identity of the worker of this process (hpo/worker.py sets it): written
-# into the claims, so a worker releases only its own (any incarnation).
-OWNER = ""
+SHELVED = "SHELVED"  # marker of a shelved unit, in its run directory
+HELD = "CONFIG_MISMATCH"  # marker of a unit held for an operator
+RESULT = "result.json"  # result of a confirmation or final unit
+
+
+def study_id(model: str, tower: str) -> str:
+    """Name of the study of a (model, tower) (and of its directories)."""
+    return f"{model}_{tower}"
+
+
+def search_id(model: str, tower: str) -> str:
+    """Unit id of the search of a study (its trials run one at a time)."""
+    return f"search/{study_id(model, tower)}"
+
+
+def confirm_id(model: str, tower: str, rank: int, seed: int) -> str:
+    """Unit id (and run directory under the root) of a confirmation unit."""
+    return f"{CONFIRM_DIR}/{study_id(model, tower)}/c{rank}_s{seed}"
+
+
+def final_id(model: str, tower: str, seed: int) -> str:
+    """Unit id (and run directory under the root) of a final unit."""
+    return f"{FINAL_DIR}/{study_id(model, tower)}/s{seed}"
+
+
+def result_path(run_dir: str) -> str:
+    """Result of a confirmation or final unit."""
+    return os.path.join(run_dir, RESULT)
+
+
+def shelved_path(run_dir: str) -> str:
+    """SHELVED marker of a unit."""
+    return os.path.join(run_dir, SHELVED)
+
+
+def is_shelved(run_dir: str) -> bool:
+    """A unit shelved after its failures."""
+    return os.path.exists(shelved_path(run_dir))
+
+
+def study_shelved_path(root: str, model: str, tower: str) -> str:
+    """Marker of a shelved (model, tower) study."""
+    return os.path.join(root, SHELVED_DIR, f"{study_id(model, tower)}.json")
+
+
+def study_retried_path(root: str, model: str, tower: str) -> str:
+    """Record of the single retry of a shelved study (hpo/pick.py)."""
+    return os.path.join(root, SHELVED_DIR, "retried",
+                        f"{study_id(model, tower)}.json")
+
+
+def ready_path(root: str) -> str:
+    """Marker: every final unit of every learned model is trained."""
+    return os.path.join(root, READY)
+
+
+def sealed_root(root: str) -> str:
+    """Directory of the sealed test scores and their records."""
+    return os.path.join(root, SEALED_DIR)
+
+
+# --- Files --------------------------------------------------------------------
 
 
 def now() -> str:
@@ -167,6 +235,11 @@ def read_json(path: str):
         return json.load(file)
 
 
+def traceback_tail() -> str:
+    """The end of the current traceback (TRACEBACK_CHARS)."""
+    return traceback.format_exc()[-C.TRACEBACK_CHARS:]
+
+
 def parse_val(line: str) -> Optional[Dict]:
     """The scores of a VAL line of the trainer, or None for other lines."""
     match = VAL_LINE.match(line.strip())
@@ -213,7 +286,7 @@ def request_stop(sig: int = signal.SIGUSR1) -> None:
 def server_time(directory: str) -> float:
     """Time of the file server of `directory`: the mtime of a probe file
     touched now (on NFS, utime without a time is set by the server), so
-    that ages on a shared file system do not depend on the node clocks."""
+    that ages on a shared file system do not depend on the machine clocks."""
     os.makedirs(directory, exist_ok=True)
     path = os.path.join(directory, f".probe.{socket.gethostname()}")
     with open(path, "a", encoding="utf-8"):
@@ -239,7 +312,7 @@ def query_gpu(field: str) -> Optional[str]:
         out = subprocess.run(query,
                              capture_output=True,
                              text=True,
-                             timeout=30,
+                             timeout=C.GPU_QUERY_TIMEOUT,
                              check=False).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return None
@@ -260,6 +333,9 @@ def gpu_name() -> str:
     return query_gpu("name") or "unknown"
 
 
+# --- Claims of units ----------------------------------------------------------
+
+
 def heartbeat_age(run_dir: str) -> float:
     """Seconds since the heartbeat of a unit (inf if it never ran)."""
     path = os.path.join(run_dir, "heartbeat")
@@ -269,8 +345,8 @@ def heartbeat_age(run_dir: str) -> float:
 
 
 def is_stale(run_dir: str) -> bool:
-    """A unit whose worker stopped beating STALE_MINUTES ago."""
-    return heartbeat_age(run_dir) > C.STALE_MINUTES * 60
+    """A unit whose worker stopped beating STALE_SECONDS ago."""
+    return heartbeat_age(run_dir) > C.STALE_SECONDS
 
 
 def _process() -> str:
@@ -292,16 +368,15 @@ def dead_process(process: str) -> bool:
     return False
 
 
-def claim(run_dir: str) -> bool:
-    """Claims a unit for this worker (another live worker keeps it).
+def claim(run_dir: str, owner: str = "") -> bool:
+    """Claims a unit for the worker `owner` (another live worker keeps it).
 
     A claim whose heartbeat is stale, or whose process of this host is
     dead, is taken over: the old claim is renamed away first, and only one
-    worker can rename it. The claim holds '<OWNER>|<host>:<pid>'.
+    worker can rename it. The claim holds '<owner>|<host>:<pid>'.
     """
     os.makedirs(run_dir, exist_ok=True)
     path = os.path.join(run_dir, "claim")
-    owner = f"{OWNER}|{_process()}"
     for _ in range(2):
         try:
             handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -315,8 +390,8 @@ def claim(run_dir: str) -> bool:
             except FileNotFoundError:
                 return False
             continue
-        with os.fdopen(handle, "w") as file:
-            file.write(owner)
+        with os.fdopen(handle, "w", encoding="utf-8") as file:
+            file.write(f"{owner}|{_process()}")
         touch(run_dir)
         return True
     return False
@@ -374,9 +449,8 @@ def owns_claim(run_dir: str) -> bool:
 
 def test_frozen(root: str) -> bool:
     """The test is ready (READY_FOR_TEST.json) or opened (sealed/): no
-    parking is retried any more."""
-    return (os.path.exists(os.path.join(root, READY)) or
-            os.path.exists(os.path.join(root, "sealed")))
+    shelving is retried any more."""
+    return os.path.exists(ready_path(root)) or os.path.exists(sealed_root(root))
 
 
 def touch(run_dir: str) -> None:
@@ -384,6 +458,9 @@ def touch(run_dir: str) -> None:
     os.makedirs(run_dir, exist_ok=True)
     with open(os.path.join(run_dir, "heartbeat"), "a", encoding="utf-8"):
         os.utime(os.path.join(run_dir, "heartbeat"))
+
+
+# --- Command lines ------------------------------------------------------------
 
 
 def classify(returncode: int, tail: str) -> str:
@@ -396,13 +473,13 @@ def classify(returncode: int, tail: str) -> str:
     """
     if returncode == 0:
         return "ok"
-    if returncode == EXIT_STOPPED:
+    if returncode == FC.EXIT_STOPPED:
         return "stopped"
-    if returncode == EXIT_CONFIG_MISMATCH:
+    if returncode == FC.EXIT_CONFIG_MISMATCH:
         return "config_mismatch"
-    if returncode == EXIT_DIVERGED:
+    if returncode == FC.EXIT_DIVERGED:
         return "diverged"
-    if returncode == EXIT_TOO_LARGE:
+    if returncode == FC.EXIT_TOO_LARGE:
         return "too_large"
     if returncode < 0 and -returncode in PREEMPT_SIGNALS:
         return "preempted"
@@ -448,8 +525,7 @@ def train_command(args,
         f"--models={model}", f"--train_split={train_split}",
         f"--num_epochs={num_epochs}", f"--seed={seed}",
         f"--output_dir={run_dir}", "--run_evaluation=False", "--resume",
-        "--checkpoint_seconds="
-        f"{getattr(args, 'checkpoint_seconds', C.CHECKPOINT_SECONDS):g}"
+        f"--checkpoint_seconds={args.checkpoint_seconds:g}"
     ] + S.as_args(cfg)
     if validate:
         cmd += [
@@ -457,44 +533,60 @@ def train_command(args,
             f"--val_every={C.VAL_EVERY}"
         ]
     if model not in S.PRETRAINED:
-        cmd.append(f"--max_params_m={S.MAX_PARAMS_M}")
+        cmd.append(f"--max_params_m={C.MAX_PARAMS_M}")
     return cmd + shlex.split(args.extra) + list(extra or [])
 
 
-def driver_parser(doc: str,
-                  epochs: int,
-                  required: bool = True,
-                  n_trials: bool = True) -> argparse.ArgumentParser:
-    """The options shared by the drivers (search, confirm, final)."""
+def base_parser(doc: str, n_trials: bool = True) -> argparse.ArgumentParser:
+    """The options shared by the drivers and the worker."""
     parser = argparse.ArgumentParser(description=doc.splitlines()[0])
-    parser.add_argument("--model", required=required, choices=sorted(S.SPACE))
-    parser.add_argument("--tower", required=required, choices=C.TOWERS_SEARCHED)
     parser.add_argument("--root",
-                        default="outputs/hpo",
+                        default=C.DEFAULT_ROOT,
                         help="Root of the track (studies, runs, alerts).")
-    parser.add_argument("--dataset_dir", default="data/FLOATSense")
+    parser.add_argument("--dataset_dir", default=C.DEFAULT_DATASET)
     parser.add_argument("--extra",
                         default="",
                         help="Extra run.py flags of every run.")
     parser.add_argument("--python",
                         default=sys.executable,
                         help="Python that runs scripts/train/run.py.")
+    parser.add_argument("--owner",
+                        default=f"{socket.gethostname()}-{os.getpid()}",
+                        help="Stable identity of the worker (written into "
+                        "its locks and claims).")
     parser.add_argument("--dry_run",
                         action="store_true",
                         help="CPU stub instead of training.")
-    parser.add_argument("--epochs",
-                        type=int,
-                        default=epochs,
-                        help="Epochs per run (the protocol's value).")
+    parser.add_argument("--stub_seconds",
+                        type=float,
+                        default=C.STUB_SECONDS,
+                        help="Seconds per validation of the dry-run stub.")
     parser.add_argument("--checkpoint_seconds",
                         type=float,
-                        default=C.CHECKPOINT_SECONDS,
-                        help="Wall time between two resume saves of a run.")
+                        default=FC.CHECKPOINT_SECONDS,
+                        help="Wall time between two resume saves of every "
+                        "run (run.py --checkpoint_seconds).")
     if n_trials:
         parser.add_argument("--n_trials",
                             type=int,
                             default=C.N_TRIALS,
                             help="Budget per study (the protocol: N_TRIALS).")
+    return parser
+
+
+def driver_parser(doc: str,
+                  epochs: int,
+                  required: bool = True,
+                  n_trials: bool = True) -> argparse.ArgumentParser:
+    """The options of a driver (search, confirm, final): `base_parser`, the
+    (model, tower) and the epochs per run."""
+    parser = base_parser(doc, n_trials)
+    parser.add_argument("--model", required=required, choices=sorted(S.SPACE))
+    parser.add_argument("--tower", required=required, choices=C.TOWERS_SEARCHED)
+    parser.add_argument("--epochs",
+                        type=int,
+                        default=epochs,
+                        help="Epochs per run (the protocol's value).")
     return parser
 
 
@@ -516,7 +608,7 @@ class Heartbeat:
         self.thread = threading.Thread(target=self._beat, daemon=True)
 
     def _beat(self):
-        while not self.stop.wait(HEARTBEAT_SECONDS):
+        while not self.stop.wait(C.HEARTBEAT_SECONDS):
             try:
                 touch(self.run_dir)
                 if self.on_beat is not None:
@@ -532,6 +624,9 @@ class Heartbeat:
     def __exit__(self, *exc):
         self.stop.set()
         self.thread.join()
+
+
+# --- Attempts -----------------------------------------------------------------
 
 
 def attempts_path(run_dir: str) -> str:
@@ -627,13 +722,21 @@ def add_attempt(record: Dict, start: float, status: str,
     close_attempt(open_attempt(record, start, gpu), start, status, returncode)
 
 
+def beat_attempt(run_dir: str, record: Dict, event: Dict, start: float,
+                 owned: Optional[Callable[[], bool]]) -> None:
+    """Heartbeat of an open attempt: its end moved to now, the record
+    written while the unit is ours."""
+    update_attempt(event, start)
+    save_attempts(run_dir, record, owned)
+
+
 def _iso(stamp: float) -> str:
     return datetime.datetime.fromtimestamp(stamp).isoformat(timespec="seconds")
 
 
 def event_status(event: Dict) -> str:
     """Status of an attempt; an open one ('running') whose end was last
-    updated STALE_MINUTES ago was hard-killed: 'killed'."""
+    updated STALE_SECONDS ago was hard-killed: 'killed'."""
     status = event.get("status") or "unknown"
     if status != "running":
         return status
@@ -642,7 +745,7 @@ def event_status(event: Dict) -> str:
     except (KeyError, TypeError, ValueError):
         return "killed"
     age = (datetime.datetime.now() - end).total_seconds()
-    return "killed" if age > C.STALE_MINUTES * 60 else "running"
+    return "killed" if age > C.STALE_SECONDS else "running"
 
 
 def close_killed(record: Dict, resume_mtime: Optional[float] = None) -> None:
@@ -678,35 +781,81 @@ def check_progress(root: str, name: str, run_dir: str, record: Dict) -> bool:
     return True
 
 
-def park(root: str, name: str, run_dir: str, reason: str, record: Dict,
-         details: Dict) -> str:
-    """Parks a unit: alert record and PARKED marker ('early': none of its
-    last MAX_ATTEMPTS attempts saved a resume state, i.e. each failed
-    before its first validation or resume save; hpo/worker.py counts these
-    toward a broken machine). Returns the alert path."""
-    path = alert(root, name, f"shelved after {reason}", {
+# --- Shelving -----------------------------------------------------------------
+
+
+def shelve(root: str, name: str, run_dir: str, kind: str, record: Dict,
+           details: Dict) -> str:
+    """Shelves a unit after its failures: alert record and SHELVED marker
+    with the `kind` of its last failure ('crash', 'oom', 'preempted',
+    'hardware' or 'driver_errors') and 'early' (none of its last
+    MAX_ATTEMPTS attempts saved a resume state, i.e. each failed before
+    its first validation or resume save; hpo/worker.py counts these toward
+    a broken machine). Returns the alert path."""
+    message = f"shelved after {kind}"
+    path = alert(root, name, message, {
         "run_dir": run_dir,
         "attempts": record,
         **details
     })
+    early = not any(e.get("saved") for e in record["events"][-C.MAX_ATTEMPTS:])
     write_json(
-        os.path.join(run_dir, "PARKED"),
+        shelved_path(run_dir),
         {
-            "time":
-                now(),
-            "reason":
-                reason,
-            "host":
-                socket.gethostname(),
-            "alert":
-                path,
-            "early":
-                not any(
-                    e.get("saved") for e in record["events"][-C.MAX_ATTEMPTS:]),
+            "time": now(),
+            "kind": kind,
+            "message": message,
+            "host": socket.gethostname(),
+            "alert": path,
+            "early": early,
             "id":
-                uuid.uuid4().hex  # tells two parkings apart
+                uuid.uuid4().hex  # tells two shelvings apart
         })
     return path
+
+
+def shelve_study(root: str,
+                 model: str,
+                 tower: str,
+                 kind: str,
+                 message: str,
+                 retry: bool = False,
+                 units: Sequence[str] = ()) -> bool:
+    """Shelves a study once, with an alert; True if this call shelved it.
+
+    Args:
+        root (str): Root of the track.
+        model (str): Model name.
+        tower (str): Tower name.
+        kind (str): Why: 'over_cap', 'oom' or 'shelved_trials' (the study
+          stopped drawing, search.capped), 'no_plan', 'no_finite_median'
+          or 'unit_shelved'.
+        message (str): The reason, for the reader.
+        retry (bool): Retried once by hpo/pick.py (a kind in
+          RETRIED_KINDS); any other shelving is for good.
+        units (Sequence[str]): The unit ids shelved for good ('unit_shelved').
+    """
+    if not write_once(
+            study_shelved_path(root, model, tower),
+        {
+            "kind": kind,
+            "message": message,
+            "retry": retry,
+            "units": list(units),
+            "time": now(),
+            "id":
+                uuid.uuid4().hex  # tells two shelvings apart
+        }):
+        return False
+    alert(
+        root, search_id(model, tower), f"study shelved: {message}", {
+            "kind": kind,
+            "note": f"the other towers of {model} go on without it; "
+                    f"{model}/{tower} has no winner and is missing in the "
+                    "leaderboard" +
+                    (" unless its retry succeeds" if retry else ""),
+        })
+    return True
 
 
 def marker_age(path: str) -> float:
@@ -718,41 +867,39 @@ def marker_age(path: str) -> float:
         return 0.0
 
 
-def park_final(run_dir: str, frozen: bool = False) -> bool:
-    """A parked unit that will not be retried: retried once already (its
-    marker is a second parking), or the test is ready (`frozen`)."""
-    marker = read_json(os.path.join(run_dir, "PARKED"))
+def shelved_for_good(run_dir: str, frozen: bool = False) -> bool:
+    """A shelved unit that will not be retried: retried once already (its
+    marker is a second shelving), or the test is ready (`frozen`)."""
+    marker = read_json(shelved_path(run_dir))
     if marker is None:
         return False
     retried = read_attempts(run_dir).get("retried")
-    return frozen or (retried is not None and retried.get("parked") != marker)
+    return frozen or (retried is not None and retried.get("shelved") != marker)
 
 
 def retry_due(run_dir: str, frozen: bool = False) -> bool:
-    """A parked unit whose single retry is due (RETRY_SHELVED_AFTER)."""
-    path = os.path.join(run_dir, "PARKED")
-    return (os.path.exists(path) and not park_final(run_dir, frozen) and
-            marker_age(path) >= C.RETRY_SHELVED_AFTER)
+    """A shelved unit whose single retry is due (RETRY_SHELVED_AFTER)."""
+    return (is_shelved(run_dir) and not shelved_for_good(run_dir, frozen) and
+            marker_age(shelved_path(run_dir)) >= C.RETRY_SHELVED_AFTER)
 
 
 def retry_unit(root: str, name: str, run_dir: str, force: bool = False) -> bool:
-    """Retries a parked unit once (the caller checked `retry_due`; `force`:
-    an operator, even after a final parking): its failure counts reset, its
-    PARKED marker renamed away, an alert.
+    """Retries a shelved unit once (the caller checked `retry_due`; `force`:
+    an operator, even after a shelving for good): its failure counts reset,
+    its SHELVED marker renamed away, an alert.
 
     Returns:
         bool: True if the unit was retried.
     """
-    marker = read_json(os.path.join(run_dir, "PARKED"))
+    marker = read_json(shelved_path(run_dir))
     record = read_attempts(run_dir)
-    if marker is None or (park_final(run_dir) and not force):
+    if marker is None or (shelved_for_good(run_dir) and not force):
         return False
-    record["retried"] = {"time": now(), "parked": marker}
+    record["retried"] = {"time": now(), "shelved": marker}
     record["crashes"] = record["free"] = 0
     save_attempts(run_dir, record)
     try:
-        os.replace(os.path.join(run_dir, "PARKED"),
-                   os.path.join(run_dir, "PARKED.retried"))
+        os.replace(shelved_path(run_dir), f"{shelved_path(run_dir)}.retried")
     except FileNotFoundError:
         return False
     alert(root, name, "shelved unit retried (once)", {"run_dir": run_dir})
@@ -761,7 +908,7 @@ def retry_unit(root: str, name: str, run_dir: str, force: bool = False) -> bool:
 
 def held(run_dir: Optional[str]) -> bool:
     """A unit held for an operator (CONFIG_MISMATCH marker)."""
-    return bool(run_dir) and os.path.exists(os.path.join(run_dir, HOLD))
+    return bool(run_dir) and os.path.exists(os.path.join(run_dir, HELD))
 
 
 def hold(root: str, name: str, run_dir: str, details: Dict) -> str:
@@ -773,19 +920,14 @@ def hold(root: str, name: str, run_dir: str, details: Dict) -> str:
         "operator", {
             "run_dir": run_dir,
             "note": "remove the resume state (or the run directory), then "
-                    f"the {HOLD} marker",
+                    f"the {HELD} marker",
             **details
         })
-    write_json(os.path.join(run_dir, HOLD), {"time": now(), "alert": path})
+    write_json(os.path.join(run_dir, HELD), {"time": now(), "alert": path})
     return path
 
 
-def _beat_attempt(run_dir: str, record: Dict, event: Dict, start: float,
-                  owned: Optional[Callable[[], bool]]) -> None:
-    """Heartbeat of an open attempt: its end moved to now, the record
-    written while the unit is ours."""
-    update_attempt(event, start)
-    save_attempts(run_dir, record, owned)
+# --- Running a unit -----------------------------------------------------------
 
 
 def _attempt(cmd: List[str], run_dir: str, env: Optional[Dict[str, str]],
@@ -815,7 +957,7 @@ def _attempt(cmd: List[str], run_dir: str, env: Optional[Dict[str, str]],
                 process.send_signal(signal.SIGUSR1)
             for line in process.stdout:
                 log.write(line)
-                tail = (tail + [line])[-TAIL_LINES:]
+                tail = (tail + [line])[-C.TAIL_LINES:]
                 match = PARAMS_LINE.match(line)
                 if match:
                     params = int(match.group(1))
@@ -827,6 +969,67 @@ def _attempt(cmd: List[str], run_dir: str, env: Optional[Dict[str, str]],
             returncode = process.wait()
             _CHILDREN.discard(process)
     return returncode, "".join(tail), stopped, params
+
+
+def _write_config(run_dir: str, cmd: Optional[List[str]],
+                  config: Optional[Dict]) -> None:
+    """config.json of a unit: the hyperparameters as passed to run.py and
+    the command."""
+    write_json(
+        os.path.join(run_dir, "config.json"), {
+            "config": S.formatted(config) if config is not None else None,
+            "command": cmd,
+            "command_line": shlex.join(cmd) if cmd else None,
+            "time": now()
+        })
+
+
+def _run_attempt(cmd: List[str], run_dir: str, model: str,
+                 env: Optional[Dict[str,
+                                    str]], on_val: Optional[Callable[[Dict],
+                                                                     bool]],
+                 record: Dict, owned: Optional[Callable[[], bool]]) -> tuple:
+    """One attempt of `run_unit`, recorded open while it runs and closed
+    with its status ('stopped' for a failure once the worker was asked to
+    stop).
+
+    Returns:
+        (str, int, str, Optional[int]): status, exit code, last lines of
+          the log and trainable parameters (if printed).
+    """
+    resume = resume_path(run_dir, model)
+    close_killed(record, _mtime(resume))
+    start = time.time()
+    event = open_attempt(record, start, gpu_name(), _mtime(resume))
+    save_attempts(run_dir, record, owned)
+    returncode, text, pruned, params = _attempt(
+        cmd, run_dir, env, on_val,
+        functools.partial(beat_attempt, run_dir, record, event, start, owned))
+    status = "pruned" if pruned else classify(returncode, text)
+    if status not in FINAL_STATUSES + ("oom",) and STOP.is_set():
+        status = "stopped"  # the worker was asked to stop
+    close_attempt(event, start, status, returncode, _mtime(resume))
+    return status, returncode, text, params
+
+
+def _ending_statuses(status: str, record: Dict, oom_ends: bool) -> tuple:
+    """The statuses that end the unit after this attempt: a first out of
+    memory is resumed once as a crash (a transient OOM: another process on
+    the GPU), with `oom_ends` a later one ends it."""
+    first_oom = status == "oom" and oom_ends and not record.get("oom_resumed")
+    record["oom_resumed"] = record.get("oom_resumed") or first_oom
+    return FINAL_STATUSES + ("stopped",) + (
+        ("oom",) if oom_ends and not first_oom else ())
+
+
+def _count_failure(status: str, record: Dict, run_dir: str,
+                   owned: Optional[Callable[[], bool]]) -> bool:
+    """Counts a failed attempt (a crash or out of memory, else a free
+    retry); True if the unit is to be shelved."""
+    record["crashes" if status in ("crash", "oom") else "free"] += 1
+    save_attempts(run_dir, record, owned)
+    return (record["crashes"] >= C.MAX_ATTEMPTS or
+            record["free"] > C.MAX_FREE_RETRIES)
 
 
 def run_unit(name: str,
@@ -842,7 +1045,7 @@ def run_unit(name: str,
     """Runs one unit to completion, resuming it after failures.
 
     Args:
-        name (str): Unit name of the records and alerts.
+        name (str): Unit id of the records and alerts.
         cmd (List[str]): The run.py command (with --resume).
         run_dir (str): Output directory of the run (log, heartbeat,
           config.json, attempts.json).
@@ -861,131 +1064,98 @@ def run_unit(name: str,
 
     Returns:
         dict: 'status' ('ok', 'pruned', 'diverged', 'too_large', 'oom',
-          'stopped', 'config_mismatch' or 'parked'), 'history' when ok,
+          'stopped', 'config_mismatch' or 'shelved'), 'history' when ok,
           'params' (trainable count, when printed) and 'tail' (last lines
           of the log).
     """
     os.makedirs(run_dir, exist_ok=True)
-    write_json(
-        os.path.join(run_dir, "config.json"), {
-            "config": S.formatted(config) if config is not None else None,
-            "command": cmd,
-            "command_line": shlex.join(cmd),
-            "time": now()
-        })
+    _write_config(run_dir, cmd, config)
     record = read_attempts(run_dir)
     params = None
-    gpu = gpu_name()
-    resume = resume_path(run_dir, model)
     while True:
         if STOP.is_set():
             return {"status": "stopped", "params": params, "tail": ""}
-        close_killed(record, _mtime(resume))
-        start = time.time()
-        event = open_attempt(record, start, gpu, _mtime(resume))
-        save_attempts(run_dir, record, owned)
-        returncode, text, stopped, printed = _attempt(
-            cmd, run_dir, env, on_val,
-            functools.partial(_beat_attempt, run_dir, record, event, start,
-                              owned))
+        status, returncode, text, printed = _run_attempt(
+            cmd, run_dir, model, env, on_val, record, owned)
         params = printed if printed is not None else params
-        status = "pruned" if stopped else classify(returncode, text)
-        if (status not in ("ok", "pruned", "diverged", "too_large", "oom",
-                           "config_mismatch") and STOP.is_set()):
-            status = "stopped"  # the worker was asked to stop
-        close_attempt(event, start, status, returncode, _mtime(resume))
         check_progress(root, name, run_dir, record)
         result = {"status": status, "params": params, "tail": text}
-        # A first out-of-memory is resumed once as a crash (a transient
-        # OOM: another process on the GPU).
-        first_oom = (status == "oom" and oom_ends and
-                     not record.get("oom_resumed"))
-        record["oom_resumed"] = record.get("oom_resumed") or first_oom
-        ends = ("ok", "pruned", "diverged", "too_large", "stopped",
-                "config_mismatch") + (
-                    ("oom",) if oom_ends and not first_oom else ())
+        ends = _ending_statuses(status, record, oom_ends)
+        details = {"command": cmd, "tail": text[-C.ALERT_TAIL_CHARS:]}
         if status in ends or (owned is not None and not owned()):
             save_attempts(run_dir, record, owned)
             if status == "ok":
                 result["history"] = read_json(history_path(run_dir, model))
             elif status == "config_mismatch":
-                hold(root, name, run_dir, {
-                    "command": cmd,
-                    "tail": text[-4000:]
-                })
+                hold(root, name, run_dir, details)
             elif status not in ends:
                 result["status"] = "stopped"  # no longer ours
             return result
-        key = "crashes" if status in ("crash", "oom") else "free"
-        record[key] += 1
-        save_attempts(run_dir, record, owned)
-        if (record["crashes"] >= C.MAX_ATTEMPTS or
-                record["free"] > C.MAX_FREE_RETRIES):
-            park(root, name, run_dir, status, record, {
-                "command": cmd,
-                "tail": text[-4000:]
-            })
-            return {"status": "parked", "params": params, "tail": text}
+        if _count_failure(status, record, run_dir, owned):
+            shelve(root, name, run_dir, status, record, details)
+            return {"status": "shelved", "params": params, "tail": text}
         print(f"{name}: {status} (exit {returncode}), resuming", flush=True)
-        time.sleep(RETRY_SECONDS)
+        time.sleep(C.RETRY_SECONDS)
+
+
+# --- Dry-run stub -------------------------------------------------------------
 
 
 def stub_curve(cfg: Dict, key: int, epochs: int) -> List[Dict]:
     """Validation curve of a dry run (no training): a saturating curve
     whose level depends on the learning rate and on `key`, deterministic."""
-    level = 0.6 + 0.3 * ((key * 0.618034) % 1.0)
+    level = 0.6 + 0.3 * ((key * C.STUB_LEVEL_STEP) % 1.0)
     level -= 0.05 * abs(math.log10(cfg["lr"] / 1e-3))
     curve = []
     for epoch in range(C.VAL_EVERY, epochs + 1, C.VAL_EVERY):
-        value = level * (1.0 - 0.5**(epoch / 30.0))
+        value = level * (1.0 - 0.5**(epoch / C.STUB_HALF_EPOCHS))
         curve.append({
             "epoch": epoch,
             "r2_mean": value,
             "r2_top": value - 0.1,
             "r2_base": value + 0.05,
-            "r2_gauges": [value] * 11
+            "r2_gauges": [value] * len(FC.GAUGE_STEMS)
         })
     return curve
+
+
+def _stub_record(run_dir: Optional[str], cfg: Dict, start: float,
+                 status: str) -> None:
+    """config.json and the attempt of a dry run (GPU 'none'), as
+    `run_unit` writes them."""
+    if run_dir is None:
+        return
+    _write_config(run_dir, None, cfg)
+    record = read_attempts(run_dir)
+    add_attempt(record, start, status, None, "none")
+    save_attempts(run_dir, record)
 
 
 def stub_unit(cfg: Dict,
               key: int,
               epochs: int,
               on_val: Optional[Callable[[Dict], bool]] = None,
-              run_dir: Optional[str] = None) -> Dict:
+              run_dir: Optional[str] = None,
+              seconds: float = C.STUB_SECONDS) -> Dict:
     """`run_unit` of a dry run: streams `stub_curve` to `on_val` (one
-    validation every STUB_SECONDS; a stop request stops it). With
-    `run_dir`, it writes config.json and records the attempt (GPU 'none')
-    in attempts.json, as run_unit does."""
+    validation every `seconds`; a stop request stops it). With `run_dir`,
+    it writes config.json and records the attempt in attempts.json."""
     start = time.time()
-
-    def finish(status: str) -> None:
-        if run_dir is None:
-            return
-        write_json(os.path.join(run_dir, "config.json"), {
-            "config": S.formatted(cfg),
-            "command": None,
-            "time": now()
-        })
-        record = read_attempts(run_dir)
-        add_attempt(record, start, status, None, "none")
-        save_attempts(run_dir, record)
-
     curve = stub_curve(cfg, key, epochs)
     for scores in curve:
-        if STOP.wait(STUB_SECONDS) if STUB_SECONDS else STOP.is_set():
-            finish("stopped")
-            return {"status": "stopped", "params": 1000, "tail": ""}
+        if STOP.wait(seconds) if seconds else STOP.is_set():
+            _stub_record(run_dir, cfg, start, "stopped")
+            return {"status": "stopped", "params": C.STUB_PARAMS, "tail": ""}
         if on_val is not None and on_val(scores):
-            finish("pruned")
-            return {"status": "pruned", "params": 1000, "tail": ""}
-    finish("ok")
+            _stub_record(run_dir, cfg, start, "pruned")
+            return {"status": "pruned", "params": C.STUB_PARAMS, "tail": ""}
+    _stub_record(run_dir, cfg, start, "ok")
     return {
         "status": "ok",
         "history": {
             "train_loss": [0.0] * epochs,
             "val_r2": curve
         },
-        "params": 1000,
+        "params": C.STUB_PARAMS,
         "tail": ""
     }

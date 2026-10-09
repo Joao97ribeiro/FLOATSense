@@ -3,6 +3,8 @@
 # pylint: disable=too-many-arguments
 # pylint: disable=too-many-positional-arguments
 # pylint: disable=too-many-locals
+# pylint: disable=too-many-instance-attributes
+# pylint: disable=broad-exception-caught
 """Units, locks, phase advancement and pick order of the track's workers.
 
 A worker is given a list of models and runs every phase of them, one unit
@@ -22,33 +24,33 @@ confirmation unit of a frozen plan; a final unit of a winner. Within a
 phase the order is the same (most work left first). Work is counted in
 search trials (a 300-epoch unit is UNIT_FACTOR trials), times an optional
 cost per model (`cost`, e.g. GPU-hours per trial, so the slowest models
-start first). Units done, parked, held or claimed by another live process
+start first). Units done, shelved, held or claimed by another live process
 are skipped before any lock is taken.
 
 Locks are files created with O_EXCL under <root>/locks/ holding an owner
 token, beaten (mtime) every LOCK_BEAT_SECONDS. A lock is stale when its
-mtime is STALE_MINUTES older than a probe file touched now
+mtime is STALE_SECONDS older than a probe file touched now
 (common.server_time: no machine clock is compared), or at once when it
 belongs to another incarnation of the same owner or to a dead process of
 this host (so does a claim, common.claim). A stale lock is taken
 over under a breaker lock (only one worker breaks it, and only it removes
 the breaker); a worker that finds its token gone stops its unit.
 
-Parking ('shelved' for the reader): a study with fewer than N_TRIALS
-counted trials is parked when it stops drawing (search.capped); with
-N_TRIALS counted trials it is never parked for that, and its plan is
-frozen from the counted trials. A study is also parked with too few
-eligible trials for a plan, no finite median in phase 2, or a unit parked
-for good. A parked study is left out of the gate of its model, has no
-winner, and is missing in the test and the leaderboard. Retry: `advance`
-retries a parked unit, or a study parked after its parked trials, once,
-RETRY_SHELVED_AFTER after its parking, with its failure counts reset (a
-study counts only the trials parked or out of memory after that); a
-second parking is final, and so is every parking once READY_FOR_TEST.json
-or sealed/ exists. A study capped after parked trials or out of memory
-during its extension is parked and retried the same way; capped again, its
-plan is frozen from its counted trials. An operator retries a shelved unit
-or study at once, even after a final parking (before READY_FOR_TEST.json):
+Shelving: a study with fewer than N_TRIALS counted trials is shelved when
+it stops drawing (search.capped); with N_TRIALS counted trials it is never
+shelved for that, and its plan is frozen from the counted trials. A study
+is also shelved with too few eligible trials for a plan, no finite median
+in phase 2, or a unit shelved for good. A shelved study is left out of the
+gate of its model, has no winner, and is missing in the test and the
+leaderboard. Retry: `advance` retries a shelved unit, or a study shelved
+for a kind in RETRIED_KINDS, once, RETRY_SHELVED_AFTER after its shelving,
+with its failure counts reset (a study counts only the trials shelved or
+out of memory after that); a second shelving is for good, and so is every
+shelving once READY_FOR_TEST.json or sealed/ exists. A study capped by a
+kind in RETRIED_KINDS during its extension is shelved and retried the same
+way; capped again, its plan is frozen from its counted trials. An operator
+retries a shelved unit or study at once, even after a shelving for good
+(before READY_FOR_TEST.json), by the unit id of the alerts and the status:
 
     python hpo/pick.py --root=outputs/hpo --retry=final/tcn_opt2/s0
     python hpo/pick.py --root=outputs/hpo --retry=search/tcn_opt2  # study
@@ -57,10 +59,10 @@ or study at once, even after a final parking (before READY_FOR_TEST.json):
 unit held for an operator (configuration mismatch) is never picked.
 
 `advance` moves the phases forward from the files alone, idempotently
-(every decision is a write-once file): the parkings and retries; the
+(every decision is a write-once file): the shelvings and retries; the
 extension decision (extended or not, taken once) once the studies of a
-model not parked for good have N_TRIALS counted trials (it waits while a
-study is parked with its retry pending); the plan of a study once
+model not shelved for good have N_TRIALS counted trials (it waits while a
+study is shelved with its retry pending); the plan of a study once
 its search is over (with the extension decided); the winner once every
 unit of a plan is done; READY_FOR_TEST once every final unit of every
 learned model is trained (`mark_ready`; the test itself is opened by
@@ -76,7 +78,6 @@ import statistics
 import sys
 import threading
 import time
-import traceback
 import uuid
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -101,25 +102,41 @@ Unit = collections.namedtuple("Unit",
 
 
 def unit_id(unit: Unit) -> str:
-    """Readable name of a unit (records, events, status)."""
-    study = f"{unit.model}_{unit.tower}"
+    """Name of a unit in the records, events, alerts and status."""
     if unit.phase == "search":
-        return f"search/{study}"
+        return common.search_id(unit.model, unit.tower)
     if unit.phase == "confirm":
-        return f"confirm/{study}/c{unit.rank}_s{unit.seed}"
-    return f"final/{study}/s{unit.seed}"
+        return common.confirm_id(unit.model, unit.tower, unit.rank, unit.seed)
+    return common.final_id(unit.model, unit.tower, unit.seed)
+
+
+def _unit_of(phase: str, study: str, rest: List[str]) -> Unit:
+    """The unit of a parsed id (ValueError if malformed)."""
+    model, tower = study.rsplit("_", 1)
+    if phase == "search" and not rest:
+        return Unit("search", model, tower)
+    if phase == "confirm" and len(rest) == 1:
+        rank, seed = rest[0].removeprefix("c").split("_s")
+        return Unit("confirm", model, tower, int(rank), int(seed))
+    if phase == "final" and len(rest) == 1:
+        return Unit("final", model, tower, None, int(rest[0][1:]))
+    raise ValueError(phase)
 
 
 def parse_unit(text: str) -> Unit:
-    """Inverse of `unit_id`."""
-    parts = text.split("/")
-    model, tower = parts[1].rsplit("_", 1)
-    if parts[0] == "search":
-        return Unit("search", model, tower)
-    if parts[0] == "confirm":
-        rank, seed = parts[2][1:].split("_s")
-        return Unit("confirm", model, tower, int(rank), int(seed))
-    return Unit("final", model, tower, None, int(parts[2][1:]))
+    """Inverse of `unit_id`; ValueError for any other text."""
+    phase, _, rest = text.partition("/")
+    try:
+        study, *more = rest.split("/")
+        unit = _unit_of(phase, study, more)
+    except ValueError:
+        unit = None
+    if (unit is None or unit_id(unit) != text or unit.model not in S.SPACE or
+            unit.tower not in C.TOWERS_SEARCHED):
+        raise ValueError(f"not a unit id: {text!r} (search/<model>_<tower>, "
+                         "confirm/<model>_<tower>/c<rank>_s<seed> or "
+                         "final/<model>_<tower>/s<seed>)")
+    return unit
 
 
 def lock_name(unit: Unit) -> str:
@@ -161,10 +178,11 @@ class Lock:
     Args:
         root (str): Root of the track.
         name (str): Lock name (file <root>/locks/<name>.lock).
-        owner (str): Stable identity of the worker (survives a requeue).
-        restart (int): Incarnation of the owner (larger is newer).
+        owner (str): Stable identity of the worker (kept across its
+          restarts).
+        restart (int): Incarnation of the owner.
         stale_seconds (float, optional): Age of a stale lock (default
-          STALE_MINUTES).
+          STALE_SECONDS).
     """
 
     def __init__(self,
@@ -177,15 +195,15 @@ class Lock:
         self.path = os.path.join(self.dir, f"{name}.lock")
         self.owner = owner
         self.restart = int(restart)
-        self.stale_seconds = (C.STALE_MINUTES *
-                              60 if stale_seconds is None else stale_seconds)
+        self.stale_seconds = (C.STALE_SECONDS
+                              if stale_seconds is None else stale_seconds)
         self.token = (f"{owner}:{self.restart}:{socket.gethostname()}:"
                       f"{os.getpid()}:{uuid.uuid4().hex[:8]}")
 
     def acquire(self) -> bool:
         """Takes the lock (a stale one is taken over); False if held."""
         os.makedirs(self.dir, exist_ok=True)
-        for _ in range(3):
+        for _ in range(C.LOCK_TRIES):
             if self._create():
                 return True
             holder = read_lock(self.path)
@@ -223,7 +241,7 @@ class Lock:
     def stale(self, holder: Dict) -> bool:
         """A lock of a dead worker (not beaten, or its process of this host
         gone), or of another incarnation of ours (same owner, different
-        restart count: the job was restarted)."""
+        restart count: the worker was restarted)."""
         if (holder.get("owner") == self.owner and
                 int(holder.get("restart", self.restart)) != self.restart):
             return True
@@ -293,7 +311,9 @@ class Lock:
             return "unknown"
         return "held" if holder.get("token") == self.token else "lost"
 
-    def owned(self, tries: int = 3, wait: float = 1.0) -> bool:
+    def owned(self,
+              tries: int = C.OWNED_TRIES,
+              wait: float = C.OWNED_WAIT_SECONDS) -> bool:
         """Is the lock still ours? A transient read error is retried; after
         `tries` unclear reads the answer is False (the safe side: a result
         is dropped rather than told twice)."""
@@ -322,7 +342,7 @@ class Lock:
                 pass
 
 
-class Beater:  # pylint: disable=too-many-instance-attributes
+class Beater:
     """Beats a lock every `interval` seconds (and calls `on_beat`); calls
     `on_lost` (once) if the lock was taken over (readable, with another
     token) or after LOCK_BEAT_FAILURES unclear beats in a row (lock
@@ -388,36 +408,117 @@ def _hours(trial) -> Optional[float]:
             trial.datetime_start).total_seconds() / 3600
 
 
-parked_path = confirm.parked_path
-park_study = confirm.park_study
-
-
-def study_park_final(root: str,
-                     model: str,
-                     tower: str,
-                     frozen: Optional[bool] = None) -> bool:
-    """A parked study that will not be retried: a parking that is not
-    after failures, a second parking after its retry, or any parking once
-    the test is ready (`frozen`)."""
-    marker = common.read_json(parked_path(root, model, tower))
+def study_shelved_for_good(root: str,
+                           model: str,
+                           tower: str,
+                           frozen: Optional[bool] = None) -> bool:
+    """A shelved study that will not be retried: a shelving that is not
+    retried (its kind), a second shelving after its retry, or any shelving
+    once the test is ready (`frozen`)."""
+    marker = common.read_json(common.study_shelved_path(root, model, tower))
     if marker is None:
         return False
     if (common.test_frozen(root) if frozen is None else frozen):
         return True
     if not marker.get("retry"):
         return True
-    record = common.read_json(search.retried_path(root, model, tower))
-    return record is not None and record.get("parked") != marker
+    record = common.read_json(common.study_retried_path(root, model, tower))
+    return record is not None and record.get("shelved") != marker
 
 
 def unit_done(root: str, unit: Unit) -> bool:
     """A confirmation or final unit with its result recorded."""
-    return os.path.exists(os.path.join(run_dir(root, unit), "result.json"))
+    return os.path.exists(common.result_path(run_dir(root, unit)))
 
 
-def unit_parked(root: str, unit: Unit) -> bool:
-    """A confirmation or final unit parked after its failures."""
-    return os.path.exists(os.path.join(run_dir(root, unit), "PARKED"))
+def unit_shelved(root: str, unit: Unit) -> bool:
+    """A confirmation or final unit shelved after its failures."""
+    return common.is_shelved(run_dir(root, unit))
+
+
+def _search_state(root: str, model: str, tower: str, n_trials: int) -> Dict:
+    """The search of a study, from its journal: counted, pruned, failed,
+    running and waiting trials, the failed draws and whether it stopped
+    drawing (`capped`), the best eligible trial, the median hours of a
+    completed trial, a trial held for an operator."""
+    study = search.open_study(root, model, tower, create=False)
+    trials = study.get_trials(deepcopy=False) if study else []
+    states = collections.Counter(t.state for t in trials)
+    eligible = [t for t in trials if search.eligible(t)]
+    best = max(eligible, key=lambda t: t.value) if eligible else None
+    durations = [
+        h for h in (_hours(t) for t in trials if t.state == TrialState.COMPLETE)
+        if h
+    ]
+    draws = search.failed_draws(root, model, tower, trials)
+    return dict(
+        target=search.target_trials(root, model, n_trials),
+        counted=sum(search.counted(t) for t in trials),
+        complete=states[TrialState.COMPLETE],
+        pruned=sum(t.state == TrialState.PRUNED and not search.over_cap(t)
+                   for t in trials),
+        failed=states[TrialState.FAIL],
+        capped=search.capped(draws),
+        last_trial=max((t.number for t in trials), default=-1),
+        running=states[TrialState.RUNNING],
+        waiting=states[TrialState.WAITING],
+        best=best.value if best else None,
+        best_trial=best.number if best else None,
+        hours_per_trial=(statistics.median(durations)
+                         if len(durations) >= C.MIN_DURATIONS else None),
+        # A RUNNING or WAITING trial whose run is held for an operator
+        # (configuration mismatch): the study is not picked.
+        held=any(
+            common.held(search.trial_run_dir(t))
+            for t in trials
+            if t.state in (TrialState.RUNNING, TrialState.WAITING)),
+        extension_decided=os.path.exists(search.extension_path(root, model)),
+        **draws)
+
+
+def _shelving_state(root: str, model: str, tower: str, frozen: bool) -> Dict:
+    """The shelving of a study: shelved, for good, retry due, retried."""
+    path = common.study_shelved_path(root, model, tower)
+    shelved = os.path.exists(path)
+    for_good = study_shelved_for_good(root, model, tower, frozen)
+    return dict(shelved=shelved,
+                shelved_for_good=for_good,
+                retry_due=(shelved and not for_good and
+                           common.marker_age(path) >= C.RETRY_SHELVED_AFTER),
+                retried=os.path.exists(
+                    common.study_retried_path(root, model, tower)))
+
+
+def _units_state(root: str, model: str, tower: str, frozen: bool) -> Dict:
+    """The confirmation and final units of a study: plan, winner, units
+    done, shelved (for good, or with their retry due)."""
+    plan = common.read_json(confirm.plan_path(root, model, tower))
+    winner = common.read_json(confirm.winner_path(root, model, tower))
+    confirm_units = [
+        Unit("confirm", model, tower, rank, seed)
+        for rank, seed in confirm.units(plan)
+    ] if plan else []
+    final_units = [
+        Unit("final", model, tower, None, seed) for seed in range(C.N_SEEDS)
+    ] if winner else []
+    units = confirm_units + final_units
+    return dict(
+        plan=plan is not None,
+        stopped_early=(plan or {}).get("stopped_early"),
+        winner=winner["winner_median"] if winner else None,
+        confirm_units=confirm_units,
+        final_units=final_units,
+        confirm_done=sum(unit_done(root, u) for u in confirm_units),
+        final_done=sum(unit_done(root, u) for u in final_units),
+        units_shelved=sum(unit_shelved(root, u) for u in units),
+        units_shelved_for_good=[
+            unit_id(u)
+            for u in units
+            if common.shelved_for_good(run_dir(root, u), frozen)
+        ],
+        units_retry_due=[
+            u for u in units if common.retry_due(run_dir(root, u), frozen)
+        ])
 
 
 def study_state(root: str,
@@ -428,75 +529,15 @@ def study_state(root: str,
     """Everything the picker, `advance` and the status page need to know
     about one (model, tower), read from the files only (`cost`: cost of a
     search trial per model, 1 if missing)."""
-    study = search.open_study(root, model, tower, create=False)
-    trials = study.get_trials(deepcopy=False) if study else []
-    states = collections.Counter(t.state for t in trials)
-    marker = common.read_json(parked_path(root, model, tower))
     frozen = common.test_frozen(root)
-    eligible = [t for t in trials if search.eligible(t)]
-    durations = [
-        h for h in (_hours(t) for t in trials if t.state == TrialState.COMPLETE)
-        if h
-    ]
-    draws = search.failed_draws(root, model, tower, trials)
-    final_park = study_park_final(root, model, tower, frozen)
-    state = dict(
-        model=model,
-        tower=tower,
-        target=search.target_trials(root, model, n_trials),
-        n_trials=n_trials,
-        counted=sum(search.counted(t) for t in trials),
-        complete=states[TrialState.COMPLETE],
-        pruned=sum(t.state == TrialState.PRUNED and not search.over_cap(t)
-                   for t in trials),
-        failed=states[TrialState.FAIL],
-        capped=search.capped(draws),
-        last_trial=max((t.number for t in trials), default=-1),
-        running=states[TrialState.RUNNING],
-        waiting=states[TrialState.WAITING],
-        best=max((t.value for t in eligible), default=None),
-        best_trial=(max(eligible, key=lambda t: t.value).number
-                    if eligible else None),
-        hours_per_trial=(statistics.median(durations)
-                         if len(durations) >= 3 else None),
-        parked=marker is not None,
-        park_final=final_park,
-        retry_due=(marker is not None and not final_park and common.marker_age(
-            parked_path(root, model, tower)) >= C.RETRY_SHELVED_AFTER),
-        # A RUNNING or WAITING trial whose run is held for an operator
-        # (configuration mismatch): the study is not picked.
-        held=any(
-            common.held(search.trial_run_dir(t))
-            for t in trials
-            if t.state in (TrialState.RUNNING, TrialState.WAITING)),
-        extension_decided=os.path.exists(search.extension_path(root, model)),
-        retried=os.path.exists(search.retried_path(root, model, tower)),
-        cost=(cost or {}).get(model, 1.0),
-        **draws)
-    plan = common.read_json(confirm.plan_path(root, model, tower))
-    winner = common.read_json(confirm.winner_path(root, model, tower))
-    state["plan"] = plan is not None
-    state["stopped_early"] = (plan or {}).get("stopped_early")
-    state["winner"] = winner["winner_median"] if winner else None
-    state["confirm_units"] = ([
-        Unit("confirm", model, tower, rank, seed)
-        for rank, seed in confirm.units(plan)
-    ] if plan else [])
-    state["final_units"] = ([
-        Unit("final", model, tower, None, seed) for seed in range(C.N_SEEDS)
-    ] if winner else [])
-    units = state["confirm_units"] + state["final_units"]
-    state["confirm_done"] = sum(
-        unit_done(root, u) for u in state["confirm_units"])
-    state["final_done"] = sum(unit_done(root, u) for u in state["final_units"])
-    state["units_parked"] = sum(unit_parked(root, u) for u in units)
-    state["units_park_final"] = [
-        unit_id(u) for u in units if common.park_final(run_dir(root, u), frozen)
-    ]
-    state["units_retry_due"] = [
-        u for u in units if common.retry_due(run_dir(root, u), frozen)
-    ]
-    state["search_pending"] = (not state["parked"] and not state["held"] and (
+    state = dict(model=model,
+                 tower=tower,
+                 n_trials=n_trials,
+                 cost=(cost or {}).get(model, 1.0))
+    state.update(_search_state(root, model, tower, n_trials))
+    state.update(_shelving_state(root, model, tower, frozen))
+    state.update(_units_state(root, model, tower, frozen))
+    state["search_pending"] = (not state["shelved"] and not state["held"] and (
         (not state["capped"] and state["counted"] < state["target"]) or
         state["running"] > 0 or state["waiting"] > 0))
     state["phase"] = phase_of(state)
@@ -507,9 +548,9 @@ def study_state(root: str,
 def phase_of(state: Dict) -> str:
     """Phase of a study: search, waiting (for the other towers of its
     model), held (a trial held for an operator), confirm, final, done or
-    parked."""
-    if state["parked"]:
-        return "parked"
+    shelved."""
+    if state["shelved"]:
+        return "shelved"
     if state["held"] and not state["plan"]:
         return "held"
     if state["final_units"]:
@@ -523,7 +564,7 @@ def phase_of(state: Dict) -> str:
 def work_left(state: Dict) -> float:
     """Work left in a study: search trials (a 300-epoch unit counts
     UNIT_FACTOR) times the cost of a trial of its model."""
-    if state["parked"]:
+    if state["shelved"]:
         return 0.0
     trials = max(0, state["target"] - state["counted"])
     confirm_left = (len(state["confirm_units"]) -
@@ -543,7 +584,7 @@ def broken(root: str, name: str, reason: str = "study unreadable") -> None:
     if name not in _BROKEN:
         _BROKEN.add(name)
         common.alert(root, name, f"{reason}, skipped",
-                     {"error": traceback.format_exc()[-1500:]})
+                     {"error": common.traceback_tail()})
 
 
 def all_states(root: str,
@@ -556,57 +597,60 @@ def all_states(root: str,
         for tower in C.TOWERS_SEARCHED:
             try:
                 states.append(study_state(root, model, tower, n_trials, cost))
-            except Exception:  # pylint: disable=broad-exception-caught
-                broken(root, f"study/{model}_{tower}")
+            except Exception:
+                broken(root, common.search_id(model, tower))
     return states
 
 
 # --- Phase advancement -------------------------------------------------------
 
 
-def park_reason(state: Dict) -> Optional[Tuple[str, bool]]:
-    """Why a study must be parked now, and whether that parking is retried
-    once (parked trials, out of memory), or None. A study with its N_TRIALS
-    counted trials is parked only once, for a retry, when such a cap stops
-    its extension; else its plan is frozen."""
-    if state["parked"]:
+def shelve_reason(state: Dict) -> Optional[Dict]:
+    """Why a study must be shelved now, or None: the arguments of
+    common.shelve_study ('kind', 'message', 'retry': retried once for a
+    kind in RETRIED_KINDS, 'units'). A study with its N_TRIALS counted
+    trials is shelved only once, for a retry, when such a kind stops its
+    extension; else its plan is frozen."""
+    if state["shelved"]:
         return None
-    if state["units_park_final"]:
-        return (
-            f"unit shelved for good: {', '.join(state['units_park_final'])}",
-            False)
+    units = state["units_shelved_for_good"]
+    if units:
+        return dict(kind="unit_shelved",
+                    message=f"unit shelved for good: {', '.join(units)}",
+                    retry=False,
+                    units=units)
     if state["plan"] or not state["capped"]:
         return None
-    retry = state["capped"].endswith(("trials shelved", "out of memory"))
+    retry = state["capped"]["kind"] in C.RETRIED_KINDS
     if state["counted"] >= state["n_trials"]:  # in an extension
-        retry = (retry and not state["retried"] and
-                 state["counted"] < state["target"])
-        return (state["capped"], True) if retry else None
-    return state["capped"], retry
+        if not (retry and not state["retried"] and
+                state["counted"] < state["target"]):
+            return None
+    return dict(**state["capped"], retry=retry, units=[])
 
 
 def retry_study(root: str, state: Dict, force: bool = False) -> bool:
-    """Retries a parked study once (the caller checked `retry_due`; `force`:
-    an operator, even after a final parking): only the trials parked or
-    out of memory after this count toward a new parking."""
+    """Retries a shelved study once (the caller checked `retry_due`;
+    `force`: an operator, even after a shelving for good): only the trials
+    shelved or out of memory after this count toward a new shelving."""
     model, tower = state["model"], state["tower"]
-    marker = common.read_json(parked_path(root, model, tower))
+    marker = common.read_json(common.study_shelved_path(root, model, tower))
     if marker is None:
         return False
-    path = search.retried_path(root, model, tower)
+    path = common.study_retried_path(root, model, tower)
     (common.write_json if force else common.write_once)(path, {
         "time": common.now(),
-        "parked": marker,
+        "shelved": marker,
         "after_trial": state["last_trial"]
     })
-    if (common.read_json(path) or {}).get("parked") != marker:
-        return False  # parked again after its retry: final
+    if (common.read_json(path) or {}).get("shelved") != marker:
+        return False  # shelved again after its retry: for good
     try:
-        os.remove(parked_path(root, model, tower))
+        os.remove(common.study_shelved_path(root, model, tower))
     except FileNotFoundError:
         return False
-    common.alert(root, f"study/{model}_{tower}", "shelved study retried (once)",
-                 {"parked": marker})
+    common.alert(root, common.search_id(model, tower),
+                 "shelved study retried (once)", {"shelved": marker})
     return True
 
 
@@ -619,17 +663,18 @@ def _driver_args(root: str, model: str, tower: str, n_trials: int):
 
 def _advance_model(root: str, model: str, n_trials: int,
                    states: Dict[str, Dict]) -> List[str]:
-    """The gate of a model: its non-parked studies all have `n_trials`
-    counted trials and no tower waits for its retry (a tower parked for
+    """The gate of a model: its non-shelved studies all have `n_trials`
+    counted trials and no tower waits for its retry (a tower shelved for
     good never holds the others back); then the extension rule (on the
-    non-parked studies, decided once: a tower retried later does not reopen
-    it), the plans and the winners."""
+    non-shelved studies, decided once: a tower retried later does not
+    reopen it), the plans and the winners."""
     events = []
-    active = [t for t, s in states.items() if not s["parked"]]
+    active = [t for t, s in states.items() if not s["shelved"]]
     if not active or not all(states[t]["counted"] >= n_trials for t in active):
         return events
     if not states[active[0]]["extension_decided"]:
-        if any(s["parked"] and not s["park_final"] for s in states.values()):
+        if any(s["shelved"] and not s["shelved_for_good"]
+               for s in states.values()):
             return events  # a tower's retry is pending: it may decide too
         if search.maybe_extend(root, model, n_trials, active, decide=True):
             events.append(f"{model}: extended by {C.EXTEND_BY} trials")
@@ -637,10 +682,10 @@ def _advance_model(root: str, model: str, n_trials: int,
             t: study_state(root, model, t, n_trials) for t in C.TOWERS_SEARCHED
         }
     for tower, state in states.items():
-        if state["parked"]:
+        if state["shelved"]:
             continue
         args = _driver_args(root, model, tower, n_trials)
-        # A held trial waits for an operator: no plan (and no parking).
+        # A held trial waits for an operator: no plan (and no shelving).
         if (not state["plan"] and not state["search_pending"] and
                 not state["held"] and
             (state["counted"] >= state["target"] or state["capped"])):
@@ -648,7 +693,8 @@ def _advance_model(root: str, model: str, n_trials: int,
                 confirm.freeze(args)
                 events.append(f"{model}/{tower}: plan frozen")
             except SystemExit as error:
-                if park_study(root, model, tower, f"no plan: {error}"):
+                if common.shelve_study(root, model, tower, "no_plan",
+                                       f"no plan: {error}"):
                     events.append(f"{model}/{tower}: shelved ({error})")
                 continue
         plan = common.read_json(confirm.plan_path(root, model, tower))
@@ -657,23 +703,18 @@ def _advance_model(root: str, model: str, n_trials: int,
                 for r, s in confirm.units(plan))):
             if confirm.summarize(args, plan):
                 events.append(f"{model}/{tower}: winner")
-            elif os.path.exists(parked_path(root, model, tower)):
+            elif os.path.exists(common.study_shelved_path(root, model, tower)):
                 events.append(f"{model}/{tower}: shelved (no finite median)")
     return events
-
-
-def ready_path(root: str) -> str:
-    """Marker: every final unit of every learned model is trained."""
-    return os.path.join(root, common.READY)
 
 
 def mark_ready(root: str, n_trials: int = C.N_TRIALS) -> bool:
     """Writes READY_FOR_TEST.json (once, with an alert) if every final unit
     of every learned model is trained, whatever the caller's models.
     Returns True if this call wrote it."""
-    if (os.path.exists(ready_path(root)) or
-            not all_done(root, S.LEARNED, n_trials) or
-            not common.write_once(ready_path(root), {
+    path = common.ready_path(root)
+    if (os.path.exists(path) or not all_done(root, S.LEARNED, n_trials) or
+            not common.write_once(path, {
                 "models": list(S.LEARNED),
                 "time": common.now()
             })):
@@ -691,7 +732,7 @@ def _advance_all(root: str, models, n_trials: int) -> List[str]:
     for model in models:
         try:
             events += _advance_one(root, model, n_trials)
-        except Exception:  # pylint: disable=broad-exception-caught
+        except Exception:
             broken(root, f"advance/{model}", "advance failed")
     if all_done(root, models, n_trials) and mark_ready(root, n_trials):
         events.append("ready for test")
@@ -699,7 +740,7 @@ def _advance_all(root: str, models, n_trials: int) -> List[str]:
 
 
 def _advance_one(root: str, model: str, n_trials: int) -> List[str]:
-    """`advance` of one model: retries, parkings, then its gate."""
+    """`advance` of one model: retries, shelvings, then its gate."""
     events = []
     states = {
         t: study_state(root, model, t, n_trials) for t in C.TOWERS_SEARCHED
@@ -711,11 +752,11 @@ def _advance_one(root: str, model: str, n_trials: int) -> List[str]:
         if state["retry_due"] and retry_study(root, state):
             events.append(f"{model}/{tower}: retried")
             states[tower] = state = study_state(root, model, tower, n_trials)
-        reason = park_reason(state)
+        reason = shelve_reason(state)
         if reason is not None:
-            state.update(parked=True, park_final=not reason[1])
-            if park_study(root, model, tower, *reason):
-                events.append(f"{model}/{tower}: shelved ({reason[0]})")
+            state.update(shelved=True, shelved_for_good=not reason["retry"])
+            if common.shelve_study(root, model, tower, **reason):
+                events.append(f"{model}/{tower}: shelved ({reason['message']})")
     return events + _advance_model(root, model, n_trials, states)
 
 
@@ -751,12 +792,12 @@ def advance(root: str, models, n_trials: int = C.N_TRIALS) -> List[str]:
 
 def all_done(root: str, models, n_trials: int = C.N_TRIALS) -> bool:
     """Every final unit of every study of `models` is trained, or the study
-    is parked for good (`study_park_final`; a parking still to be retried
-    is not terminal); never while a study is unreadable."""
+    is shelved for good (`study_shelved_for_good`; a shelving still to be
+    retried is not terminal); never while a study is unreadable."""
     states = all_states(root, models, n_trials)
     return len(states) == len(models) * len(C.TOWERS_SEARCHED) and all(
         state["phase"] == "done" or
-        (state["phase"] == "parked" and state["park_final"])
+        (state["phase"] == "shelved" and state["shelved_for_good"])
         for state in states)
 
 
@@ -792,13 +833,13 @@ def pending(root: str,
             n_trials: int,
             owner: Optional[str] = None) -> bool:
     """Is there work in this unit for this worker (`owner`)? Not for a unit
-    done, parked, held for an operator, or claimed by another live process
+    done, shelved, held for an operator, or claimed by another live process
     (a claim of `owner`, any incarnation, is its own)."""
     if unit.phase == "search":
         return study_state(root, unit.model, unit.tower,
                            n_trials)["search_pending"]
     directory = run_dir(root, unit)
-    return not (unit_done(root, unit) or unit_parked(root, unit) or
+    return not (unit_done(root, unit) or unit_shelved(root, unit) or
                 common.held(directory) or common.busy(directory, owner))
 
 
@@ -863,25 +904,47 @@ def pick(
 
 def operator_retry(root: str, text: str) -> bool:
     """Retries a shelved unit or study at once (an operator; even after a
-    final parking): `text` is a unit id (search/<model>_<tower> for a
-    study). A unit's study parked for that unit is retried too."""
+    shelving for good): `text` is a unit id (search/<model>_<tower> for a
+    study). A study shelved for that unit is retried too."""
     if common.test_frozen(root):
         sys.exit("nothing is retried once the test is ready")
     unit = parse_unit(text)
     state = study_state(root, unit.model, unit.tower, C.N_TRIALS)
     if unit.phase == "search":
         return retry_study(root, state, force=True)
-    marker = common.read_json(parked_path(root, unit.model, unit.tower)) or {}
+    marker = common.read_json(
+        common.study_shelved_path(root, unit.model, unit.tower)) or {}
     done = common.retry_unit(root, text, run_dir(root, unit), force=True)
-    if done and text in marker.get("reason", ""):
+    if (done and marker.get("kind") == "unit_shelved" and
+            text in marker.get("units", [])):
         retry_study(root, state, force=True)
     return done
 
 
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    """Command-line options of an operator retry."""
+    parser = argparse.ArgumentParser(
+        description="Retries a shelved unit or study at once.")
+    parser.add_argument("--root", default=C.DEFAULT_ROOT)
+    parser.add_argument("--retry",
+                        required=True,
+                        help="Unit id, as in the alerts and the status "
+                        "(search/<model>_<tower> for a study).")
+    args = parser.parse_args(argv)
+    try:
+        parse_unit(args.retry)
+    except ValueError as error:
+        parser.error(str(error))
+    return args
+
+
+def main(argv: Optional[List[str]] = None) -> bool:
+    """Operator retry; returns True if something was retried."""
+    args = parse_args(argv)
+    retried = operator_retry(args.root, args.retry)
+    print("retried" if retried else "not shelved: nothing to retry")
+    return retried
+
+
 if __name__ == "__main__":
-    PARSER = argparse.ArgumentParser(description="Operator retry.")
-    PARSER.add_argument("--root", default="outputs/hpo")
-    PARSER.add_argument("--retry", required=True, help="Unit id.")
-    OPTIONS = PARSER.parse_args()
-    print("retried" if operator_retry(OPTIONS.root, OPTIONS.retry
-                                     ) else "not shelved: nothing to retry")
+    main()

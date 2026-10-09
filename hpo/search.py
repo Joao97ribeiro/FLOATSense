@@ -1,5 +1,4 @@
 # pylint: disable=wrong-import-position
-# pylint: disable=import-error
 # pylint: disable=too-many-arguments
 # pylint: disable=too-many-positional-arguments
 # pylint: disable=too-many-locals
@@ -19,7 +18,7 @@ damage, mean over the 11 gauges, at the last epoch. A MedianPruner on the
 best-so-far value stops poor trials after PRUNE_WARMUP epochs (not for the
 models in NO_PRUNING).
 
-Budget: N_TRIALS completed or pruned trials per study (failed, parked and
+Budget: N_TRIALS completed or pruned trials per study (failed, shelved and
 over-cap trials do not count). If a study's best trial comes after the
 EXTEND_AFTER-th, the three studies of that model get EXTEND_BY more trials.
 
@@ -31,16 +30,17 @@ the next trial draws again at once (an over-cap draw does not count toward
 --max_new). A trial out of memory is FAIL with the user attribute oom (not
 counted; it is resumed once as a crash first, common.run_unit). A crash
 is resumed up to MAX_ATTEMPTS times (common.run_unit), then the trial is
-FAIL with the user attribute parked. The study stops drawing (`capped`)
-after MAX_OVER_CAP over-cap draws, MAX_OOM trials out of memory or
-PARK_STUDY_AFTER parked trials (the last two since its retry);
-hpo/pick.py then parks it, or freezes its plan if it has its N_TRIALS
-counted trials. A trial whose resume state belongs to another
-configuration stays RUNNING, held for an operator (common.hold). A trial
-left RUNNING by a dead worker (stale heartbeat) is requeued with the same
-configuration and resumes from its checkpoint; a worker that holds the
-lock of the study (hpo/pick.py, --exclusive) is its only writer, so every
-RUNNING trial it finds is requeued at once. A journal line torn by a kill
+FAIL with the user attribute shelved. The study stops drawing (`capped`,
+with the kind 'over_cap', 'oom' or 'shelved_trials') after MAX_OVER_CAP
+over-cap draws, MAX_OOM trials out of memory or SHELVE_STUDY_AFTER shelved
+trials (the last two since its retry); hpo/pick.py then shelves it, or
+freezes its plan if it has its N_TRIALS counted trials. A trial whose
+resume state belongs to another configuration stays RUNNING, held for an
+operator (common.hold). A trial left RUNNING by a dead worker (stale
+heartbeat) is enqueued again with the same configuration and resumes from
+its checkpoint; a worker that holds the lock of the study (hpo/pick.py,
+--exclusive) is its only writer, so every RUNNING trial it finds is
+enqueued again at once. A journal line torn by a kill
 or power loss is cut off when the study is opened for writing
 (`repair_journal`). A trial stopped on request
 (common.request_stop) stays RUNNING for the next worker to resume. A
@@ -75,19 +75,14 @@ from hpo import constants as C
 from hpo import search_space as S
 
 
-def study_name(model: str, tower: str) -> str:
-    """Name (and journal file stem) of the study of a (model, tower)."""
-    return f"{model}_{tower}"
-
-
 def journal_path(root: str, model: str, tower: str) -> str:
     """Journal file of a study."""
-    return os.path.join(root, "optuna", f"{study_name(model, tower)}.log")
+    return os.path.join(root, "optuna", f"{common.study_id(model, tower)}.log")
 
 
 def study_seed(model: str, tower: str) -> int:
     """Fixed sampler seed of a study."""
-    return zlib.crc32(study_name(model, tower).encode())
+    return zlib.crc32(common.study_id(model, tower).encode())
 
 
 def pruner(model: str) -> optuna.pruners.BasePruner:
@@ -104,11 +99,12 @@ def sampler(seed: int) -> optuna.samplers.BaseSampler:
     return optuna.samplers.TPESampler(n_startup_trials=C.N_STARTUP, seed=seed)
 
 
-def repair_journal(root: str, path: str) -> int:
+def repair_journal(root: str, name: str, path: str) -> int:
     """Cuts a torn last line (an append cut by a kill or power loss) off a
     journal, which a later append would make unreadable; the cut bytes are
-    kept in <path>.torn.<time>, with an alert. The caller is the only
-    writer (it holds the lock of the study). Returns the bytes cut."""
+    kept in <path>.torn.<time>, with an alert of the unit `name`. The
+    caller is the only writer (it holds the lock of the study). Returns
+    the bytes cut."""
     try:
         with open(path, "rb") as file:
             data = file.read()
@@ -122,7 +118,7 @@ def repair_journal(root: str, path: str) -> int:
         file.write(data[keep:])
     with open(path, "r+b") as file:
         file.truncate(keep)
-    common.alert(root, os.path.basename(path), "journal: torn last line cut", {
+    common.alert(root, name, "journal: torn last line cut", {
         "bytes": len(data) - keep,
         "backup": backup
     })
@@ -145,15 +141,15 @@ def open_study(root: str,
         return None
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if create:
-        repair_journal(root, path)
+        repair_journal(root, common.search_id(model, tower), path)
     storage = JournalStorage(
         JournalFileBackend(path, lock_obj=JournalFileOpenLock(path)))
     if not create:
-        return optuna.load_study(study_name=study_name(model, tower),
+        return optuna.load_study(study_name=common.study_id(model, tower),
                                  storage=storage,
                                  sampler=sampler(study_seed(model, tower)),
                                  pruner=pruner(model))
-    return optuna.create_study(study_name=study_name(model, tower),
+    return optuna.create_study(study_name=common.study_id(model, tower),
                                storage=storage,
                                direction="maximize",
                                load_if_exists=True,
@@ -162,11 +158,8 @@ def open_study(root: str,
 
 
 def over_cap(trial: optuna.trial.FrozenTrial) -> bool:
-    """A draw rejected by the parameter cap (FAIL; 'over_param_cap' was the
-    attribute of earlier journals, where they were PRUNED)."""
-    return bool(
-        trial.user_attrs.get("over_cap") or
-        trial.user_attrs.get("over_param_cap"))
+    """A draw rejected by the parameter cap (FAIL, not counted)."""
+    return bool(trial.user_attrs.get("over_cap"))
 
 
 def oom(trial: optuna.trial.FrozenTrial) -> bool:
@@ -200,7 +193,7 @@ def _running_alive(trial: optuna.trial.FrozenTrial) -> bool:
     if run_dir:
         return not common.is_stale(run_dir)
     age = datetime.datetime.now() - trial.datetime_start
-    return age.total_seconds() < C.STALE_MINUTES * 60
+    return age.total_seconds() < C.STALE_SECONDS
 
 
 def budget(study: optuna.Study) -> Tuple[int, int, int]:
@@ -212,30 +205,21 @@ def budget(study: optuna.Study) -> Tuple[int, int, int]:
             sum(t.state == TrialState.WAITING for t in trials))
 
 
-def requeue_marker(run_dir: str, number: int) -> str:
-    """Marker of a requeued trial, in its run directory."""
-    return os.path.join(run_dir, f"requeued.{number}.json")
-
-
 def requeue_stale(study: optuna.Study, exclusive: bool = False) -> List[int]:
-    """Requeues the trials of dead workers with the same configuration;
-    the new trial resumes from the run directory of the old one. With
-    `exclusive` (the caller holds the lock of the study) every RUNNING
-    trial belongs to a dead or stopped worker.
+    """Enqueues the trials of dead workers again with the same
+    configuration; the new trial resumes from the run directory of the old
+    one. With `exclusive` (the caller holds the lock of the study) every
+    RUNNING trial belongs to a dead or stopped worker.
 
     The old trial is told FAIL first (one worker only succeeds: a second
-    tell raises), then its configuration is enqueued, then the marker
-    requeued.<number>.json is written. A worker killed after the tell loses
-    at most the checkpoint (the trial is FAIL, not counted; the study draws
-    again). A RUNNING trial that already has a marker (a requeue killed
-    before its tell) is told FAIL now, whatever its heartbeat.
+    tell raises), then its configuration is enqueued. A worker killed
+    between the two loses at most the checkpoint (the trial is FAIL, not
+    counted; the study draws again).
     """
     requeued = []
     for trial in study.get_trials(deepcopy=False, states=(TrialState.RUNNING,)):
         run_dir = trial_run_dir(trial)
-        marked = bool(run_dir) and os.path.exists(
-            requeue_marker(run_dir, trial.number))
-        if not exclusive and not marked and _running_alive(trial):
+        if not exclusive and _running_alive(trial):
             continue
         try:
             study.tell(trial.number, state=TrialState.FAIL)
@@ -248,8 +232,6 @@ def requeue_stale(study: optuna.Study, exclusive: bool = False) -> List[int]:
                                     "requeued_from": trial.number
                                 },
                                 skip_if_exists=False)
-            common.write_once(requeue_marker(run_dir, trial.number),
-                              {"time": common.now()})
             requeued.append(trial.number)
     return requeued
 
@@ -260,49 +242,48 @@ def extension_path(root: str, model: str) -> str:
     return os.path.join(root, "extensions", f"{model}.json")
 
 
-def parked_path(root: str, model: str, tower: str) -> str:
-    """Marker of a parked (model, tower) study."""
-    return os.path.join(root, "parked", f"{model}_{tower}.json")
-
-
-def retried_path(root: str, model: str, tower: str) -> str:
-    """Record of the single retry of a parked study (hpo/pick.py)."""
-    return os.path.join(root, "parked", "retried", f"{model}_{tower}.json")
-
-
 def failed_draws(root: str, model: str, tower: str, trials) -> Dict[str, int]:
-    """Over-cap draws, trials out of memory and parked trials of a study
+    """Over-cap draws, trials out of memory and shelved trials of a study
     (the last two since its retry, if it was retried)."""
-    retried = common.read_json(retried_path(root, model, tower))
+    retried = common.read_json(common.study_retried_path(root, model, tower))
     after = retried["after_trial"] if retried else -1
     return {
         "over_cap":
             sum(over_cap(t) for t in trials),
         "oom":
             sum(oom(t) and t.number > after for t in trials),
-        "parked_trials":
+        "shelved_trials":
             sum(
-                bool(t.user_attrs.get("parked")) and t.number > after
+                bool(t.user_attrs.get("shelved")) and t.number > after
                 for t in trials)
     }
 
 
-def capped(draws: Dict[str, int]) -> Optional[str]:
-    """Why a study stops drawing (see `failed_draws`), or None."""
+def capped(draws: Dict[str, int]) -> Optional[Dict[str, str]]:
+    """Why a study stops drawing (see `failed_draws`): its 'kind'
+    ('over_cap', 'oom' or 'shelved_trials') and a 'message'; or None."""
     if draws["over_cap"] >= C.MAX_OVER_CAP:
-        return f"{draws['over_cap']} draws above the parameter cap"
+        return {
+            "kind": "over_cap",
+            "message": f"{draws['over_cap']} draws above the parameter cap"
+        }
     if draws["oom"] >= C.MAX_OOM:
-        return f"{draws['oom']} trials out of memory"
-    if draws["parked_trials"] >= C.PARK_STUDY_AFTER:
-        return f"{draws['parked_trials']} trials shelved"
+        return {
+            "kind": "oom",
+            "message": f"{draws['oom']} trials out of memory"
+        }
+    if draws["shelved_trials"] >= C.SHELVE_STUDY_AFTER:
+        return {
+            "kind": "shelved_trials",
+            "message": f"{draws['shelved_trials']} trials shelved"
+        }
     return None
 
 
 def extension_decision(root: str, model: str) -> Optional[bool]:
-    """The extension decision of a model (None if not taken yet; a record
-    without 'extended' is an extension)."""
+    """The extension decision of a model (None if not taken yet)."""
     record = common.read_json(extension_path(root, model))
-    return None if record is None else bool(record.get("extended", True))
+    return None if record is None else bool(record["extended"])
 
 
 def target_trials(root: str, model: str, n_trials: int) -> int:
@@ -330,10 +311,10 @@ def maybe_extend(root: str,
                  decide: bool = False) -> bool:
     """Applies the extension rule once the first `n_trials` of a study of
     `model` are done; returns True if the model is (now) extended.
-    `towers`: the studies that decide (default the non-parked ones). The
+    `towers`: the studies that decide (default the non-shelved ones). The
     decision is one write-once file: an extension is written as soon as a
     study shows it; with `decide` (the gate of hpo/pick.py, every
-    non-parked study done) a 'not extended' decision is written too. A
+    non-shelved study done) a 'not extended' decision is written too. A
     decision is never taken again."""
     decision = extension_decision(root, model)
     if decision is not None:
@@ -341,7 +322,7 @@ def maybe_extend(root: str,
     if towers is None:
         towers = [
             t for t in C.TOWERS_SEARCHED
-            if not os.path.exists(parked_path(root, model, t))
+            if not os.path.exists(common.study_shelved_path(root, model, t))
         ]
     for tower in towers:
         study = open_study(root, model, tower, create=False)
@@ -462,8 +443,8 @@ def _result_of(study: optuna.Study, result: Dict, args: argparse.Namespace,
     elif status == "oom":
         attrs["oom"] = True
         state = TrialState.FAIL
-    elif status != "ok":  # parked
-        attrs["parked"] = True
+    elif status != "ok":  # shelved
+        attrs["shelved"] = True
         state = TrialState.FAIL
     return status, attrs, value, state
 
@@ -487,7 +468,7 @@ def run_trial(study: optuna.Study,
     """
     cfg = S.formatted(S.suggest(trial, args.model))
     run_dir = trial.user_attrs.get("resume_from") or os.path.join(
-        args.root, "trials", study.study_name, f"t{trial.number:03d}")
+        args.root, common.TRIALS_DIR, study.study_name, f"t{trial.number:03d}")
     trial.set_user_attr("run_dir", run_dir)
     trial.set_user_attr("config", cfg)
     outcome = {"trial": trial.number, "status": "lost", "run_dir": run_dir}
@@ -514,12 +495,12 @@ def run_trial(study: optuna.Study,
 
     if args.dry_run:
         result = common.stub_unit(cfg, trial.number, args.epochs, on_val,
-                                  run_dir)
+                                  run_dir, args.stub_seconds)
     else:
         cmd = common.train_command(args, args.model, args.tower, run_dir, cfg,
                                    C.SEARCH_TRAIN_SPLIT, args.epochs,
                                    C.TRIAL_SEED)
-        result = common.run_unit(f"search/{study.study_name}/t{trial.number}",
+        result = common.run_unit(common.search_id(args.model, args.tower),
                                  cmd,
                                  run_dir,
                                  args.root,
@@ -584,7 +565,7 @@ def main(argv: Optional[List[str]] = None,
     seed = study_seed(args.model, args.tower)
     requeued = requeue_stale(study, args.exclusive)
     if requeued:
-        print(f"requeued trials of dead workers: {requeued}", flush=True)
+        print(f"trials of dead workers enqueued again: {requeued}", flush=True)
     started = 0
     while ((not args.max_new or started < args.max_new) and
            not common.STOP.is_set()):
@@ -593,11 +574,12 @@ def main(argv: Optional[List[str]] = None,
         reason = capped(
             failed_draws(args.root, args.model, args.tower,
                          study.get_trials(deepcopy=False)))
-        if reason and not waiting:  # a requeued trial still resumes
-            print(f"study {study.study_name}: {reason}, stopping", flush=True)
+        if reason and not waiting:  # an enqueued trial still resumes
+            print(f"study {study.study_name}: {reason['message']}, stopping",
+                  flush=True)
             break
         if not waiting and done + running >= target:
-            # Only the non-parked towers decide (maybe_extend's default).
+            # Only the non-shelved towers decide (maybe_extend's default).
             if (target == args.n_trials and not running and
                     maybe_extend(args.root, args.model, args.n_trials)):
                 continue  # the budget grew

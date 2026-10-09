@@ -8,7 +8,7 @@ seeds for EPOCHS_FINAL epochs, keeping the weights of the phase-2 median
 best epoch too. The test split is opened once, at the end, for every
 learned model and tower together, only once READY_FOR_TEST.json exists
 (hpo/pick.py) and each of them has its winner.json and a final result for
-all its units; a parked (model, tower) (hpo/confirm.py, hpo/pick.py) is
+all its units; a shelved (model, tower) (hpo/confirm.py, hpo/pick.py) is
 the only exception, recorded as missing in <root>/sealed/MISSING.json:
 
     python hpo/final.py --model=tcn --tower=opt2   # train
@@ -18,8 +18,8 @@ Each test score is written into a sealed directory,
 <root>/sealed/<variant>/<tower>/seed<k>/, in the layout of the
 within-tower runs (damage_comparison_<model>_fa.csv), with a
 SEALED_<model>.json marker; a sealed score is never computed again (and
-hpo/analyze.py reads only the runs with a marker). A pair listed as parked
-in MISSING.json is never scored. A seed whose retraining diverged is
+hpo/analyze.py reads only the runs with a marker). A pair listed as
+shelved in MISSING.json is never scored. A seed whose retraining diverged is
 skipped; the skipped seeds, and the pairs whose seeds all diverged
 (missing towers of the leaderboard), are listed in
 <root>/sealed/SKIPPED.json. The inference runs of the test are recorded in
@@ -37,6 +37,7 @@ marker, to be scored again by a new --open_test. Two variants are scored:
 """
 
 import argparse
+import functools
 import os
 import shlex
 import shutil
@@ -60,13 +61,33 @@ VARIANT_LABELS = {
 
 
 def unit_dir(root: str, model: str, tower: str, seed: int) -> str:
-    """Run directory of one retraining."""
-    return os.path.join(root, "final", f"{model}_{tower}", f"s{seed}")
+    """Run directory of one retraining: <root>/<its unit id>."""
+    return os.path.join(root, common.final_id(model, tower, seed))
 
 
 def sealed_dir(root: str, variant: str, tower: str, seed: int) -> str:
     """Directory of the sealed test scores of one variant, tower and seed."""
-    return os.path.join(root, "sealed", variant, tower, f"seed{seed}")
+    return os.path.join(common.sealed_root(root), variant, tower, f"seed{seed}")
+
+
+def sealed_marker(directory: str, model: str) -> str:
+    """SEALED marker of a model in a sealed directory."""
+    return os.path.join(directory, f"SEALED_{model}.json")
+
+
+def missing_path(root: str) -> str:
+    """The shelved pairs, recorded once when the test opens."""
+    return os.path.join(common.sealed_root(root), "MISSING.json")
+
+
+def skipped_path(root: str) -> str:
+    """The diverged final seeds, recorded once when the test opens."""
+    return os.path.join(common.sealed_root(root), "SKIPPED.json")
+
+
+def failures_path(root: str) -> str:
+    """The failed test scorings."""
+    return os.path.join(common.sealed_root(root), "TEST_FAILURES.json")
 
 
 def winner(root: str, model: str, tower: str) -> Dict:
@@ -89,17 +110,17 @@ def train(args: argparse.Namespace,
         if common.STOP.is_set():
             return
         run_dir = unit_dir(args.root, model, tower, seed)
-        result_path = os.path.join(run_dir, "result.json")
-        if (os.path.exists(result_path) or
-                os.path.exists(os.path.join(run_dir, "PARKED")) or
-                common.held(run_dir) or not common.claim(run_dir)):
+        result_path = common.result_path(run_dir)
+        if (os.path.exists(result_path) or common.is_shelved(run_dir) or
+                common.held(run_dir) or not common.claim(run_dir, args.owner)):
             continue
         try:
             if args.dry_run:
                 result = common.stub_unit(record["winner_config"],
-                                          200 + seed,
+                                          C.STUB_KEY_FINAL + seed,
                                           args.epochs,
-                                          run_dir=run_dir)
+                                          run_dir=run_dir,
+                                          seconds=args.stub_seconds)
             else:
                 keep = ([f"--save_epochs={best_epoch}"]
                         if best_epoch and best_epoch < args.epochs else [])
@@ -114,7 +135,7 @@ def train(args: argparse.Namespace,
                                            validate=False,
                                            extra=keep)
                 result = common.run_unit(
-                    f"final/{model}_{tower}/s{seed}",
+                    common.final_id(model, tower, seed),
                     cmd,
                     run_dir,
                     args.root,
@@ -122,7 +143,8 @@ def train(args: argparse.Namespace,
                     config=record["winner_config"],
                     owned=lambda d=run_dir: common.owns_claim(d),
                     oom_ends=False)
-            if result["status"] not in ("parked", "stopped", "config_mismatch"):
+            if result["status"] not in ("shelved", "stopped",
+                                        "config_mismatch"):
                 common.write_once(
                     result_path, {
                         "status": result["status"],
@@ -150,8 +172,8 @@ def _link(source: str, target: str) -> None:
 def test_run_dir(root: str, model: str, tower: str, variant: str,
                  seed: int) -> str:
     """Directory of the attempts record of one test inference run."""
-    return os.path.join(root, "test_runs", f"{model}_{tower}",
-                        f"{variant}_s{seed}")
+    return os.path.join(root, common.TEST_RUNS_DIR,
+                        common.study_id(model, tower), f"{variant}_s{seed}")
 
 
 def run_test(run_dir: str, cmd: List[str], log_path: str) -> int:
@@ -164,11 +186,8 @@ def run_test(run_dir: str, cmd: List[str], log_path: str) -> int:
     start = time.time()
     event = common.open_attempt(record, start, common.gpu_name())
     common.save_attempts(run_dir, record)
-
-    def beat():
-        common.update_attempt(event, start)
-        common.save_attempts(run_dir, record)
-
+    beat = functools.partial(common.beat_attempt, run_dir, record, event, start,
+                             None)
     with common.Heartbeat(run_dir, beat), open(log_path, "a",
                                                encoding="utf-8") as log:
         code = subprocess.call(cmd,
@@ -185,21 +204,20 @@ def record_failure(root: str, name: str, cmd: List[str], code: int) -> None:
     <root>/sealed/TEST_FAILURES.json (hpo/analyze.py then stops on its
     missing SEALED marker)."""
     common.alert(root, name, "test scoring failed", {"command": cmd})
-    path = os.path.join(root, "sealed", "TEST_FAILURES.json")
-    failures = common.read_json(path) or []
+    failures = common.read_json(failures_path(root)) or []
     failures.append({"unit": name, "exit": code, "time": common.now()})
-    common.write_json(path, failures)
+    common.write_json(failures_path(root), failures)
 
 
 def score(args: argparse.Namespace, model: str, tower: str, seed: int,
           variant: str) -> None:
     """Scores one checkpoint on the test split into its sealed directory."""
     out = sealed_dir(args.root, variant, tower, seed)
-    marker = os.path.join(out, f"SEALED_{model}.json")
+    marker = sealed_marker(out, model)
     if os.path.exists(marker):
         return
     run_dir = unit_dir(args.root, model, tower, seed)
-    result = common.read_json(os.path.join(run_dir, "result.json"))
+    result = common.read_json(common.result_path(run_dir))
     if result["status"] != "ok":
         common.write_once(marker, {"skipped": result["status"]})
         return
@@ -238,19 +256,20 @@ def score(args: argparse.Namespace, model: str, tower: str, seed: int,
 
 
 def missing_units(root: str) -> tuple:
-    """What keeps the test closed, and the parked (model, tower) pairs.
+    """What keeps the test closed, and the shelved (model, tower) pairs.
 
     Returns:
         (List[str], Dict[str, dict]): the missing records (winner.json or
-          a final result.json) of the pairs that are not parked, and the
-          parked pairs with their parking record.
+          a final result.json) of the pairs that are not shelved, and the
+          shelved pairs with their shelving record.
     """
-    missing, parked = [], {}
+    missing, shelved = [], {}
     for model in S.LEARNED:
         for tower in C.TOWERS_SEARCHED:
-            marker = common.read_json(confirm.parked_path(root, model, tower))
+            marker = common.read_json(
+                common.study_shelved_path(root, model, tower))
             if marker is not None:
-                parked[f"{model}/{tower}"] = marker
+                shelved[f"{model}/{tower}"] = marker
                 continue
             if not os.path.exists(confirm.winner_path(root, model, tower)):
                 missing.append(f"{model}/{tower}/winner")
@@ -258,10 +277,9 @@ def missing_units(root: str) -> tuple:
             missing += [
                 f"{model}/{tower}/s{seed}" for seed in range(C.N_SEEDS)
                 if not os.path.exists(
-                    os.path.join(unit_dir(root, model, tower, seed),
-                                 "result.json"))
+                    common.result_path(unit_dir(root, model, tower, seed)))
             ]
-    return missing, parked
+    return missing, shelved
 
 
 def skipped(root: str) -> Dict:
@@ -271,8 +289,8 @@ def skipped(root: str) -> Dict:
     for model in S.LEARNED:
         for tower in C.TOWERS_SEARCHED:
             statuses = [(common.read_json(
-                os.path.join(unit_dir(root, model, tower, seed), "result.json"))
-                         or {}).get("status") for seed in range(C.N_SEEDS)]
+                common.result_path(unit_dir(root, model, tower, seed))) or
+                         {}).get("status") for seed in range(C.N_SEEDS)]
             bad = [
                 f"{model}/{tower}/s{seed}"
                 for seed, status in enumerate(statuses)
@@ -286,22 +304,22 @@ def skipped(root: str) -> Dict:
 
 def open_test(args: argparse.Namespace) -> None:
     """Opens the test split once for every learned model and tower, once
-    READY_FOR_TEST.json exists (parked pairs recorded as missing; a pair
-    recorded as parked in MISSING.json is never scored)."""
-    if not os.path.exists(os.path.join(args.root, common.READY)):
+    READY_FOR_TEST.json exists (shelved pairs recorded as missing; a pair
+    recorded as shelved in MISSING.json is never scored)."""
+    if not os.path.exists(common.ready_path(args.root)):
         sys.exit(f"the test opens only once {common.READY} exists in "
                  f"{args.root} (written when every final unit is trained)")
-    path = os.path.join(args.root, "sealed", "MISSING.json")
-    stored = (common.read_json(path) or {}).get("parked", {})
-    missing, parked = missing_units(args.root)
+    path = missing_path(args.root)
+    stored = (common.read_json(path) or {}).get("shelved", {})
+    missing, shelved = missing_units(args.root)
     missing = [m for m in missing if "/".join(m.split("/")[:2]) not in stored]
     if missing:
         sys.exit(f"the test opens when every model and tower is trained; "
                  f"missing: {', '.join(missing)}")
-    common.write_once(path, {"parked": parked, "time": common.now()})
-    excluded = set(parked) | set(
-        (common.read_json(path) or {}).get("parked", {}))
-    common.write_once(os.path.join(args.root, "sealed", "SKIPPED.json"), {
+    common.write_once(path, {"shelved": shelved, "time": common.now()})
+    excluded = set(shelved) | set(
+        (common.read_json(path) or {}).get("shelved", {}))
+    common.write_once(skipped_path(args.root), {
         **skipped(args.root), "time": common.now()
     })
     for model in S.LEARNED:
@@ -311,7 +329,7 @@ def open_test(args: argparse.Namespace) -> None:
             for seed in range(C.N_SEEDS):
                 for variant in VARIANTS:
                     score(args, model, tower, seed, variant)
-    print(f"test scored into {os.path.join(args.root, 'sealed')} "
+    print(f"test scored into {common.sealed_root(args.root)} "
           f"({', '.join(VARIANT_LABELS[v] for v in VARIANTS)}); "
           f"missing (shelved): {', '.join(sorted(excluded)) or 'none'}")
 

@@ -1,7 +1,7 @@
 # pylint: disable=wrong-import-position
 """Status of the validation-tuned track, from its files only.
 
-    python hpo/status.py --root=outputs/hpo              # advance + status
+    python hpo/status.py --root=outputs/hpo               # advance + status
     python hpo/status.py --root=outputs/hpo --no_advance  # read only
 
 Writes <root>/status.json, status.txt and status.html: per study the
@@ -10,10 +10,10 @@ plan stopped below its target (stopped_early), the best validation score
 so far, the phase, the confirmation and final units done, the hours left and
 an ETA (from the measured trial durations of the study, else from the
 `cost` given per model, in hours per trial); the workers and their units
-(a worker record not refreshed for STALE_MINUTES, without an exit code, is
+(a worker record not refreshed for STALE_SECONDS, without an exit code, is
 marked dead; a live worker refreshes it at every lock beat or idle poll);
-the shelved units and studies (PARKED markers in the files); the recent
-alerts. No test output is read.
+the shelved units and studies (SHELVED markers, <root>/shelved/); the
+MAX_ALERTS_SHOWN most recent alerts. No test output is read.
 With advance (the default), the phases are moved forward first
 (pick.advance).
 """
@@ -26,7 +26,6 @@ import json
 import os
 import shutil
 import sys
-import time
 from typing import Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -35,7 +34,6 @@ from hpo import pick
 from hpo import constants as C
 from hpo import search_space as S
 
-MAX_ALERTS_SHOWN = 20
 COLUMNS = ("study", "phase", "counted", "target", "pruned", "failed", "running",
            "best", "confirm", "winner", "final", "hours_left", "eta")
 
@@ -69,11 +67,9 @@ def study_rows(states: List[Dict],
     for state in states:
         hours = hours_left(state, cost)
         rows.append({
-            "study": f"{state['model']}_{state['tower']}",
+            "study": common.study_id(state["model"], state["tower"]),
             "model": state["model"],
-            # 'parked' in the files, 'shelved' for the reader.
-            "phase":
-                ("shelved" if state["phase"] == "parked" else state["phase"]),
+            "phase": state["phase"],
             "counted": state["counted"],
             "target": state["target"],
             "pruned": state["pruned"],
@@ -87,7 +83,7 @@ def study_rows(states: List[Dict],
             "winner": state["winner"],
             "final": (f"{state['final_done']}/{len(state['final_units'])}"
                       if state["final_units"] else "-"),
-            "units_parked": state["units_parked"],
+            "units_shelved": state["units_shelved"],
             "stopped_early": state["stopped_early"],
             "hours_left": None if hours is None else round(hours, 1),
             "eta": eta(hours),
@@ -96,20 +92,22 @@ def study_rows(states: List[Dict],
 
 
 def read_workers(root: str) -> List[Dict]:
-    """Worker records with the age of their last change (minutes) and their
-    state: 'exited (<code>)', 'dead' (not refreshed for STALE_MINUTES) or
-    'alive'."""
+    """Worker records with the age of their last change (minutes, from the
+    file-server clock, common.server_time) and their state: 'exited
+    (<code>)', 'dead' (not refreshed for STALE_SECONDS) or 'alive'."""
     rows = []
-    for path in sorted(glob.glob(os.path.join(root, "workers", "*.json"))):
+    paths = sorted(glob.glob(os.path.join(root, "workers", "*.json")))
+    now = common.server_time(os.path.join(root, "workers")) if paths else 0.0
+    for path in paths:
         try:
             record = common.read_json(path) or {}
-            age = (time.time() - os.path.getmtime(path)) / 60
+            age = now - os.path.getmtime(path)
         except (OSError, ValueError):
             continue  # being replaced
-        record["age_min"] = round(age, 1)
+        record["age_min"] = round(age / 60, 1)
         if record.get("exit") is not None:
             record["state"] = f"exited ({record['exit']})"
-        elif age > C.STALE_MINUTES:
+        elif age > C.STALE_SECONDS:
             record["state"] = "dead"
         else:
             record["state"] = "alive"
@@ -130,11 +128,14 @@ def read_events(root: str) -> List[Dict]:
     return events
 
 
-def parked_units(root: str) -> List[str]:
-    """Run directories with a PARKED marker, and parked studies."""
+def shelved_units(root: str) -> List[str]:
+    """Run directories with a SHELVED marker, and shelved studies."""
     found = []
-    for pattern in ("trials/*/*/PARKED", "phase2/*/*/PARKED",
-                    "final/*/*/PARKED", "parked/*.json"):
+    patterns = [
+        os.path.join(folder, "*", "*", common.SHELVED)
+        for folder in common.PHASE_DIRS.values()
+    ] + [os.path.join(common.SHELVED_DIR, "*.json")]
+    for pattern in patterns:
         found += [
             os.path.relpath(p, root)
             for p in glob.glob(os.path.join(root, pattern))
@@ -162,12 +163,12 @@ def collect(root: str,
         "workers": read_workers(root),
         "units_completed": len(ends),
         "last_completion": max(ends) if ends else None,
-        "parked": parked_units(root),
+        "shelved": shelved_units(root),
         "alerts": [
-            os.path.basename(p) for p in alert_files(root)[-MAX_ALERTS_SHOWN:]
+            os.path.basename(p) for p in alert_files(root)[-C.MAX_ALERTS_SHOWN:]
         ],
         "disk_used_fraction": round(usage.used / usage.total, 3),
-        "ready_for_test": os.path.exists(pick.ready_path(root)),
+        "ready_for_test": os.path.exists(common.ready_path(root)),
     }
 
 
@@ -209,7 +210,7 @@ def as_text(status: Dict) -> str:
         f"  {r['study']}: {r['counted']}/{r['target']} counted, "
         f"{r['stopped_early']}" for r in status["studies"] if r["stopped_early"]
     ]
-    lines += ["", "shelved:"] + [f"  {p}" for p in status["parked"]]
+    lines += ["", "shelved:"] + [f"  {p}" for p in status["shelved"]]
     lines += ["", "recent alerts:"] + [f"  {a}" for a in status["alerts"]]
     return "\n".join(lines) + "\n"
 
@@ -217,7 +218,7 @@ def as_text(status: Dict) -> str:
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="600">
+<meta http-equiv="refresh" content="{refresh}">
 <title>Tuned track status</title>
 <style>
 :root {{ --bg: #fbfbfa; --fg: #1d1d1b; --muted: #6b6b66; --line: #e2e2dc;
@@ -242,14 +243,14 @@ tr.done td {{ color: var(--accent); }}
 <p>{stamp}. {summary}</p>
 <h2>Studies</h2><div class="wrap"><table><tr>{head}</tr>{rows}</table></div>
 <h2>Workers</h2><div class="wrap"><table>{workers}</table></div>
-<h2>Shelved</h2><p>{parked}</p>
+<h2>Shelved</h2><p>{shelved}</p>
 <h2>Recent alerts</h2><p>{alerts}</p>
 </body></html>
 """
 
 
 def as_html(status: Dict) -> str:
-    """Static status page (reloads every 10 minutes)."""
+    """Static status page (reloads every STATUS_REFRESH_SECONDS)."""
     esc = html.escape
     rows = "".join(
         f"<tr class=\"{esc(r['phase'])}\">" +
@@ -263,12 +264,13 @@ def as_html(status: Dict) -> str:
         f"{esc(str(w.get('gpu') or ''))}</td><td>{esc(str(w.get('unit')))}"
         f"</td><td>{esc(w['state'])}</td><td>{w['age_min']} min</td></tr>"
         for w in status["workers"])
-    return PAGE.format(stamp=esc(status["time"]),
+    return PAGE.format(refresh=C.STATUS_REFRESH_SECONDS,
+                       stamp=esc(status["time"]),
                        summary=esc(summary(status)),
                        head="".join(f"<th>{c}</th>" for c in COLUMNS),
                        rows=rows,
                        workers=workers or "<tr><td>none</td></tr>",
-                       parked=esc(", ".join(status["parked"]) or "none"),
+                       shelved=esc(", ".join(status["shelved"]) or "none"),
                        alerts="<br>".join(esc(a) for a in status["alerts"]) or
                        "none")
 
@@ -283,7 +285,7 @@ def write_status(root: str, status: Dict) -> None:
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     """Command-line options."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--root", default="outputs/hpo")
+    parser.add_argument("--root", default=C.DEFAULT_ROOT)
     parser.add_argument("--models",
                         default="all",
                         help="Models shown (comma list or all).")

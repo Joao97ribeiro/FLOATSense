@@ -1,5 +1,12 @@
-# pylint: disable=wrong-import-position,protected-access
-# pylint: disable=use-dict-literal,too-many-public-methods,too-many-lines
+# pylint: disable=wrong-import-position
+# pylint: disable=protected-access
+# pylint: disable=use-dict-literal
+# pylint: disable=too-many-public-methods
+# pylint: disable=too-many-lines
+# pylint: disable=invalid-name
+# pylint: disable=global-statement
+# pylint: disable=consider-using-with
+# pylint: disable=too-many-locals
 """Tests of the training options of the validation-tuned track.
 
 Run from the repository root with `python -m unittest discover tests`.
@@ -29,6 +36,7 @@ import tempfile
 import time
 import unittest
 import zipfile
+from typing import Optional
 from unittest import mock
 
 import numpy as np
@@ -63,17 +71,17 @@ TMP = None
 TOWER = None
 
 
-def setUpModule():  # pylint: disable=invalid-name
+def setUpModule():
     """Writes the synthetic tower once."""
-    global TMP, TOWER  # pylint: disable=global-statement
-    TMP = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
+    global TMP, TOWER
+    TMP = tempfile.TemporaryDirectory()
     synthetic.write_tower(TMP.name)
     shutil.copytree(os.path.join(TMP.name, synthetic.TOWER),
                     os.path.join(TMP.name, OTHER_TOWER))
     TOWER = load_tower(TMP.name, synthetic.TOWER)
 
 
-def tearDownModule():  # pylint: disable=invalid-name
+def tearDownModule():
     """Removes the synthetic tower."""
     TMP.cleanup()
 
@@ -116,7 +124,7 @@ def tuned(output_dir: str, **kwargs) -> SequenceModelTrainer:
 
 
 class Interrupt(Exception):
-    """Stands for a killed job."""
+    """Stands for a killed process."""
 
 
 class InterruptedTrainer(SequenceModelTrainer):
@@ -152,6 +160,18 @@ def dead_pid() -> int:
         text=True,
         check=True)
     return int(process.stdout)
+
+
+def write_temporary(path: str, mtime: Optional[float] = None) -> None:
+    """A temporary directory of `_atomic_save` with a partial file in it,
+    both last modified at `mtime` (default: now)."""
+    os.makedirs(path)
+    inner = os.path.join(path, os.path.basename(path).split(".tmp.")[0])
+    with open(inner, "w", encoding="utf-8") as file:
+        file.write("partial")
+    if mtime is not None:
+        os.utime(inner, (mtime, mtime))
+        os.utime(path, (mtime, mtime))
 
 
 class DefaultsTest(unittest.TestCase):
@@ -269,7 +289,7 @@ class TunedRunTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.out = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
+        cls.out = tempfile.TemporaryDirectory()
         cls.trainer = tuned(cls.out.name)
         cls.history = cls.trainer.train(*ids())
         cls.weights = state(cls.trainer)
@@ -402,10 +422,11 @@ class TunedRunTest(unittest.TestCase):
                 with self.assertRaisesRegex(ConfigMismatchError, key):
                     tuned(self.out.name, **kwargs).train(*ids())
 
-    def test_older_config_accepted(self):
-        """A resume state stored before a setting was added (or before the
-        configuration was stored) still resumes."""
-        for drop in (["tower", "damage_m", "min_time"], None):
+    def test_incomplete_config_refused(self):
+        """A resume state without a run configuration, or missing one of its
+        settings, is refused."""
+        for drop, message in ((["damage_m"], "damage_m"),
+                              (None, "no run configuration")):
             with self.subTest(drop=drop):
                 out = self.interrupted(1e9)
                 path = tuned(out).resume_path()
@@ -416,7 +437,8 @@ class TunedRunTest(unittest.TestCase):
                     for key in drop:
                         del saved["config"][key]
                 torch.save(saved, path)
-                self.assert_same_run(*self.resumed_in(out))
+                with self.assertRaisesRegex(ConfigMismatchError, message):
+                    tuned(out).train(*ids())
 
     def init_copy(self) -> str:
         """A copy of the final checkpoint of the run, to start from."""
@@ -452,8 +474,7 @@ class TunedRunTest(unittest.TestCase):
 
     def test_relative_paths_resume(self):
         """./init.pt and init.pt are the same initial checkpoint: the real
-        path is stored, and a state that stored the path as given still
-        resumes."""
+        path is stored, and the run resumes from either."""
         init = self.init_copy()
         cwd = os.getcwd()
         os.chdir(os.path.dirname(init))
@@ -464,8 +485,6 @@ class TunedRunTest(unittest.TestCase):
             self.assertEqual(saved["config"]["init_checkpoint"],
                              os.path.realpath(init))
             self.assertIsNone(saved["config"]["calibration_path"])
-            saved["config"]["init_checkpoint"] = "./init.pt"
-            torch.save(saved, path)
             trainer = tuned(out, init_checkpoint="init.pt")
             history = trainer.train(*ids())
         finally:
@@ -474,27 +493,14 @@ class TunedRunTest(unittest.TestCase):
 
     def test_moved_init_checkpoint_resumes(self):
         """The initial checkpoint is compared by contents: moved with its
-        folder, it still resumes; in a state written before the digest was
-        stored, the moved path is refused."""
-        for digest in (True, False):
-            with self.subTest(digest=digest):
-                init = self.init_copy()
-                out = self.interrupted(1e9, init_checkpoint=init)
-                moved = os.path.dirname(init) + "_moved"
-                os.rename(os.path.dirname(init), moved)
-                moved = os.path.join(moved, "init.pt")
-                if not digest:
-                    path = tuned(out).resume_path()
-                    saved = torch.load(path, weights_only=False)
-                    del saved["config"]["init_checkpoint_sha256"]
-                    torch.save(saved, path)
-                    with self.assertRaisesRegex(ConfigMismatchError,
-                                                "init_checkpoint"):
-                        tuned(out, init_checkpoint=moved).train(*ids())
-                    continue
-                trainer = tuned(out, init_checkpoint=moved)
-                history = trainer.train(*ids())
-                self.assertEqual(len(history["train_loss"]), 4)
+        folder, it still resumes."""
+        init = self.init_copy()
+        out = self.interrupted(1e9, init_checkpoint=init)
+        moved = os.path.dirname(init) + "_moved"
+        os.rename(os.path.dirname(init), moved)
+        trainer = tuned(out, init_checkpoint=os.path.join(moved, "init.pt"))
+        history = trainer.train(*ids())
+        self.assertEqual(len(history["train_loss"]), 4)
 
     def test_init_checkpoint_is_output_refused(self):
         """An initial checkpoint that is the checkpoint the run writes (by
@@ -543,18 +549,6 @@ class TunedRunTest(unittest.TestCase):
             trainer._check_run_config({"config": configs[0]})
         trainer._check_run_config({"config": configs[1]})
 
-    def test_model_kwargs_mismatch_is_config_mismatch(self):
-        """A state stored before the configuration held the model knobs is
-        refused for other knobs with ConfigMismatchError."""
-        out = self.interrupted(1e9)
-        path = tuned(out).resume_path()
-        saved = torch.load(path, weights_only=False)
-        del saved["config"]["model_kwargs"]
-        saved["model_kwargs"] = dict(TINY, dropout=0.2)
-        torch.save(saved, path)
-        with self.assertRaisesRegex(ConfigMismatchError, "Resume state of"):
-            tuned(out).train(*ids())
-
     def test_stop_in_last_epoch(self):
         """SIGUSR1 during the last epoch: the run completes and records the
         request in `stop_requested`; the request does not outlive it."""
@@ -575,7 +569,7 @@ class TunedRunTest(unittest.TestCase):
 
     def test_temporary_name(self):
         """A save is written in a temporary directory
-        <path>.tmp.<host>.<pid>.<uuid8>, under the name of `path`, and the
+        <path>.tmp.<host>.<pid>.<tag>, under the name of `path`, and the
         directory is removed."""
         folder = tempfile.mkdtemp(dir=self.out.name)
         path = os.path.join(folder, "tcn_fa.pt")
@@ -587,7 +581,8 @@ class TunedRunTest(unittest.TestCase):
         self.assertEqual(moved.call_args[0][1], path)
         self.assertEqual(os.path.basename(tmp), "tcn_fa.pt")
         pattern = (re.escape(f"{path}.tmp.{socket.gethostname()}."
-                             f"{os.getpid()}.") + "[0-9a-f]{8}")
+                             f"{os.getpid()}.") +
+                   f"[0-9a-f]{{{C.TEMPORARY_TAG_LENGTH}}}")
         self.assertRegex(os.path.dirname(tmp), "^" + pattern + "$")
         self.assertEqual(os.listdir(folder), ["tcn_fa.pt"])
 
@@ -608,30 +603,27 @@ class TunedRunTest(unittest.TestCase):
         with open(path, "rb") as saved, open(direct, "rb") as reference:
             self.assertEqual(saved.read(), reference.read())
 
-    def test_temporaries_across_hosts(self):  # pylint: disable=too-many-locals
-        """A temporary is kept only if modified less than max(3 checkpoint
-        intervals, 1 h) ago and, if written on this host, by another live
-        process (one of another host is judged on its age alone), as a
-        directory or as a file of the older naming."""
+    def test_temporaries_across_hosts(self):
+        """A temporary is kept only if modified less than
+        max(STALE_TEMPORARY_INTERVALS checkpoint intervals,
+        STALE_TEMPORARY_SECONDS) ago and, if written on this host, by
+        another live process (one of another host is judged on its age
+        alone)."""
         out = tempfile.mkdtemp(dir=self.out.name)
         host, live = socket.gethostname(), os.getppid()
         stem = make(out).checkpoint_path()
-        old = time.time() - 2 * 3600.0
-        files = {
+        old = time.time() - 2 * C.STALE_TEMPORARY_SECONDS
+        temporaries = {
             f"{stem}.tmp.{host}.{live}.0123abcd": (None, True),
             f"{stem}.tmp.{host}.{dead_pid()}.0123abcd": (None, False),
             f"{stem}.tmp.other.host.{live}.0123abcd": (None, True),
             f"{stem}.tmp.other.host.{dead_pid()}.0123abcd": (None, True),
             f"{stem}.tmp.other.host.{live}.4567cdef": (old, False),
             f"{stem}.tmp.{host}.{live}.4567cdef": (old, False),
-            f"{stem}.tmp.{live}": (old, False),
             f"{stem}.tmp.{host}.{live}.0123": (None, False),
         }
-        for path, (mtime, _) in files.items():
-            with open(path, "w", encoding="utf-8") as file:
-                file.write("partial")
-            if mtime is not None:
-                os.utime(path, (mtime, mtime))
+        for path, (mtime, _) in temporaries.items():
+            write_temporary(path, mtime)
         live_pids = {live}
         kill = os.kill
 
@@ -640,30 +632,13 @@ class TunedRunTest(unittest.TestCase):
                 return None
             return kill(pid, sig)
 
-        folders = {
-            f"{stem}.tmp.{host}.{live}.13579bdf": (None, True),
-            f"{stem}.tmp.{host}.{dead_pid()}.13579bdf": (None, False),
-            f"{stem}.tmp.other.host.{live}.13579bdf": (None, True),
-            f"{stem}.tmp.other.host.{live}.fedcba98": (old, False),
-        }
-        for path, (mtime, _) in folders.items():
-            os.mkdir(path)
-            inner = os.path.join(path, os.path.basename(stem))
-            with open(inner, "w", encoding="utf-8") as file:
-                file.write("partial")
-            if mtime is not None:
-                os.utime(inner, (mtime, mtime))
-                os.utime(path, (mtime, mtime))
         with mock.patch("floatsense.trainer.os.kill", kill_some):
             make(out)._remove_stale_temporaries()
-        for path, (_, kept) in {**files, **folders}.items():
+        for path, (_, kept) in temporaries.items():
             self.assertEqual(os.path.exists(path), kept, path)
         # A directory whose file is still being written is in flight.
         path = f"{stem}.tmp.{host}.{live}.76543210"
-        os.mkdir(path)
-        with open(os.path.join(path, "tcn_fa.pt"), "w",
-                  encoding="utf-8") as file:
-            file.write("partial")
+        write_temporary(path)
         os.utime(path, (old, old))
         with mock.patch("floatsense.trainer.os.kill", kill_some):
             make(out)._remove_stale_temporaries()
@@ -671,35 +646,36 @@ class TunedRunTest(unittest.TestCase):
         shutil.rmtree(path)
         # Longer checkpoint intervals keep a temporary longer.
         path = f"{stem}.tmp.{host}.{live}.89abcdef"
-        with open(path, "w", encoding="utf-8") as file:
-            file.write("partial")
-        os.utime(path, (old, old))
+        write_temporary(path, old)
         with mock.patch("floatsense.trainer.os.kill", kill_some):
-            make(out, checkpoint_seconds=7200.0)._remove_stale_temporaries()
+            make(out, checkpoint_seconds=C.STALE_TEMPORARY_SECONDS)\
+                ._remove_stale_temporaries()
         self.assertTrue(os.path.exists(path))
 
     def test_stale_temporaries_removed(self):
-        """Temporary files of a killed save of this run are removed; other
-        files are kept."""
+        """Temporaries of a killed save of this run are removed; other
+        files and directories are kept."""
         out = tempfile.mkdtemp(dir=self.out.name)
         trainer = tuned(out, num_epochs=1, val_every=1, save_epochs=[])
-        pid = dead_pid()
+        writer = f"{socket.gethostname()}.{dead_pid()}.0123abcd"
         stale = [
-            trainer.checkpoint_path() + f".tmp.{pid}",
-            trainer.resume_path() + f".tmp.{os.getpid()}",
-            trainer.checkpoint_path(7) + f".tmp.{pid}",
+            trainer.checkpoint_path() + f".tmp.{writer}",
+            trainer.resume_path() + f".tmp.{writer}",
+            trainer.checkpoint_path(7) + f".tmp.{writer}",
         ]
         kept = [
-            os.path.join(out, "lstm_fa.pt.tmp.14"),
-            os.path.join(out, "tcn_ss.pt.tmp.15"),
+            os.path.join(out, f"lstm_fa.pt.tmp.{writer}"),
+            os.path.join(out, f"tcn_ss.pt.tmp.{writer}"),
             os.path.join(out, "tcn_fa.pt.tmp"),
-            os.path.join(out, "notes.tmp.16"),
-            os.path.join(out, "sub", "tcn_fa.pt.tmp.17"),
+            os.path.join(out, f"notes.tmp.{writer}"),
+            os.path.join(out, "sub", f"tcn_fa.pt.tmp.{writer}"),
         ]
         for path in stale + kept:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w", encoding="utf-8") as file:
-                file.write("partial")
+            write_temporary(path)
+        # A file with the name of a temporary is not one of its saves.
+        kept.append(trainer.checkpoint_path() + ".tmp.file.1.0123abcd")
+        with open(kept[-1], "w", encoding="utf-8") as file:
+            file.write("partial")
         trainer.train(*ids())
         for path in stale:
             self.assertFalse(os.path.exists(path), path)
@@ -707,17 +683,18 @@ class TunedRunTest(unittest.TestCase):
             self.assertTrue(os.path.exists(path), path)
 
     def test_live_writer_temporaries_kept(self):
-        """A temporary file whose pid is another live process (a concurrent
+        """A temporary of another live process on this host (a concurrent
         writer's save in flight) is kept, also when the process belongs to
         another user; one of an exited process is removed."""
         out = tempfile.mkdtemp(dir=self.out.name)
         trainer = tuned(out, num_epochs=1, val_every=1, save_epochs=[])
-        live = trainer.checkpoint_path() + f".tmp.{os.getppid()}"
-        other_user = trainer.resume_path() + ".tmp.1"
-        stale = trainer.resume_path() + f".tmp.{dead_pid()}"
+        host = socket.gethostname()
+        live = trainer.checkpoint_path(
+        ) + f".tmp.{host}.{os.getppid()}.0123abcd"
+        other_user = trainer.resume_path() + f".tmp.{host}.1.0123abcd"
+        stale = trainer.resume_path() + f".tmp.{host}.{dead_pid()}.0123abcd"
         for path in (live, other_user, stale):
-            with open(path, "w", encoding="utf-8") as file:
-                file.write("partial")
+            write_temporary(path)
         kill = os.kill
 
         def kill_as_other_user(pid, sig):
@@ -846,7 +823,7 @@ class TunedRunTest(unittest.TestCase):
         expected = [
             summarize_damage(frame[f"damage_true_{s}"],
                              frame[f"damage_rec_{s}"])["r2_log_damage"]
-            for s in synthetic.STEMS
+            for s in C.GAUGE_STEMS
         ]
         np.testing.assert_allclose(scores["r2_gauges"], expected, atol=1e-5)
         return scores
@@ -859,8 +836,14 @@ class TunedRunTest(unittest.TestCase):
                                    atol=1e-12)
 
     def test_damage_score_other_metric(self):
-        """Another low-pass: true damage recomputed from the series."""
-        self.damage_matches_evaluate(lowpass_hz=2.5)
+        """Another low-pass: true damage recomputed from the series (never
+        read from damage.parquet), equal to that of `evaluate`."""
+        with mock.patch.object(type(TOWER),
+                               "damage",
+                               side_effect=AssertionError("damage.parquet")):
+            scores = self.damage_matches_evaluate(lowpass_hz=2.5)
+        self.assertEqual(len(scores["r2_gauges"]), len(C.GAUGE_STEMS))
+        self.assertTrue(np.all(np.isfinite(scores["r2_gauges"])))
 
 
 class GuardsTest(unittest.TestCase):

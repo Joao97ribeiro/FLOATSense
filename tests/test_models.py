@@ -1,5 +1,6 @@
 # pylint: disable=wrong-import-position
 # pylint: disable=use-dict-literal
+# pylint: disable=protected-access
 """Tests of the model builder of the validation-tuned track.
 
 Run from the repository root with `python -m unittest discover tests`.
@@ -28,6 +29,7 @@ from floatsense.models import build_model
 from floatsense.models import count_parameters
 from floatsense.models import parse_model_kwargs
 from hpo import search_space
+from hpo.constants import MAX_PARAMS_M
 
 FINGERPRINTS = os.path.join(os.path.dirname(__file__), "data",
                             "model_fingerprints.json")
@@ -150,7 +152,7 @@ class DefaultsTest(unittest.TestCase):
                 self.assertEqual(
                     [n for n, _ in model.blocks[0].named_children()],
                     ["conv1", "conv2", "activation"])
-                metadata = model.state_dict()._metadata  # pylint: disable=protected-access
+                metadata = model.state_dict()._metadata
                 self.assertFalse(any("dropout" in k for k in metadata))
 
     def test_unknown_kwarg_raises(self):
@@ -236,7 +238,7 @@ class GridCornersTest(unittest.TestCase):
                     millions = count_parameters(net) / 1e6
                     print(f"\n  {model:13s} {kwargs} {millions:8.3f} M", end="")
                     if model not in PRETRAINED:
-                        self.assertLess(millions, search_space.MAX_PARAMS_M)
+                        self.assertLess(millions, MAX_PARAMS_M)
                     output = forward(net, num_samples if fixed else LENGTH)
                     self.assertTrue(torch.isfinite(output).all())
 

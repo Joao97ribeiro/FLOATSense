@@ -6,6 +6,7 @@
 # pylint: disable=too-many-return-statements
 # pylint: disable=too-many-branches
 # pylint: disable=unused-argument
+# pylint: disable=import-outside-toplevel
 """Sequence models for acceleration-to-moment reconstruction.
 
 Two families:
@@ -506,7 +507,7 @@ class ChronosEncoderModel(nn.Module):
             finetune (bool): Train the encoder as well as the head.
         """
         super().__init__()
-        from chronos import ChronosPipeline  # pylint: disable=import-outside-toplevel
+        from chronos import ChronosPipeline
         self.context_length = context_length
         self.pipeline = ChronosPipeline.from_pretrained(model_name,
                                                         dtype=torch.float32)
@@ -567,7 +568,7 @@ class MomentModel(nn.Module):
             model_name (str): Hugging Face id of the MOMENT checkpoint.
         """
         super().__init__()
-        from momentfm import MOMENTPipeline  # pylint: disable=import-outside-toplevel
+        from momentfm import MOMENTPipeline
         self.context_length = context_length
         self.pipeline = MOMENTPipeline.from_pretrained(
             model_name, model_kwargs={"task_name": "reconstruction"})
@@ -617,7 +618,6 @@ class TimesFMEncoderModel(nn.Module):
             finetune (bool): Train the encoder as well as the head.
         """
         super().__init__()
-        # pylint: disable=import-outside-toplevel
         from timesfm import timesfm_2p5_torch
         wrapper = timesfm_2p5_torch.TimesFM_2p5_200M_torch.from_pretrained(
             model_name, torch_compile=False)
@@ -1349,65 +1349,68 @@ def build_model(name: str,
     the validation-tuned track); without them every model is the published
     one. TCN and Prob-TCN also take `num_levels` (dilations 2**i).
     """
-    kwargs = model_kwargs
     if name == "spectral":
         return SpectralGainModel(num_samples=num_samples,
                                  condition_dim=condition_dim,
-                                 **kwargs)
+                                 **model_kwargs)
     if name == "hybrid":
         return HybridGainModel(num_samples=num_samples,
                                condition_bound=condition_bound,
                                condition_dim=condition_dim,
-                               **kwargs)
+                               **model_kwargs)
     if name == "tcn":
-        return TCNModel(input_channels=input_channels, **_tcn_kwargs(kwargs))
+        return TCNModel(input_channels=input_channels,
+                        **_tcn_kwargs(model_kwargs))
     if name == "dlinear":
-        return DLinearModel(input_channels=input_channels, **kwargs)
+        return DLinearModel(input_channels=input_channels, **model_kwargs)
     if name == "naive":
-        return NaiveGainModel(input_channels=input_channels, **kwargs)
+        return NaiveGainModel(input_channels=input_channels, **model_kwargs)
     if name == "hybrid_tcn":
         return HybridTCNModel(input_channels=input_channels,
                               bound=condition_bound,
-                              **kwargs)
+                              **model_kwargs)
     if name == "s4":
-        return S4Model(input_channels=input_channels, **kwargs)
+        return S4Model(input_channels=input_channels, **model_kwargs)
     if name == "mamba":
-        return MambaModel(input_channels=input_channels, **kwargs)
+        return MambaModel(input_channels=input_channels, **model_kwargs)
     if name == "unet":
-        return UNetModel(input_channels=input_channels, **kwargs)
+        return UNetModel(input_channels=input_channels, **model_kwargs)
     if name == "timesnet":
-        return TimesNetModel(input_channels=input_channels, **kwargs)
+        return TimesNetModel(input_channels=input_channels, **model_kwargs)
     if name == "fits":
         return FITSModel(num_samples=num_samples,
                          input_channels=input_channels,
-                         **kwargs)
+                         **model_kwargs)
     if name == "itransformer":
         return ITransformerModel(num_samples=num_samples,
                                  input_channels=input_channels,
-                                 **kwargs)
+                                 **model_kwargs)
     if name == "fno":
-        return FNOModel(input_channels=input_channels, **kwargs)
+        return FNOModel(input_channels=input_channels, **model_kwargs)
     if name == "moment_ft":
         return MomentModel(input_channels=input_channels,
                            finetune=True,
-                           **kwargs)
+                           **model_kwargs)
     if name == "timesfm":
-        return TimesFMEncoderModel(input_channels=input_channels, **kwargs)
+        return TimesFMEncoderModel(input_channels=input_channels,
+                                   **model_kwargs)
     if name == "timesfm_ft":
         return TimesFMEncoderModel(input_channels=input_channels,
                                    finetune=True,
-                                   **kwargs)
+                                   **model_kwargs)
     if name == "chronos":
-        return ChronosEncoderModel(input_channels=input_channels, **kwargs)
+        return ChronosEncoderModel(input_channels=input_channels,
+                                   **model_kwargs)
     if name == "moment":
-        return MomentModel(input_channels=input_channels, **kwargs)
+        return MomentModel(input_channels=input_channels, **model_kwargs)
     if name == "prob_tcn":
         return ProbabilisticTCNModel(input_channels=input_channels,
-                                     **_tcn_kwargs(kwargs))
+                                     **_tcn_kwargs(model_kwargs))
     if name == "lstm":
-        return LSTMModel(input_channels=input_channels, **kwargs)
+        return LSTMModel(input_channels=input_channels, **model_kwargs)
     if name == "transformer":
-        return PatchTransformerModel(input_channels=input_channels, **kwargs)
+        return PatchTransformerModel(input_channels=input_channels,
+                                     **model_kwargs)
     raise ValueError(f"Unknown model: '{name}'.")
 
 

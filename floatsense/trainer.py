@@ -47,6 +47,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from .constants import CHECKPOINT_SECONDS
+from .constants import DAMAGE_WORKERS
 from .constants import INPUT_LENGTH
 from .constants import LOWPASS_HZ
 from .constants import LOWPASS_ORDER
@@ -54,6 +55,9 @@ from .constants import MAX_TIME
 from .constants import MIN_TIME
 from .constants import SN_INTERCEPTS_LOG10
 from .constants import SN_SLOPES
+from .constants import STALE_TEMPORARY_INTERVALS
+from .constants import STALE_TEMPORARY_SECONDS
+from .constants import TEMPORARY_TAG_LENGTH
 from .data import SequenceDataset
 from .data import compute_norm_stats
 from .fatigue import damage_filter
@@ -146,9 +150,10 @@ def _set_rng_state(state: Dict) -> None:
 
 def _atomic_save(obj, path: str) -> None:
     """torch.save through a temporary directory and a rename (never half
-    written, even if the job is killed).
+    written, even if the process is killed).
 
-    The file is written as <path>.tmp.<host>.<pid>.<uuid8>/<name of path>,
+    The file is written as <path>.tmp.<host>.<pid>.<tag>/<name of path>
+    (tag: TEMPORARY_TAG_LENGTH random hex characters),
     a directory unique across the hosts that share a file system (see
     `_temporary_in_flight`). torch names the root folder of the archive
     after the file name, so the archive holds the same names (and bytes) as
@@ -156,7 +161,7 @@ def _atomic_save(obj, path: str) -> None:
     """
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = (f"{path}.tmp.{socket.gethostname()}.{os.getpid()}."
-           f"{uuid.uuid4().hex[:8]}")
+           f"{uuid.uuid4().hex[:TEMPORARY_TAG_LENGTH]}")
     os.mkdir(tmp)
     try:
         written = os.path.join(tmp, os.path.basename(path))
@@ -168,37 +173,31 @@ def _atomic_save(obj, path: str) -> None:
 
 def _temporary_writer(path: str) -> Optional[tuple]:
     """(host, pid) of a temporary of `_atomic_save`, None if the name does
-    not follow its pattern. The older <path>.tmp.<pid> pattern counts as
-    written on this host."""
-    suffix = path.rsplit(".tmp.", 1)[-1]
-    if suffix.isdigit():
-        return socket.gethostname(), int(suffix)
-    parts = suffix.rsplit(".", 2)
+    not follow its pattern."""
+    parts = path.rsplit(".tmp.", 1)[-1].rsplit(".", 2)
     if (len(parts) == 3 and parts[0] and parts[1].isdigit() and
-            len(parts[2]) == 8 and
+            len(parts[2]) == TEMPORARY_TAG_LENGTH and
             all(c in "0123456789abcdef" for c in parts[2])):
         return parts[0], int(parts[1])
     return None
 
 
 def _temporary_mtime(path: str) -> float:
-    """Last modification of a temporary of `_atomic_save`: of the file, or
-    of the directory and the file being written in it."""
+    """Last modification of a temporary directory of `_atomic_save`: of the
+    directory and the file being written in it."""
     mtime = os.path.getmtime(path)
-    if os.path.isdir(path):
-        for entry in os.scandir(path):
-            mtime = max(mtime, entry.stat(follow_symlinks=False).st_mtime)
+    for entry in os.scandir(path):
+        mtime = max(mtime, entry.stat(follow_symlinks=False).st_mtime)
     return mtime
 
 
 def _temporary_in_flight(path: str, max_age: float) -> bool:
-    """Whether a temporary (directory, or file of the older pattern) of
-    `_atomic_save` may be the save in flight of a concurrent writer: it was
-    modified less than `max_age` seconds ago and, if written on this host,
-    by another live process (a process of another user counts as alive). A
-    pid seen from another host means nothing, so a temporary of another
-    host is judged on its age alone; an old temporary of a live pid is a
-    leak of a reused pid."""
+    """Whether a temporary directory of `_atomic_save` may be the save in
+    flight of a concurrent writer: it was modified less than `max_age`
+    seconds ago and, if written on this host, by another live process (a
+    process of another user counts as alive). A pid seen from another host
+    means nothing, so a temporary of another host is judged on its age
+    alone; an old temporary of a live pid is a leak of a reused pid."""
     writer = _temporary_writer(path)
     if writer is None:
         return False
@@ -412,6 +411,7 @@ class SequenceModelTrainer:
         self.save_epochs = set(save_epochs or [])
         self.checkpoint_seconds = checkpoint_seconds
         self._previous_handler = None
+        self._handler_installed = False
         self.stop_requested = False
         self._config = None
         self.model = None
@@ -535,9 +535,9 @@ class SequenceModelTrainer:
             ConfigMismatchError: The resume state of the output directory
               was written with another run configuration (another
               `num_epochs` or `model_kwargs` included: a longer run needs a
-              new directory).
+              new directory), or holds none.
         """
-        self._previous_handler = None
+        self._handler_installed = False
         self.stop_requested = False
         try:
             return self._train(train_ids, val_ids)
@@ -546,9 +546,9 @@ class SequenceModelTrainer:
             # complete: the caller reads it here and stops.
             self.stop_requested = STOP_REQUESTED.is_set()
             STOP_REQUESTED.clear()
-            if self._previous_handler is not None:
-                signal.signal(signal.SIGUSR1, self._previous_handler[0])
-                self._previous_handler = None
+            if self._handler_installed:
+                signal.signal(signal.SIGUSR1, self._previous_handler)
+                self._handler_installed = False
 
     def _train(self, train_ids: List[int],
                val_ids: Optional[List[int]]) -> Dict[str, List[float]]:
@@ -592,30 +592,7 @@ class SequenceModelTrainer:
             self.load_checkpoint()
             self._print_val_history(resume_state["history"])
             return resume_state["history"]
-        stat_channels = list(
-            dict.fromkeys([
-                c.split(":")[1] if c.startswith("stat:") else c
-                for c in probe.input_channels
-                if c != "height"
-            ] + probe.condition_channels + [probe.moment_channel] + (
-                probe.height_channels if self.height_targets else [])))
-        init_state = None
-        if self.init_checkpoint:
-            init_state = torch.load(self.init_checkpoint,
-                                    map_location=self.device,
-                                    weights_only=False)
-            self._check_setup(init_state, probe)
-            # A resumed run keeps the stats it trained with.
-            self.norm_stats = (init_state["norm_stats"] if resume_state is None
-                               else resume_state["norm_stats"])
-            self.model_kwargs = (self.model_kwargs or
-                                 init_state.get("model_kwargs", {}))
-        elif resume_state is not None:
-            self.norm_stats = resume_state["norm_stats"]
-        else:
-            self.norm_stats = compute_norm_stats(self.release, train_ids,
-                                                 stat_channels, self.min_time,
-                                                 self.max_time)
+        init_state = self._init_norm_stats(train_ids, probe, resume_state)
         # Input length of the length-fixed models: the full scored window
         # (6,001 samples). Checkpoints trained before stored 6,000 and are
         # scored over the full window by _predict_window.
@@ -664,80 +641,23 @@ class SequenceModelTrainer:
         best_val = -float("inf") if maximize else float("inf")
         best_epoch, best_state, start_epoch = 0, None, 0
         if resume_state is not None:
-            if resume_state["model_kwargs"] != self.model_kwargs:
-                raise ConfigMismatchError(
-                    f"Resume state of {resume_state['model_kwargs']}"
-                    f", run configured with {self.model_kwargs}.")
-            self.model.load_state_dict(resume_state["state_dict"])
-            optimizer.load_state_dict(resume_state["optimizer"])
-            if scheduler is not None:
-                scheduler.load_state_dict(resume_state["scheduler"])
-            history = resume_state["history"]
-            best_val, best_epoch = resume_state["best"]
-            best_state = resume_state["best_state"]
-            start_epoch = resume_state["epoch"]
-            _set_rng_state(resume_state["rng"])
-            print(
-                f"[{self.model_name}/{self.direction}] resumed at epoch "
-                f"{start_epoch}",
-                flush=True)
-            self._print_val_history(history)
+            history, (best_val, best_epoch), best_state, start_epoch = (
+                self._restore_resume(resume_state, optimizer, scheduler))
         last_save = time.monotonic()
         checkpoint_seconds = self._checkpoint_interval()
         if (self.resume and
                 threading.current_thread() is threading.main_thread()):
             # Restored by `train` when the run returns or raises.
-            self._previous_handler = (signal.signal(signal.SIGUSR1,
-                                                    request_stop),)
+            self._previous_handler = signal.signal(signal.SIGUSR1, request_stop)
+            self._handler_installed = True
         for epoch in range(start_epoch, self.num_epochs):
-            self.model.train()
-            losses = []
-            for batch in loader:
-                inputs = batch["inputs"].to(self.device)
-                condition = batch["condition"].to(self.device)
-                target = batch["target"].to(self.device)
-                if getattr(self.model, "needs_physics_gain", False):
-                    prediction = self.model(
-                        inputs, condition,
-                        batch["physics_gain"].to(self.device))
-                else:
-                    prediction = self.model(inputs, condition)
-                if getattr(self.model, "predicts_variance", False):
-                    log_var = prediction[:, 1:2, :]
-                    prediction = prediction[:, :1, :]
-                    loss = torch.mean(
-                        0.5 * (log_var +
-                               (prediction - target)**2 / torch.exp(log_var)))
-                else:
-                    loss = torch.mean((prediction - target)**2)
-                if self.loss_name == "damage":
-                    loss = loss + self.damage_loss_weight * (
-                        self._damage_proxy_loss(prediction[:, 0, :],
-                                                target[:, 0, :], freq_weights))
-                optimizer.zero_grad()
-                loss.backward()
-                if self.grad_clip:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(),
-                                                   self.grad_clip)
-                optimizer.step()
-                if scheduler is not None:
-                    scheduler.step()
-                losses.append(float(loss.detach()))
-                if not math.isfinite(losses[-1]):
-                    raise DivergedError(f"Training loss {losses[-1]} at "
-                                        f"epoch {epoch + 1}.")
-            history["train_loss"].append(float(np.mean(losses)))
-            log_now = (epoch + 1) % max(1, self.num_epochs // 10) == 0
+            history["train_loss"].append(
+                self._train_epoch(loader, optimizer, scheduler, freq_weights,
+                                  epoch))
             val_now = ((val_loader is not None or val_dataset is not None) and
                        (epoch + 1) % val_interval == 0)
-            if val_now and val_dataset is not None:
-                scores = self._damage_scores(val_dataset)
-                history["val_r2"].append({"epoch": epoch + 1, **scores})
-                self._print_val(history["val_r2"][-1])
-                val_loss = scores["r2_mean"]
-            elif val_now:
-                val_loss = self._validation_loss(val_loader)
-                history["val_loss"].append((epoch + 1, val_loss))
+            val_loss = (self._validate(epoch, val_loader, val_dataset, history)
+                        if val_now else None)
             if val_now and (val_loss > best_val
                             if maximize else val_loss < best_val):
                 best_val, best_epoch = val_loss, epoch + 1
@@ -746,14 +666,7 @@ class SequenceModelTrainer:
                         k: v.detach().clone().cpu()
                         for k, v in self.model.state_dict().items()
                     }
-            if log_now or val_now:
-                line = (f"[{self.model_name}/{self.direction}] "
-                        f"epoch {epoch + 1}/{self.num_epochs} "
-                        f"loss {history['train_loss'][-1]:.5f}")
-                if val_now:
-                    line += (f" val_r2 {val_loss:.5f}"
-                             if maximize else f" val_loss {val_loss:.5f}")
-                print(line)
+            self._print_epoch(epoch, history, val_loss)
             if epoch + 1 in self.save_epochs:
                 self.save_checkpoint(self.checkpoint_path(epoch + 1))
             stop_now = self.resume and STOP_REQUESTED.is_set()
@@ -782,6 +695,151 @@ class SequenceModelTrainer:
         if restore or (maximize and best_epoch):
             history["best_epoch"] = best_epoch
             history["best_val_r2" if maximize else "best_val_loss"] = best_val
+        self._save_final(history)
+        return history
+
+    def _init_norm_stats(self, train_ids: List[int], probe: SequenceDataset,
+                         resume_state: Optional[Dict]) -> Optional[Dict]:
+        """Sets the normalization stats (of the initial checkpoint, of the
+        resume state, or computed on the training simulations) and, from an
+        initial checkpoint, the model knobs it was trained with.
+
+        Returns:
+            dict: The initial checkpoint (None without one).
+        """
+        if not self.init_checkpoint:
+            if resume_state is not None:
+                self.norm_stats = resume_state["norm_stats"]
+            else:
+                stat_channels = list(
+                    dict.fromkeys([
+                        c.split(":")[1] if c.startswith("stat:") else c
+                        for c in probe.input_channels
+                        if c != "height"
+                    ] + probe.condition_channels + [probe.moment_channel] + (
+                        probe.height_channels if self.height_targets else [])))
+                self.norm_stats = compute_norm_stats(self.release, train_ids,
+                                                     stat_channels,
+                                                     self.min_time,
+                                                     self.max_time)
+            return None
+        init_state = torch.load(self.init_checkpoint,
+                                map_location=self.device,
+                                weights_only=False)
+        self._check_setup(init_state, probe)
+        # A resumed run keeps the stats it trained with.
+        self.norm_stats = (init_state["norm_stats"] if resume_state is None else
+                           resume_state["norm_stats"])
+        self.model_kwargs = (self.model_kwargs or
+                             init_state.get("model_kwargs", {}))
+        return init_state
+
+    def _restore_resume(self, resume_state: Dict, optimizer,
+                        scheduler) -> tuple:
+        """Restores the model, the optimizer, the schedule and the random
+        streams of a resume state.
+
+        Returns:
+            tuple: (history, (best score, best epoch), best weights, first
+            epoch to train).
+        """
+        self.model.load_state_dict(resume_state["state_dict"])
+        optimizer.load_state_dict(resume_state["optimizer"])
+        if scheduler is not None:
+            scheduler.load_state_dict(resume_state["scheduler"])
+        _set_rng_state(resume_state["rng"])
+        print(
+            f"[{self.model_name}/{self.direction}] resumed at epoch "
+            f"{resume_state['epoch']}",
+            flush=True)
+        self._print_val_history(resume_state["history"])
+        return (resume_state["history"], tuple(resume_state["best"]),
+                resume_state["best_state"], resume_state["epoch"])
+
+    def _train_epoch(self, loader: DataLoader, optimizer, scheduler,
+                     freq_weights: torch.Tensor, epoch: int) -> float:
+        """One pass over the training batches.
+
+        Returns:
+            float: Mean training loss of the epoch.
+
+        Raises:
+            DivergedError: A non-finite training loss.
+        """
+        self.model.train()
+        losses = []
+        for batch in loader:
+            inputs = batch["inputs"].to(self.device)
+            condition = batch["condition"].to(self.device)
+            target = batch["target"].to(self.device)
+            if getattr(self.model, "needs_physics_gain", False):
+                prediction = self.model(inputs, condition,
+                                        batch["physics_gain"].to(self.device))
+            else:
+                prediction = self.model(inputs, condition)
+            if getattr(self.model, "predicts_variance", False):
+                log_var = prediction[:, 1:2, :]
+                prediction = prediction[:, :1, :]
+                loss = torch.mean(
+                    0.5 * (log_var +
+                           (prediction - target)**2 / torch.exp(log_var)))
+            else:
+                loss = torch.mean((prediction - target)**2)
+            if self.loss_name == "damage":
+                loss = loss + self.damage_loss_weight * (
+                    self._damage_proxy_loss(prediction[:, 0, :],
+                                            target[:, 0, :], freq_weights))
+            optimizer.zero_grad()
+            loss.backward()
+            if self.grad_clip:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(),
+                                               self.grad_clip)
+            optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
+            losses.append(float(loss.detach()))
+            if not math.isfinite(losses[-1]):
+                raise DivergedError(f"Training loss {losses[-1]} at "
+                                    f"epoch {epoch + 1}.")
+        return float(np.mean(losses))
+
+    def _validate(self, epoch: int, val_loader: Optional[DataLoader],
+                  val_dataset: Optional[SequenceDataset],
+                  history: Dict) -> float:
+        """Scores the validation split after `epoch` and records it in
+        `history`.
+
+        Returns:
+            float: The mean damage R^2 (damage validation, to maximize) or
+            the validation loss (to minimize).
+        """
+        if val_dataset is not None:
+            scores = self._damage_scores(val_dataset)
+            history["val_r2"].append({"epoch": epoch + 1, **scores})
+            self._print_val(history["val_r2"][-1])
+            return scores["r2_mean"]
+        val_loss = self._validation_loss(val_loader)
+        history["val_loss"].append((epoch + 1, val_loss))
+        return val_loss
+
+    def _print_epoch(self, epoch: int, history: Dict,
+                     val_loss: Optional[float]) -> None:
+        """Progress line of a logged epoch (every tenth of the run) or of a
+        validated one (`val_loss` not None)."""
+        log_now = (epoch + 1) % max(1, self.num_epochs // 10) == 0
+        if not log_now and val_loss is None:
+            return
+        line = (f"[{self.model_name}/{self.direction}] "
+                f"epoch {epoch + 1}/{self.num_epochs} "
+                f"loss {history['train_loss'][-1]:.5f}")
+        if val_loss is not None:
+            line += (f" val_r2 {val_loss:.5f}" if self.val_score == "damage"
+                     else f" val_loss {val_loss:.5f}")
+        print(line)
+
+    def _save_final(self, history: Dict) -> None:
+        """Writes the final checkpoint, the history and, with `resume`, the
+        record of a completed run."""
         self.save_checkpoint()
         os.makedirs(self.output_dir, exist_ok=True)
         name = f"history_{self.model_name}_{self.direction}.json"
@@ -796,7 +854,6 @@ class SequenceModelTrainer:
                     "history": history,
                     "config": self._config
                 }, self.resume_path())
-        return history
 
     def _build_model(self, num_samples: int, num_inputs: int,
                      num_conditions: int) -> torch.nn.Module:
@@ -921,27 +978,21 @@ class SequenceModelTrainer:
 
     def _check_run_config(self, resume_state: Dict) -> None:
         """Refuses a resume state (in progress or completed) of another run
-        configuration (see `_run_config`). States written before the
-        configuration was stored are not checked, and only the settings a
-        state stored are compared (a state written before a setting was
-        added keeps resuming). The calibration and the initial checkpoint
-        are compared by contents (a moved file with the same contents
-        resumes), or by real path in states written before the digest."""
-        saved = resume_state.get("config")
-        if saved is None:
-            return
-        current = self._config
-        saved = dict(saved)
-        for key, digest in (("calibration_path", "calibration_sha256"),
-                            ("init_checkpoint", "init_checkpoint_sha256")):
-            if digest in saved:
-                # Same contents, same run: the file may have moved.
-                saved.pop(key, None)
-            elif saved.get(key) is not None:
-                # States written before the digest (and the real path) were
-                # stored.
-                saved[key] = os.path.realpath(saved[key])
-        changed = sorted(k for k in saved if saved[k] != current.get(k))
+        configuration (see `_run_config`), or without one: every resume
+        state stores its configuration (the published trainer wrote none).
+        The calibration and the initial checkpoint are compared by contents,
+        not by path (a moved file with the same contents resumes)."""
+        if resume_state.get("config") is None:
+            raise ConfigMismatchError(
+                f"{self.resume_path()} holds no run configuration; use "
+                "another output directory or remove the resume state.")
+        saved, current = dict(resume_state["config"]), dict(self._config)
+        for config in (saved, current):
+            # Same contents, same run: the file may have moved.
+            config.pop("calibration_path", None)
+            config.pop("init_checkpoint", None)
+        changed = sorted(k for k in saved.keys() | current.keys()
+                         if saved.get(k) != current.get(k))
         if changed:
             details = ", ".join(
                 f"{k}: {saved.get(k)!r} -> {current.get(k)!r}" for k in changed)
@@ -956,13 +1007,14 @@ class SequenceModelTrainer:
                 if self.checkpoint_seconds is None else self.checkpoint_seconds)
 
     def _remove_stale_temporaries(self) -> None:
-        """Removes the temporaries (directories, and files of the older
-        pattern) left by a killed `_atomic_save` of the files this run
-        writes (only those, only in its directory). A temporary younger than
-        max(3 checkpoint intervals, 1 h), of another live process on this
-        host or of another host, is kept: it may be the save in flight of a
-        concurrent writer (see `_temporary_in_flight`)."""
-        max_age = max(3.0 * self._checkpoint_interval(), 3600.0)
+        """Removes the temporary directories left by a killed `_atomic_save`
+        of the files this run writes (only those, only in its directory). A
+        temporary younger than max(STALE_TEMPORARY_INTERVALS checkpoint
+        intervals, STALE_TEMPORARY_SECONDS), of another live process on
+        this host or of another host, is kept: it may be the save in flight
+        of a concurrent writer (see `_temporary_in_flight`)."""
+        max_age = max(STALE_TEMPORARY_INTERVALS * self._checkpoint_interval(),
+                      STALE_TEMPORARY_SECONDS)
         stems = [self.checkpoint_path(), self.resume_path()]
         patterns = [glob.escape(stem) + ".tmp.*" for stem in stems]
         patterns.append(
@@ -972,12 +1024,9 @@ class SequenceModelTrainer:
             "[0-9]*.pt.tmp.*")
         for pattern in patterns:
             for path in glob.glob(pattern):
-                if os.path.islink(path) or _temporary_in_flight(path, max_age):
-                    continue
-                if os.path.isdir(path):
+                if (os.path.isdir(path) and not os.path.islink(path) and
+                        not _temporary_in_flight(path, max_age)):
                     shutil.rmtree(path, ignore_errors=True)
-                elif os.path.isfile(path):
-                    os.remove(path)
 
     def _save_resume(self, epoch: int, optimizer, scheduler, history: Dict,
                      best: tuple, best_state: Optional[Dict]) -> None:
@@ -1144,7 +1193,8 @@ class SequenceModelTrainer:
             dataset.section = None
             _set_rng_state(rng)
             self.model.train()
-        with multiprocessing.Pool(min(8, os.cpu_count() or 1)) as pool:
+        with multiprocessing.Pool(min(DAMAGE_WORKERS,
+                                      os.cpu_count() or 1)) as pool:
             damages = np.array(
                 pool.starmap(_damage_job, [(m, g, *sn_args) for m, g in jobs],
                              chunksize=64))
@@ -1366,7 +1416,8 @@ class SequenceModelTrainer:
                     jobs.append(
                         (index, f"damage_rec_{stem}", moment_rec, damage_gauge))
                 rows.append(row)
-        with multiprocessing.Pool(min(8, os.cpu_count() or 1)) as pool:
+        with multiprocessing.Pool(min(DAMAGE_WORKERS,
+                                      os.cpu_count() or 1)) as pool:
             damages = pool.starmap(
                 _damage_job, [(m, sec, *sn_args) for _, _, m, sec in jobs],
                 chunksize=64)

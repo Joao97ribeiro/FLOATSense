@@ -18,9 +18,10 @@ import pyarrow.parquet as pq
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from floatsense import load_tower
+from floatsense.constants import GAUGE_STEMS
 
 TOWER = "syn"
-STEMS = ["tower_bottom"] + [f"tower_{i}" for i in range(1, 10)] + ["tower_top"]
+STEMS = GAUGE_STEMS  # the 11 gauges, base to top
 NUM_SAMPLES = 10001  # 0 to 1,000 s at 10 Hz
 
 
@@ -57,7 +58,7 @@ def write_tower(dataset_dir: str,
             "electrical_power": np.full(NUM_SAMPLES, 1000.0),
         }
         for gauge, stem in enumerate(STEMS):
-            scale = 1e4 * (11 - gauge)
+            scale = 1e4 * (len(STEMS) - gauge)
             columns[f"{stem}_mfa"] = scale * (
                 np.roll(accel, gauge) + 0.1 * rng.standard_normal(NUM_SAMPLES))
         table = pa.table({

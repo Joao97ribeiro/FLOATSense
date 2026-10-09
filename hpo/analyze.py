@@ -29,9 +29,9 @@ secondary_best/ (SECONDARY: the median best validation epoch of phase 2):
                       scored tower has an empty row)
   per_tower.csv       the same before the mean over towers (with n_seeds)
   by_group.csv        the leaderboard per regime cell
-  top3.csv            the three best ranked models per criterion (R^2 at
-                      the base, mean of 11, top; ties broken by the model
-                      name), with n_towers
+  top<TOP_K>.csv      the TOP_K (3) best ranked models per criterion (R^2
+                      at the base, mean of 11, top; ties broken by the
+                      model name), with n_towers
   families.csv        the best ranked model of each family per criterion,
                       with n_towers
 
@@ -57,7 +57,7 @@ and, once for the track:
 Divergence: in phase 2 a diverged seed counts as -inf in the median of
 its configuration; in phase 3 a tower is complete only with all N_SEEDS
 final seeds scored (a diverged final seed leaves its model unranked). The
-build stops if a final seed of a pair that is not parked has no SEALED
+build stops if a final seed of a pair that is not shelved has no SEALED
 marker (a failed or missing test scoring).
 
 The tuned leaderboard ranks only the 20 learned models: the naive floor
@@ -82,6 +82,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from floatsense import constants as FC
 from hpo import common
 from hpo import confirm
 from hpo import constants as C
@@ -90,19 +91,14 @@ from hpo import search
 from hpo import search_space as S
 
 BENCHMARK = os.path.join(common.REPO, "scripts", "benchmark", "run.py")
-GAUGES = ["tower_bottom"] + [f"tower_{i}" for i in range(1, 10)] + ["tower_top"]
+GAUGES = list(FC.GAUGE_STEMS)
 # Reported positions: the base, z/H 0.78 (tower_8), the top, mean of 11.
 POSITIONS = {"base": "tower_bottom", "z078": "tower_8", "top": "tower_top"}
 METRICS = ("r2_log_damage", "fraction_within_factor2", "median_damage_ratio",
            "mean_relative_error", "within_condition_correlation")
 CRITERIA = ("base", "mean11", "top")  # R^2 of log10 damage
 VARIANTS = final.VARIANTS  # primary first
-PHASE_DIRS = {
-    "search": "trials",
-    "confirm": "phase2",
-    "final": "final",
-    "test": "test_runs"
-}
+PHASE_DIRS = {**common.PHASE_DIRS, "test": common.TEST_RUNS_DIR}
 
 
 def score(sealed_root: str, dataset_dir: str, out: str,
@@ -123,7 +119,7 @@ def score(sealed_root: str, dataset_dir: str, out: str,
     markers = {
         key:
             common.read_json(
-                os.path.join(sealed_root, key[1], f"SEALED_{key[0]}.json"))
+                final.sealed_marker(os.path.join(sealed_root, key[1]), key[0]))
         for key in set(zip(table["model"], table["run"]))
     }
     table = table[[
@@ -193,7 +189,7 @@ def ordered(board: pd.DataFrame) -> pd.DataFrame:
 
 def with_missing(board: pd.DataFrame) -> pd.DataFrame:
     """Adds an empty row for each learned model without any scored tower
-    (every tower parked)."""
+    (every tower shelved)."""
     absent = [m for m in S.LEARNED if m not in set(board["model"])]
     if not absent:
         return board
@@ -208,17 +204,17 @@ def with_missing(board: pd.DataFrame) -> pd.DataFrame:
 
 
 def rankings(board: pd.DataFrame) -> tuple:
-    """Top-3 per criterion and best model of each family per criterion,
+    """Top TOP_K per criterion and best model of each family per criterion,
     among the ranked models."""
     learned = board[board["model"].isin(S.LEARNED) & board["ranked"]]
-    top3, families = [], []
+    top, families = [], []
     for criterion in CRITERIA:
         column = f"r2_log_damage_{criterion}"
         # Stable, ties broken by the model name.
         ranked = learned.dropna(subset=[column]).sort_values(
             [column, "model"], ascending=[False, True], kind="mergesort")
-        for rank, (_, row) in enumerate(ranked.head(3).iterrows(), 1):
-            top3.append({
+        for rank, (_, row) in enumerate(ranked.head(C.TOP_K).iterrows(), 1):
+            top.append({
                 "criterion": criterion,
                 "rank": rank,
                 "model": row["model"],
@@ -233,15 +229,15 @@ def rankings(board: pd.DataFrame) -> tuple:
                 "r2": group.iloc[0][column],
                 "n_towers": group.iloc[0]["n_towers"]
             })
-    return pd.DataFrame(top3), pd.DataFrame(families)
+    return pd.DataFrame(top), pd.DataFrame(families)
 
 
 def configs(root: str) -> pd.DataFrame:
     """Selected configuration of every model and tower (phase 2); a shelved
-    (model, tower) (parked marker, checked first: a pair can be shelved
-    after its winner) has a row with status 'shelved' and no configuration;
-    a winner whose final seeds all diverged has status
-    'all_seeds_diverged'."""
+    (model, tower) (its marker checked first: a pair can be shelved after
+    its winner) has a row with status 'shelved', the kind and message of
+    its shelving and no configuration; a winner whose final seeds all
+    diverged has status 'all_seeds_diverged'."""
     rows = []
     diverged = set(final.skipped(root)["all_seeds_diverged"])
     for model in S.LEARNED:
@@ -250,11 +246,13 @@ def configs(root: str) -> pd.DataFrame:
             search_row = {"model": model, "tower": tower}
             for key in ("n_trials_counted", "target", "stopped_early"):
                 search_row[key] = plan.get(key)
-            parked = common.read_json(confirm.parked_path(root, model, tower))
-            if parked is not None:
+            shelved = common.read_json(
+                common.study_shelved_path(root, model, tower))
+            if shelved is not None:
                 rows.append({
                     **search_row, "status": "shelved",
-                    "reason": parked.get("reason")
+                    "kind": shelved["kind"],
+                    "reason": shelved["message"]
                 })
                 continue
             record = common.read_json(confirm.winner_path(root, model, tower))
@@ -348,17 +346,17 @@ def gpu_hours(root: str) -> pd.DataFrame:
 
 
 def check_sealed(root: str, variant: str) -> None:
-    """Exits if a final seed of a pair that is not parked (MISSING.json)
+    """Exits if a final seed of a pair that is not shelved (MISSING.json)
     has no SEALED marker (a diverged seed has a 'skipped' one): its test
     scoring failed (sealed/TEST_FAILURES.json) or never ran."""
-    parked = (common.read_json(os.path.join(root, "sealed", "MISSING.json")) or
-              {}).get("parked", {})
+    shelved = (common.read_json(final.missing_path(root)) or
+               {}).get("shelved", {})
     missing = [
         f"{model}/{tower}/s{seed}" for model in S.LEARNED
-        for tower in C.TOWERS_SEARCHED if f"{model}/{tower}" not in parked
+        for tower in C.TOWERS_SEARCHED if f"{model}/{tower}" not in shelved
         for seed in range(C.N_SEEDS) if not os.path.exists(
-            os.path.join(final.sealed_dir(root, variant, tower, seed),
-                         f"SEALED_{model}.json"))
+            final.sealed_marker(final.sealed_dir(root, variant, tower, seed),
+                                model))
     ]
     if missing:
         sys.exit(f"{variant}: no SEALED marker for {', '.join(missing)} "
@@ -371,7 +369,7 @@ def build(args: argparse.Namespace) -> Dict[str, pd.DataFrame]:
     os.makedirs(args.out, exist_ok=True)
     boards = {}
     for variant in VARIANTS:
-        sealed = os.path.join(args.root, "sealed", variant)
+        sealed = os.path.join(common.sealed_root(args.root), variant)
         if not glob.glob(os.path.join(sealed, "*", "seed*", "*.csv")):
             print(f"no sealed '{variant}' runs under {sealed}")
             continue
@@ -390,8 +388,8 @@ def build(args: argparse.Namespace) -> Dict[str, pd.DataFrame]:
         board = with_missing(board[board["group"] == "all"].drop(
             columns="group")).assign(variant=variant)
         board.to_csv(os.path.join(out, "leaderboard.csv"), index=False)
-        top3, families = rankings(board)
-        top3.to_csv(os.path.join(out, "top3.csv"), index=False)
+        top, families = rankings(board)
+        top.to_csv(os.path.join(out, f"top{C.TOP_K}.csv"), index=False)
         families.to_csv(os.path.join(out, "families.csv"), index=False)
         boards[variant] = board
         print(f"== {variant} ({final.VARIANT_LABELS[variant]}): R^2 of "
@@ -460,8 +458,7 @@ def write_synthetic(root: str,
         }
         for variant in VARIANTS:
             for seed in range(C.N_SEEDS):
-                runs = os.path.join(root, "sealed", variant, tower,
-                                    f"seed{seed}")
+                runs = final.sealed_dir(root, variant, tower, seed)
                 os.makedirs(runs, exist_ok=True)
                 for model, noise in quality.items():
                     frame = {"sim_id": sims}
@@ -472,9 +469,8 @@ def write_synthetic(root: str,
                     pd.DataFrame(frame).to_csv(os.path.join(
                         runs, f"damage_comparison_{model}_fa.csv"),
                                                index=False)
-                    common.write_json(
-                        os.path.join(runs, f"SEALED_{model}.json"),
-                        {"variant": variant})
+                    common.write_json(final.sealed_marker(runs, model),
+                                      {"variant": variant})
     for model in S.LEARNED:
         for tower in C.TOWERS_SEARCHED:
             common.write_json(
@@ -495,13 +491,13 @@ def write_synthetic_attempts(root: str, rng: np.random.Generator) -> None:
     statuses = ("ok", "pruned", "crash", "preempted")
     for model in S.LEARNED:
         for tower in C.TOWERS_SEARCHED:
-            study = f"{model}_{tower}"
-            dirs = [("trials", f"t{n:03d}") for n in range(4)]
-            dirs += [("phase2", f"c{r}_s{k}")
+            study = common.study_id(model, tower)
+            dirs = [(common.TRIALS_DIR, f"t{n:03d}") for n in range(4)]
+            dirs += [(common.CONFIRM_DIR, f"c{r}_s{k}")
                      for r in range(C.N_TOP)
                      for k in range(C.N_SEEDS)]
-            dirs += [("final", f"s{k}") for k in range(C.N_SEEDS)]
-            dirs += [("test_runs", f"{v}_s{k}")
+            dirs += [(common.FINAL_DIR, f"s{k}") for k in range(C.N_SEEDS)]
+            dirs += [(common.TEST_RUNS_DIR, f"{v}_s{k}")
                      for v in VARIANTS
                      for k in range(C.N_SEEDS)]
             for folder, name in dirs:
@@ -528,14 +524,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     """Command-line options."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root",
-                        default="outputs/hpo",
+                        default=C.DEFAULT_ROOT,
                         help="Root of the track (sealed runs, phase 2, "
                         "studies).")
-    parser.add_argument("--dataset_dir", default="data/FLOATSense")
-    parser.add_argument("--out", default="outputs/hpo/leaderboard")
+    parser.add_argument("--dataset_dir", default=C.DEFAULT_DATASET)
+    parser.add_argument("--out",
+                        default=os.path.join(C.DEFAULT_ROOT, "leaderboard"))
     parser.add_argument("--num_resamples",
                         type=int,
-                        default=1000,
+                        default=C.NUM_RESAMPLES,
                         help="Bootstrap resamples of the benchmark scorer.")
     parser.add_argument("--dry_run",
                         action="store_true",

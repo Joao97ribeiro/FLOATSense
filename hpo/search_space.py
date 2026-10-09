@@ -14,16 +14,11 @@ size, the epoch budget, the validation frequency, the damage model (radius
 at the gauge) and the selection metric. A search that is allowed to change
 those is not comparing architectures.
 
-The protocol numbers (trials, epochs, seeds, splits, failures) are in
-hpo/constants.py.
+The protocol numbers (trials, epochs, seeds, splits, failures, the
+parameter cap and the warm-up) are in hpo/constants.py.
 """
 
 from hpo import constants as C
-
-# A parameter ceiling, so that "more capacity" cannot be bought indefinitely
-# by one family (millions of trainable parameters); the pretrained encoders
-# are exempt (their backbone is fixed).
-MAX_PARAMS_M = 60.0
 
 LR = ("loguniform", 1e-4, 3e-3)
 LR_PRETRAINED = ("loguniform", 1e-5, 3e-3)  # published 1e-3 inside
@@ -32,7 +27,6 @@ WD = ("loguniform", 1e-6, 1e-1)
 # published recipe (no weight decay) is a point of the space.
 USE_WD = ("categorical", [False, True])
 SCHEDULE = ("categorical", ["constant", "cosine"])  # cosine with warm-up
-WARMUP_EPOCHS = 5  # linear warm-up of the cosine schedule
 TCN_SPACE = dict(hidden_channels=("categorical", [32, 64, 96, 128]),
                  kernel_size=("categorical", [3, 5, 7]),
                  num_levels=("categorical", [6, 7, 8, 9]),
@@ -230,7 +224,7 @@ def as_args(cfg):
         f"--schedule={cfg['schedule']}", f"--grad_clip={C.GRAD_CLIP}"
     ]
     if cfg["schedule"] == "cosine":
-        args.append(f"--warmup_epochs={WARMUP_EPOCHS}")
+        args.append(f"--warmup_epochs={C.WARMUP_EPOCHS}")
     kwargs = {
         k: v
         for k, v in cfg.items()
