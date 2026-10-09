@@ -654,14 +654,14 @@ def retry_study(root: str, state: Dict, force: bool = False) -> bool:
     return True
 
 
-def _driver_args(root: str, model: str, tower: str, n_trials: int):
+def _driver_args(root: str, model: str, tower: str, n_trials: int, epochs: int):
     return confirm.parse_args([
         f"--model={model}", f"--tower={tower}", f"--root={root}",
-        f"--n_trials={n_trials}"
+        f"--n_trials={n_trials}", f"--epochs={epochs}"
     ])
 
 
-def _advance_model(root: str, model: str, n_trials: int,
+def _advance_model(root: str, model: str, n_trials: int, epochs: int,
                    states: Dict[str, Dict]) -> List[str]:
     """The gate of a model: its non-shelved studies all have `n_trials`
     counted trials and no tower waits for its retry (a tower shelved for
@@ -684,7 +684,7 @@ def _advance_model(root: str, model: str, n_trials: int,
     for tower, state in states.items():
         if state["shelved"]:
             continue
-        args = _driver_args(root, model, tower, n_trials)
+        args = _driver_args(root, model, tower, n_trials, epochs)
         # A held trial waits for an operator: no plan (and no shelving).
         if (not state["plan"] and not state["search_pending"] and
                 not state["held"] and
@@ -726,12 +726,12 @@ def mark_ready(root: str, n_trials: int = C.N_TRIALS) -> bool:
     return True
 
 
-def _advance_all(root: str, models, n_trials: int) -> List[str]:
+def _advance_all(root: str, models, n_trials: int, epochs: int) -> List[str]:
     """The body of `advance` (its lock held)."""
     events = []
     for model in models:
         try:
-            events += _advance_one(root, model, n_trials)
+            events += _advance_one(root, model, n_trials, epochs)
         except Exception:
             broken(root, f"advance/{model}", "advance failed")
     if all_done(root, models, n_trials) and mark_ready(root, n_trials):
@@ -739,7 +739,8 @@ def _advance_all(root: str, models, n_trials: int) -> List[str]:
     return events
 
 
-def _advance_one(root: str, model: str, n_trials: int) -> List[str]:
+def _advance_one(root: str, model: str, n_trials: int,
+                 epochs: int) -> List[str]:
     """`advance` of one model: retries, shelvings, then its gate."""
     events = []
     states = {
@@ -757,10 +758,13 @@ def _advance_one(root: str, model: str, n_trials: int) -> List[str]:
             state.update(shelved=True, shelved_for_good=not reason["retry"])
             if common.shelve_study(root, model, tower, **reason):
                 events.append(f"{model}/{tower}: shelved ({reason['message']})")
-    return events + _advance_model(root, model, n_trials, states)
+    return events + _advance_model(root, model, n_trials, epochs, states)
 
 
-def advance(root: str, models, n_trials: int = C.N_TRIALS) -> List[str]:
+def advance(root: str,
+            models,
+            n_trials: int = C.N_TRIALS,
+            epochs: int = C.EPOCHS_FINAL) -> List[str]:
     """Advances the phases of `models` (see the module docstring); one
     caller at a time (lock 'advance', beaten every ADVANCE_BEAT_SECONDS and
     stale after ADVANCE_STALE_SECONDS, so a killed holder blocks the others
@@ -782,7 +786,7 @@ def advance(root: str, models, n_trials: int = C.N_TRIALS) -> List[str]:
         with Beater(lock,
                     lambda: print("advance: lock lost", flush=True),
                     interval=C.ADVANCE_BEAT_SECONDS):
-            events = _advance_all(root, models, n_trials)
+            events = _advance_all(root, models, n_trials, epochs)
     finally:
         lock.release()
     for event in events:

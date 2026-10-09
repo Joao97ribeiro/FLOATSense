@@ -418,7 +418,7 @@ def _step(args: argparse.Namespace, cost: Optional[Dict[str, float]],
     """One pass of the loop: advance, pick (not the units set aside), run.
     Returns the outcome of the unit, or status 'all_done' or 'idle' when
     nothing was picked."""
-    pick.advance(args.root, args.models, args.n_trials)
+    pick.advance(args.root, args.models, args.n_trials, args.epochs_final)
     skip = {u for u, until in loop.skip.items() if until > time.monotonic()}
     unit, lock = pick.pick(args.root, args.owner, args.restart, args.models,
                            args.n_trials, cost, skip)

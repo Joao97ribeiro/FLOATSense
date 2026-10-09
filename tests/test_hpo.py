@@ -805,6 +805,16 @@ class PickTest(unittest.TestCase):
             "--poll_seconds=0", *extra
         ])
 
+    def test_worker_epochs_reach_the_plans(self):
+        """--epochs_final of the worker is the epoch budget of the frozen
+        phase-2 plans (smoke tests use fewer epochs than the protocol)."""
+        self.assertEqual(
+            self.worker("--n_trials=2", "--epochs_trial=10",
+                        "--epochs_final=20"), 0)
+        for tower in C.TOWERS_SEARCHED:
+            plan = common.read_json(confirm.plan_path(self.root, "tcn", tower))
+            self.assertEqual(plan["epochs"], 20)
+
     def test_worker_breaker_counts_early_studies(self):
         """Units shelved after a resume save do not stop the worker (it
         exits 0 once they are all shelved for good); units of
