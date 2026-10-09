@@ -16,6 +16,10 @@ MAX_TIME = 1000.0  # end of the scored window [s], inclusive (6,001 samples)
 # and pooling sizes); the 6,001-sample window is predicted from the inputs at
 # offsets 0 and 1, stitched (see Trainer._predict_window).
 INPUT_LENGTH = 6000
+# Channel stems of the 11 gauges, base to top (the moments are
+# <stem>_mfa and <stem>_mss; sections.parquet gives their heights).
+GAUGE_STEMS = (("tower_bottom",) + tuple(f"tower_{i}" for i in range(1, 10)) +
+               ("tower_top",))
 
 # --- Damage metric ---------------------------------------------------------
 LOWPASS_HZ = 3.0  # zero-phase Butterworth cutoff on true and predicted [Hz]
@@ -25,6 +29,7 @@ SN_SLOPES = (3.0, 5.0)
 THICKNESS_REFERENCE_MM = 25.0  # S-N thickness correction
 THICKNESS_EXPONENT = 0.2
 FATIGUE_LIFE_THRESHOLD = 1e7  # cycles at the S-N slope change
+DAMAGE_WORKERS = 8  # processes of the rainflow damage pool (at most)
 
 # --- Physics baseline (Pimenta et al. 2024, as adapted here) ---------------
 BAND_HZ = 3.0  # upper edge of the reconstruction band [Hz]
@@ -43,3 +48,16 @@ BLADE_MASS = 82427.5  # one blade [kg]
 TWR2SHFT = 4.142540706280534  # tower top to shaft [m]
 OVERHANG = -14.07711591388923  # [m]
 SHFT_TILT = -6.0  # shaft tilt [deg]
+
+# --- Training runs (validation-tuned track) --------------------------------
+CHECKPOINT_SECONDS = 300.0  # resume state at least this often [s wall time]
+# A temporary of a save (killed writer) is removed once older than
+# max(STALE_TEMPORARY_INTERVALS checkpoint intervals, STALE_TEMPORARY_SECONDS);
+# a younger one may be the save in flight of a concurrent writer.
+STALE_TEMPORARY_INTERVALS = 3.0
+STALE_TEMPORARY_SECONDS = 3600.0  # [s]
+TEMPORARY_TAG_LENGTH = 8  # hex characters of the random tag of a temporary
+EXIT_DIVERGED = 3  # exit code: non-finite loss or validation prediction
+EXIT_TOO_LARGE = 4  # exit code: more trainable parameters than --max_params_m
+EXIT_STOPPED = 5  # exit code: SIGUSR1, resume state saved at the epoch end
+EXIT_CONFIG_MISMATCH = 6  # exit code: resume state of another run config

@@ -6,6 +6,7 @@
 # pylint: disable=too-many-return-statements
 # pylint: disable=too-many-branches
 # pylint: disable=unused-argument
+# pylint: disable=import-outside-toplevel
 """Sequence models for acceleration-to-moment reconstruction.
 
 Two families:
@@ -20,7 +21,7 @@ Two families:
     (train on crops, evaluate on full series).
 """
 
-from typing import Sequence
+from typing import Any, Dict, Optional, Sequence
 
 import torch
 from torch import nn
@@ -151,7 +152,11 @@ class HybridGainModel(nn.Module):
 class _TCNBlock(nn.Module):
     """Residual block with two dilated causal-padded convolutions."""
 
-    def __init__(self, channels: int, kernel_size: int, dilation: int):
+    def __init__(self,
+                 channels: int,
+                 kernel_size: int,
+                 dilation: int,
+                 dropout: float = 0.0):
         super().__init__()
         padding = (kernel_size - 1) // 2 * dilation
         self.conv1 = nn.Conv1d(channels,
@@ -165,10 +170,15 @@ class _TCNBlock(nn.Module):
                                padding=padding,
                                dilation=dilation)
         self.activation = nn.GELU()
+        # No module at 0 (no random draw, and the state_dict metadata, so
+        # the saved checkpoint bytes, of the published block).
+        self.dropout = nn.Dropout(dropout) if dropout else None
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """Applies the residual block to (batch, channels, length) inputs."""
         hidden = self.activation(self.conv1(inputs))
+        if self.dropout is not None:
+            hidden = self.dropout(hidden)
         hidden = self.conv2(hidden)
         return self.activation(inputs + hidden)
 
@@ -180,7 +190,8 @@ class TCNModel(nn.Module):
                  input_channels: int = 4,
                  hidden_channels: int = 64,
                  kernel_size: int = 5,
-                 dilations: Sequence[int] = (1, 2, 4, 8, 16, 32, 64, 128)):
+                 dilations: Sequence[int] = (1, 2, 4, 8, 16, 32, 64, 128),
+                 dropout: float = 0.0):
         """Initializes the model.
 
         Args:
@@ -189,11 +200,13 @@ class TCNModel(nn.Module):
             hidden_channels (int): Width of the residual blocks.
             kernel_size (int): Convolution kernel size.
             dilations (Sequence[int]): Dilation of each residual block.
+            dropout (float): Dropout after the first convolution of each
+              block (0 = none, as published).
         """
         super().__init__()
         self.input_proj = nn.Conv1d(input_channels, hidden_channels, 1)
         self.blocks = nn.ModuleList([
-            _TCNBlock(hidden_channels, kernel_size, dilation)
+            _TCNBlock(hidden_channels, kernel_size, dilation, dropout)
             for dilation in dilations
         ])
         self.output_proj = nn.Conv1d(hidden_channels, 1, 1)
@@ -214,20 +227,24 @@ class LSTMModel(nn.Module):
     def __init__(self,
                  input_channels: int = 4,
                  hidden_size: int = 96,
-                 num_layers: int = 2):
+                 num_layers: int = 2,
+                 dropout: float = 0.0):
         """Initializes the model.
 
         Args:
             input_channels (int): Number of input channels.
             hidden_size (int): LSTM hidden size (per direction).
             num_layers (int): Number of stacked LSTM layers.
+            dropout (float): Dropout between stacked layers (0 = none, as
+              published; ignored with one layer, as torch has none there).
         """
         super().__init__()
         self.lstm = nn.LSTM(input_channels,
                             hidden_size,
                             num_layers=num_layers,
                             batch_first=True,
-                            bidirectional=True)
+                            bidirectional=True,
+                            dropout=dropout if num_layers > 1 else 0.0)
         self.output_proj = nn.Linear(2 * hidden_size, 1)
 
     def forward(self, inputs: torch.Tensor,
@@ -252,7 +269,8 @@ class PatchTransformerModel(nn.Module):
                  embed_dim: int = 128,
                  num_layers: int = 4,
                  num_heads: int = 4,
-                 max_tokens: int = 1024):
+                 max_tokens: int = 1024,
+                 dropout: float = 0.1):
         """Initializes the model.
 
         Args:
@@ -262,6 +280,8 @@ class PatchTransformerModel(nn.Module):
             num_layers (int): Number of transformer encoder layers.
             num_heads (int): Attention heads per layer.
             max_tokens (int): Maximum number of patches (positional table).
+            dropout (float): Dropout of the encoder layers (0.1, the torch
+              default, as published).
         """
         super().__init__()
         self.patch_size = patch_size
@@ -274,6 +294,7 @@ class PatchTransformerModel(nn.Module):
         layer = nn.TransformerEncoderLayer(embed_dim,
                                            num_heads,
                                            dim_feedforward=4 * embed_dim,
+                                           dropout=dropout,
                                            batch_first=True,
                                            activation="gelu",
                                            norm_first=True)
@@ -486,7 +507,7 @@ class ChronosEncoderModel(nn.Module):
             finetune (bool): Train the encoder as well as the head.
         """
         super().__init__()
-        from chronos import ChronosPipeline  # pylint: disable=import-outside-toplevel
+        from chronos import ChronosPipeline
         self.context_length = context_length
         self.pipeline = ChronosPipeline.from_pretrained(model_name,
                                                         dtype=torch.float32)
@@ -547,7 +568,7 @@ class MomentModel(nn.Module):
             model_name (str): Hugging Face id of the MOMENT checkpoint.
         """
         super().__init__()
-        from momentfm import MOMENTPipeline  # pylint: disable=import-outside-toplevel
+        from momentfm import MOMENTPipeline
         self.context_length = context_length
         self.pipeline = MOMENTPipeline.from_pretrained(
             model_name, model_kwargs={"task_name": "reconstruction"})
@@ -597,7 +618,6 @@ class TimesFMEncoderModel(nn.Module):
             finetune (bool): Train the encoder as well as the head.
         """
         super().__init__()
-        # pylint: disable=import-outside-toplevel
         from timesfm import timesfm_2p5_torch
         wrapper = timesfm_2p5_torch.TimesFM_2p5_200M_torch.from_pretrained(
             model_name, torch_compile=False)
@@ -653,7 +673,8 @@ class ProbabilisticTCNModel(nn.Module):
                  input_channels: int = 4,
                  hidden_channels: int = 64,
                  kernel_size: int = 5,
-                 dilations: Sequence[int] = (1, 2, 4, 8, 16, 32, 64, 128)):
+                 dilations: Sequence[int] = (1, 2, 4, 8, 16, 32, 64, 128),
+                 dropout: float = 0.0):
         """Initializes the model.
 
         Args:
@@ -661,11 +682,12 @@ class ProbabilisticTCNModel(nn.Module):
             hidden_channels (int): Width of the residual blocks.
             kernel_size (int): Convolution kernel size.
             dilations (Sequence[int]): Dilation of each residual block.
+            dropout (float): Dropout inside each block (0 = none).
         """
         super().__init__()
         self.input_proj = nn.Conv1d(input_channels, hidden_channels, 1)
         self.blocks = nn.ModuleList([
-            _TCNBlock(hidden_channels, kernel_size, dilation)
+            _TCNBlock(hidden_channels, kernel_size, dilation, dropout)
             for dilation in dilations
         ])
         self.output_proj = nn.Conv1d(hidden_channels, 2, 1)
@@ -1175,7 +1197,8 @@ class ITransformerModel(nn.Module):
                  input_channels: int = 4,
                  embed_dim: int = 256,
                  num_layers: int = 3,
-                 num_heads: int = 4):
+                 num_heads: int = 4,
+                 dropout: float = 0.1):
         """Initializes the model.
 
         Args:
@@ -1184,6 +1207,8 @@ class ITransformerModel(nn.Module):
             embed_dim (int): Token embedding width.
             num_layers (int): Number of transformer encoder layers.
             num_heads (int): Attention heads per layer.
+            dropout (float): Dropout of the encoder layers (0.1, the torch
+              default, as published).
         """
         super().__init__()
         self.num_samples = num_samples
@@ -1194,6 +1219,7 @@ class ITransformerModel(nn.Module):
         layer = nn.TransformerEncoderLayer(embed_dim,
                                            num_heads,
                                            dim_feedforward=4 * embed_dim,
+                                           dropout=dropout,
                                            batch_first=True,
                                            activation="gelu",
                                            norm_first=True)
@@ -1242,25 +1268,29 @@ class UNetModel(nn.Module):
     def __init__(self,
                  input_channels: int = 4,
                  base_channels: int = 32,
-                 num_stages: int = 4):
+                 num_stages: int = 4,
+                 kernel_size: int = 5):
         """Initializes the model.
 
         Args:
             input_channels (int): Number of input channels.
             base_channels (int): Width of the first stage.
             num_stages (int): Number of downsampling stages.
+            kernel_size (int): Kernel of every convolution (odd).
         """
         super().__init__()
         self.num_stages = num_stages
         widths = [base_channels * 2**stage for stage in range(num_stages + 1)]
         self.encoders = nn.ModuleList([
             _UNetBlock(input_channels if stage == 0 else widths[stage - 1],
-                       widths[stage]) for stage in range(num_stages)
-        ])
-        self.bottleneck = _UNetBlock(widths[num_stages - 1], widths[num_stages])
-        self.decoders = nn.ModuleList([
-            _UNetBlock(widths[stage + 1] + widths[stage], widths[stage])
+                       widths[stage], kernel_size)
             for stage in range(num_stages)
+        ])
+        self.bottleneck = _UNetBlock(widths[num_stages - 1], widths[num_stages],
+                                     kernel_size)
+        self.decoders = nn.ModuleList([
+            _UNetBlock(widths[stage + 1] + widths[stage], widths[stage],
+                       kernel_size) for stage in range(num_stages)
         ])
         self.output_proj = nn.Conv1d(base_channels, 1, 1)
 
@@ -1297,58 +1327,130 @@ ACCEL_FIRST_MODELS = ("naive", "spectral", "hybrid", "hybrid_tcn", "chronos",
                       "moment", "moment_ft", "timesfm", "timesfm_ft")
 
 
+def _tcn_kwargs(model_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """TCN kwargs with `num_levels` turned into the dilations 2**i."""
+    kwargs = dict(model_kwargs)
+    if "num_levels" in kwargs:
+        kwargs["dilations"] = tuple(
+            2**i for i in range(kwargs.pop("num_levels")))
+    return kwargs
+
+
 def build_model(name: str,
                 num_samples: int,
                 input_channels: int,
                 condition_dim: int,
-                condition_bound: float = 0.5) -> nn.Module:
+                condition_bound: float = 0.5,
+                **model_kwargs) -> nn.Module:
     """Builds a model by name ('spectral', 'hybrid', 'tcn', 'lstm',
-    'transformer', 'mamba', 'fits', 'itransformer', 'unet')."""
+    'transformer', 'mamba', 'fits', 'itransformer', 'unet', ...).
+
+    `model_kwargs` go to the model constructor (the architecture knobs of
+    the validation-tuned track); without them every model is the published
+    one. TCN and Prob-TCN also take `num_levels` (dilations 2**i).
+    """
     if name == "spectral":
         return SpectralGainModel(num_samples=num_samples,
-                                 condition_dim=condition_dim)
+                                 condition_dim=condition_dim,
+                                 **model_kwargs)
     if name == "hybrid":
         return HybridGainModel(num_samples=num_samples,
                                condition_bound=condition_bound,
-                               condition_dim=condition_dim)
+                               condition_dim=condition_dim,
+                               **model_kwargs)
     if name == "tcn":
-        return TCNModel(input_channels=input_channels)
+        return TCNModel(input_channels=input_channels,
+                        **_tcn_kwargs(model_kwargs))
     if name == "dlinear":
-        return DLinearModel(input_channels=input_channels)
+        return DLinearModel(input_channels=input_channels, **model_kwargs)
     if name == "naive":
-        return NaiveGainModel(input_channels=input_channels)
+        return NaiveGainModel(input_channels=input_channels, **model_kwargs)
     if name == "hybrid_tcn":
         return HybridTCNModel(input_channels=input_channels,
-                              bound=condition_bound)
+                              bound=condition_bound,
+                              **model_kwargs)
     if name == "s4":
-        return S4Model(input_channels=input_channels)
+        return S4Model(input_channels=input_channels, **model_kwargs)
     if name == "mamba":
-        return MambaModel(input_channels=input_channels)
+        return MambaModel(input_channels=input_channels, **model_kwargs)
     if name == "unet":
-        return UNetModel(input_channels=input_channels)
+        return UNetModel(input_channels=input_channels, **model_kwargs)
     if name == "timesnet":
-        return TimesNetModel(input_channels=input_channels)
+        return TimesNetModel(input_channels=input_channels, **model_kwargs)
     if name == "fits":
-        return FITSModel(num_samples=num_samples, input_channels=input_channels)
+        return FITSModel(num_samples=num_samples,
+                         input_channels=input_channels,
+                         **model_kwargs)
     if name == "itransformer":
         return ITransformerModel(num_samples=num_samples,
-                                 input_channels=input_channels)
+                                 input_channels=input_channels,
+                                 **model_kwargs)
     if name == "fno":
-        return FNOModel(input_channels=input_channels)
+        return FNOModel(input_channels=input_channels, **model_kwargs)
     if name == "moment_ft":
-        return MomentModel(input_channels=input_channels, finetune=True)
+        return MomentModel(input_channels=input_channels,
+                           finetune=True,
+                           **model_kwargs)
     if name == "timesfm":
-        return TimesFMEncoderModel(input_channels=input_channels)
+        return TimesFMEncoderModel(input_channels=input_channels,
+                                   **model_kwargs)
     if name == "timesfm_ft":
-        return TimesFMEncoderModel(input_channels=input_channels, finetune=True)
+        return TimesFMEncoderModel(input_channels=input_channels,
+                                   finetune=True,
+                                   **model_kwargs)
     if name == "chronos":
-        return ChronosEncoderModel(input_channels=input_channels)
+        return ChronosEncoderModel(input_channels=input_channels,
+                                   **model_kwargs)
     if name == "moment":
-        return MomentModel(input_channels=input_channels)
+        return MomentModel(input_channels=input_channels, **model_kwargs)
     if name == "prob_tcn":
-        return ProbabilisticTCNModel(input_channels=input_channels)
+        return ProbabilisticTCNModel(input_channels=input_channels,
+                                     **_tcn_kwargs(model_kwargs))
     if name == "lstm":
-        return LSTMModel(input_channels=input_channels)
+        return LSTMModel(input_channels=input_channels, **model_kwargs)
     if name == "transformer":
-        return PatchTransformerModel(input_channels=input_channels)
+        return PatchTransformerModel(input_channels=input_channels,
+                                     **model_kwargs)
     raise ValueError(f"Unknown model: '{name}'.")
+
+
+def count_parameters(model: nn.Module, trainable: bool = True) -> int:
+    """Number of (trainable) parameters of a model."""
+    return sum(p.numel()
+               for p in model.parameters()
+               if p.requires_grad or not trainable)
+
+
+def _typed(value: str) -> Any:
+    """'true'/'false' -> bool, then int, then float, else the string."""
+    if value.lower() in ("true", "false"):
+        return value.lower() == "true"
+    for cast in (int, float):
+        try:
+            return cast(value)
+        except ValueError:
+            pass
+    return value
+
+
+def parse_model_kwargs(text: Optional[str]) -> Dict[str, Any]:
+    """Parses 'k=v,k=v' (the --model_kwargs flag) into typed kwargs.
+
+    Args:
+        text (str, optional): Comma-separated key=value pairs; empty or None
+          gives no kwargs.
+
+    Returns:
+        dict: Keyword arguments with bool, int, float or str values.
+
+    Raises:
+        ValueError: On a pair without '=', an empty key or a repeated key.
+    """
+    kwargs = {}
+    for pair in filter(None, (text or "").split(",")):
+        key, sep, value = pair.partition("=")
+        key = key.strip()
+        if not sep or not key or key in kwargs:
+            raise ValueError(f"Bad --model_kwargs entry '{pair}' in '{text}'.")
+        kwargs[key] = _typed(value.strip())
+    return kwargs

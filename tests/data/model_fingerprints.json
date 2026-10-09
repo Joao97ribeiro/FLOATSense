@@ -1,0 +1,4463 @@
+{
+ "spectral": {
+  "shapes": {
+   "base_gain": [
+    257,
+    2
+   ],
+   "condition_net.0.weight": [
+    64,
+    4
+   ],
+   "condition_net.0.bias": [
+    64
+   ],
+   "condition_net.2.weight": [
+    64,
+    64
+   ],
+   "condition_net.2.bias": [
+    64
+   ],
+   "condition_net.4.weight": [
+    514,
+    64
+   ],
+   "condition_net.4.bias": [
+    514
+   ]
+  },
+  "param_sum": -10.648424312472343,
+  "param_abs_sum": 335.2187170237303,
+  "out_sum": 0.0,
+  "out_abs_sum": 0.0,
+  "out_head": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "train_out_sum": 0.0,
+  "train_out_abs_sum": 0.0,
+  "train_rng": "0f9cd7b642a3f8f641c5e992f17138b2d094db4d56cc2329b3be2c794ddc79ad"
+ },
+ "hybrid": {
+  "shapes": {
+   "base_correction": [
+    257,
+    2
+   ],
+   "condition_net.0.weight": [
+    64,
+    4
+   ],
+   "condition_net.0.bias": [
+    64
+   ],
+   "condition_net.2.weight": [
+    64,
+    64
+   ],
+   "condition_net.2.bias": [
+    64
+   ],
+   "condition_net.4.weight": [
+    514,
+    64
+   ],
+   "condition_net.4.bias": [
+    514
+   ]
+  },
+  "param_sum": -10.648424312472343,
+  "param_abs_sum": 335.2187170237303,
+  "out_sum": -6.622974202036858,
+  "out_abs_sum": 1195.2137423604727,
+  "out_head": [
+   -1.5097410678863525,
+   0.693665623664856,
+   -0.6060855388641357,
+   0.5467227697372437,
+   3.377150535583496,
+   -1.0857442617416382,
+   2.1483190059661865,
+   -0.5306676626205444
+  ],
+  "train_out_sum": -6.622974202036858,
+  "train_out_abs_sum": 1195.2137423604727,
+  "train_rng": "0f9cd7b642a3f8f641c5e992f17138b2d094db4d56cc2329b3be2c794ddc79ad"
+ },
+ "tcn": {
+  "shapes": {
+   "input_proj.weight": [
+    64,
+    5,
+    1
+   ],
+   "input_proj.bias": [
+    64
+   ],
+   "blocks.0.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.0.conv1.bias": [
+    64
+   ],
+   "blocks.0.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.0.conv2.bias": [
+    64
+   ],
+   "blocks.1.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.1.conv1.bias": [
+    64
+   ],
+   "blocks.1.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.1.conv2.bias": [
+    64
+   ],
+   "blocks.2.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.2.conv1.bias": [
+    64
+   ],
+   "blocks.2.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.2.conv2.bias": [
+    64
+   ],
+   "blocks.3.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.3.conv1.bias": [
+    64
+   ],
+   "blocks.3.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.3.conv2.bias": [
+    64
+   ],
+   "blocks.4.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.4.conv1.bias": [
+    64
+   ],
+   "blocks.4.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.4.conv2.bias": [
+    64
+   ],
+   "blocks.5.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.5.conv1.bias": [
+    64
+   ],
+   "blocks.5.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.5.conv2.bias": [
+    64
+   ],
+   "blocks.6.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.6.conv1.bias": [
+    64
+   ],
+   "blocks.6.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.6.conv2.bias": [
+    64
+   ],
+   "blocks.7.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.7.conv1.bias": [
+    64
+   ],
+   "blocks.7.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.7.conv2.bias": [
+    64
+   ],
+   "output_proj.weight": [
+    1,
+    64,
+    1
+   ],
+   "output_proj.bias": [
+    1
+   ]
+  },
+  "param_sum": 3.3329969774390733,
+  "param_abs_sum": 9275.721232870963,
+  "out_sum": -6.136493361200998,
+  "out_abs_sum": 40.04438447065579,
+  "out_head": [
+   0.005714585538953543,
+   -0.02059347741305828,
+   0.007069986779242754,
+   0.05907628312706947,
+   -0.02823011390864849,
+   -0.01919766701757908,
+   -0.019674189388751984,
+   -0.004881847649812698
+  ],
+  "train_out_sum": -6.136493361200998,
+  "train_out_abs_sum": 40.04438447065579,
+  "train_rng": "0f9cd7b642a3f8f641c5e992f17138b2d094db4d56cc2329b3be2c794ddc79ad"
+ },
+ "dlinear": {
+  "shapes": {
+   "trend.weight": [
+    1,
+    5,
+    257
+   ],
+   "trend.bias": [
+    1
+   ],
+   "seasonal.weight": [
+    1,
+    5,
+    257
+   ],
+   "seasonal.bias": [
+    1
+   ]
+  },
+  "param_sum": -0.49169732440441294,
+  "param_abs_sum": 35.84430937066372,
+  "out_sum": -8.262232863344252,
+  "out_abs_sum": 443.66120709385723,
+  "out_head": [
+   0.5372049808502197,
+   0.6075389385223389,
+   0.32672011852264404,
+   -0.15788786113262177,
+   -0.15831603109836578,
+   -0.5159688591957092,
+   -0.028710708022117615,
+   0.6333250999450684
+  ],
+  "train_out_sum": -8.262232863344252,
+  "train_out_abs_sum": 443.66120709385723,
+  "train_rng": "0f9cd7b642a3f8f641c5e992f17138b2d094db4d56cc2329b3be2c794ddc79ad"
+ },
+ "naive": {
+  "shapes": {
+   "gain": [
+    1
+   ]
+  },
+  "param_sum": 1.0,
+  "param_abs_sum": 1.0,
+  "out_sum": -28.03168816096786,
+  "out_abs_sum": 813.8581637858815,
+  "out_head": [
+   -1.5255959033966064,
+   -0.7502318024635315,
+   -0.6539809107780457,
+   -1.6094847917556763,
+   -0.1001671776175499,
+   -0.6091889142990112,
+   -0.9797722697257996,
+   -1.6090962886810303
+  ],
+  "train_out_sum": -28.03168816096786,
+  "train_out_abs_sum": 813.8581637858815,
+  "train_rng": "0f9cd7b642a3f8f641c5e992f17138b2d094db4d56cc2329b3be2c794ddc79ad"
+ },
+ "hybrid_tcn": {
+  "shapes": {
+   "residual.input_proj.weight": [
+    64,
+    5,
+    1
+   ],
+   "residual.input_proj.bias": [
+    64
+   ],
+   "residual.blocks.0.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "residual.blocks.0.conv1.bias": [
+    64
+   ],
+   "residual.blocks.0.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "residual.blocks.0.conv2.bias": [
+    64
+   ],
+   "residual.blocks.1.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "residual.blocks.1.conv1.bias": [
+    64
+   ],
+   "residual.blocks.1.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "residual.blocks.1.conv2.bias": [
+    64
+   ],
+   "residual.blocks.2.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "residual.blocks.2.conv1.bias": [
+    64
+   ],
+   "residual.blocks.2.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "residual.blocks.2.conv2.bias": [
+    64
+   ],
+   "residual.blocks.3.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "residual.blocks.3.conv1.bias": [
+    64
+   ],
+   "residual.blocks.3.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "residual.blocks.3.conv2.bias": [
+    64
+   ],
+   "residual.blocks.4.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "residual.blocks.4.conv1.bias": [
+    64
+   ],
+   "residual.blocks.4.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "residual.blocks.4.conv2.bias": [
+    64
+   ],
+   "residual.blocks.5.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "residual.blocks.5.conv1.bias": [
+    64
+   ],
+   "residual.blocks.5.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "residual.blocks.5.conv2.bias": [
+    64
+   ],
+   "residual.blocks.6.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "residual.blocks.6.conv1.bias": [
+    64
+   ],
+   "residual.blocks.6.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "residual.blocks.6.conv2.bias": [
+    64
+   ],
+   "residual.blocks.7.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "residual.blocks.7.conv1.bias": [
+    64
+   ],
+   "residual.blocks.7.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "residual.blocks.7.conv2.bias": [
+    64
+   ],
+   "residual.output_proj.weight": [
+    1,
+    64,
+    1
+   ],
+   "residual.output_proj.bias": [
+    1
+   ]
+  },
+  "param_sum": 3.3329969774390733,
+  "param_abs_sum": 9275.721232870963,
+  "out_sum": -11.201940109953284,
+  "out_abs_sum": 1196.2257999051362,
+  "out_head": [
+   -1.5054500102996826,
+   0.6782040596008301,
+   -0.600776731967926,
+   0.5910319089889526,
+   3.3559579849243164,
+   -1.1001580953598022,
+   2.13354754447937,
+   -0.5343334078788757
+  ],
+  "train_out_sum": -11.201940109953284,
+  "train_out_abs_sum": 1196.2257999051362,
+  "train_rng": "0f9cd7b642a3f8f641c5e992f17138b2d094db4d56cc2329b3be2c794ddc79ad"
+ },
+ "s4": {
+  "shapes": {
+   "input_proj.weight": [
+    64,
+    5,
+    1
+   ],
+   "input_proj.bias": [
+    64
+   ],
+   "blocks.0.norm.weight": [
+    64
+   ],
+   "blocks.0.norm.bias": [
+    64
+   ],
+   "blocks.0.ssm.log_dt": [
+    64
+   ],
+   "blocks.0.ssm.log_a_real": [
+    64,
+    32
+   ],
+   "blocks.0.ssm.a_imag": [
+    64,
+    32
+   ],
+   "blocks.0.ssm.c": [
+    64,
+    32,
+    2
+   ],
+   "blocks.0.ssm.d": [
+    64
+   ],
+   "blocks.0.mix.weight": [
+    64,
+    64,
+    1
+   ],
+   "blocks.0.mix.bias": [
+    64
+   ],
+   "blocks.1.norm.weight": [
+    64
+   ],
+   "blocks.1.norm.bias": [
+    64
+   ],
+   "blocks.1.ssm.log_dt": [
+    64
+   ],
+   "blocks.1.ssm.log_a_real": [
+    64,
+    32
+   ],
+   "blocks.1.ssm.a_imag": [
+    64,
+    32
+   ],
+   "blocks.1.ssm.c": [
+    64,
+    32,
+    2
+   ],
+   "blocks.1.ssm.d": [
+    64
+   ],
+   "blocks.1.mix.weight": [
+    64,
+    64,
+    1
+   ],
+   "blocks.1.mix.bias": [
+    64
+   ],
+   "blocks.2.norm.weight": [
+    64
+   ],
+   "blocks.2.norm.bias": [
+    64
+   ],
+   "blocks.2.ssm.log_dt": [
+    64
+   ],
+   "blocks.2.ssm.log_a_real": [
+    64,
+    32
+   ],
+   "blocks.2.ssm.a_imag": [
+    64,
+    32
+   ],
+   "blocks.2.ssm.c": [
+    64,
+    32,
+    2
+   ],
+   "blocks.2.ssm.d": [
+    64
+   ],
+   "blocks.2.mix.weight": [
+    64,
+    64,
+    1
+   ],
+   "blocks.2.mix.bias": [
+    64
+   ],
+   "blocks.3.norm.weight": [
+    64
+   ],
+   "blocks.3.norm.bias": [
+    64
+   ],
+   "blocks.3.ssm.log_dt": [
+    64
+   ],
+   "blocks.3.ssm.log_a_real": [
+    64,
+    32
+   ],
+   "blocks.3.ssm.a_imag": [
+    64,
+    32
+   ],
+   "blocks.3.ssm.c": [
+    64,
+    32,
+    2
+   ],
+   "blocks.3.ssm.d": [
+    64
+   ],
+   "blocks.3.mix.weight": [
+    64,
+    64,
+    1
+   ],
+   "blocks.3.mix.bias": [
+    64
+   ],
+   "output_proj.weight": [
+    1,
+    64,
+    1
+   ],
+   "output_proj.bias": [
+    1
+   ]
+  },
+  "param_sum": 392176.2616469129,
+  "param_abs_sum": 416631.67861073127,
+  "out_sum": 1429.1135298877489,
+  "out_abs_sum": 1434.233526013093,
+  "out_head": [
+   0.7066066265106201,
+   0.3751899302005768,
+   -0.0017881852108985186,
+   0.30941635370254517,
+   0.20866551995277405,
+   0.43075335025787354,
+   0.5933369398117065,
+   -0.5689520239830017
+  ],
+  "train_out_sum": 1429.1135298877489,
+  "train_out_abs_sum": 1434.233526013093,
+  "train_rng": "0f9cd7b642a3f8f641c5e992f17138b2d094db4d56cc2329b3be2c794ddc79ad"
+ },
+ "mamba": {
+  "shapes": {
+   "input_proj.weight": [
+    64,
+    5,
+    1
+   ],
+   "input_proj.bias": [
+    64
+   ],
+   "layers.0.a_log": [
+    128,
+    4
+   ],
+   "layers.0.skip": [
+    128
+   ],
+   "layers.0.norm.weight": [
+    64
+   ],
+   "layers.0.norm.bias": [
+    64
+   ],
+   "layers.0.in_proj.weight": [
+    256,
+    64,
+    1
+   ],
+   "layers.0.in_proj.bias": [
+    256
+   ],
+   "layers.0.conv.weight": [
+    128,
+    1,
+    4
+   ],
+   "layers.0.conv.bias": [
+    128
+   ],
+   "layers.0.to_delta.weight": [
+    128,
+    128,
+    1
+   ],
+   "layers.0.to_delta.bias": [
+    128
+   ],
+   "layers.0.to_state.weight": [
+    8,
+    128,
+    1
+   ],
+   "layers.0.to_state.bias": [
+    8
+   ],
+   "layers.0.out_proj.weight": [
+    64,
+    128,
+    1
+   ],
+   "layers.0.out_proj.bias": [
+    64
+   ],
+   "layers.1.a_log": [
+    128,
+    4
+   ],
+   "layers.1.skip": [
+    128
+   ],
+   "layers.1.norm.weight": [
+    64
+   ],
+   "layers.1.norm.bias": [
+    64
+   ],
+   "layers.1.in_proj.weight": [
+    256,
+    64,
+    1
+   ],
+   "layers.1.in_proj.bias": [
+    256
+   ],
+   "layers.1.conv.weight": [
+    128,
+    1,
+    4
+   ],
+   "layers.1.conv.bias": [
+    128
+   ],
+   "layers.1.to_delta.weight": [
+    128,
+    128,
+    1
+   ],
+   "layers.1.to_delta.bias": [
+    128
+   ],
+   "layers.1.to_state.weight": [
+    8,
+    128,
+    1
+   ],
+   "layers.1.to_state.bias": [
+    8
+   ],
+   "layers.1.out_proj.weight": [
+    64,
+    128,
+    1
+   ],
+   "layers.1.out_proj.bias": [
+    64
+   ],
+   "layers.2.a_log": [
+    128,
+    4
+   ],
+   "layers.2.skip": [
+    128
+   ],
+   "layers.2.norm.weight": [
+    64
+   ],
+   "layers.2.norm.bias": [
+    64
+   ],
+   "layers.2.in_proj.weight": [
+    256,
+    64,
+    1
+   ],
+   "layers.2.in_proj.bias": [
+    256
+   ],
+   "layers.2.conv.weight": [
+    128,
+    1,
+    4
+   ],
+   "layers.2.conv.bias": [
+    128
+   ],
+   "layers.2.to_delta.weight": [
+    128,
+    128,
+    1
+   ],
+   "layers.2.to_delta.bias": [
+    128
+   ],
+   "layers.2.to_state.weight": [
+    8,
+    128,
+    1
+   ],
+   "layers.2.to_state.bias": [
+    8
+   ],
+   "layers.2.out_proj.weight": [
+    64,
+    128,
+    1
+   ],
+   "layers.2.out_proj.bias": [
+    64
+   ],
+   "layers.3.a_log": [
+    128,
+    4
+   ],
+   "layers.3.skip": [
+    128
+   ],
+   "layers.3.norm.weight": [
+    64
+   ],
+   "layers.3.norm.bias": [
+    64
+   ],
+   "layers.3.in_proj.weight": [
+    256,
+    64,
+    1
+   ],
+   "layers.3.in_proj.bias": [
+    256
+   ],
+   "layers.3.conv.weight": [
+    128,
+    1,
+    4
+   ],
+   "layers.3.conv.bias": [
+    128
+   ],
+   "layers.3.to_delta.weight": [
+    128,
+    128,
+    1
+   ],
+   "layers.3.to_delta.bias": [
+    128
+   ],
+   "layers.3.to_state.weight": [
+    8,
+    128,
+    1
+   ],
+   "layers.3.to_state.bias": [
+    8
+   ],
+   "layers.3.out_proj.weight": [
+    64,
+    128,
+    1
+   ],
+   "layers.3.out_proj.bias": [
+    64
+   ],
+   "output_proj.weight": [
+    1,
+    64,
+    1
+   ],
+   "output_proj.bias": [
+    1
+   ]
+  },
+  "param_sum": 2410.528473529637,
+  "param_abs_sum": 11839.924798891425,
+  "out_sum": 315.55093861947535,
+  "out_abs_sum": 329.8340132210287,
+  "out_head": [
+   0.638178825378418,
+   0.23685705661773682,
+   0.41488346457481384,
+   0.5666069388389587,
+   0.20701758563518524,
+   0.2797146737575531,
+   0.4164871573448181,
+   0.4273754954338074
+  ],
+  "train_out_sum": 315.55093861947535,
+  "train_out_abs_sum": 329.8340132210287,
+  "train_rng": "0f9cd7b642a3f8f641c5e992f17138b2d094db4d56cc2329b3be2c794ddc79ad"
+ },
+ "unet": {
+  "shapes": {
+   "encoders.0.body.0.weight": [
+    32,
+    5,
+    5
+   ],
+   "encoders.0.body.0.bias": [
+    32
+   ],
+   "encoders.0.body.2.weight": [
+    32,
+    32,
+    5
+   ],
+   "encoders.0.body.2.bias": [
+    32
+   ],
+   "encoders.1.body.0.weight": [
+    64,
+    32,
+    5
+   ],
+   "encoders.1.body.0.bias": [
+    64
+   ],
+   "encoders.1.body.2.weight": [
+    64,
+    64,
+    5
+   ],
+   "encoders.1.body.2.bias": [
+    64
+   ],
+   "encoders.2.body.0.weight": [
+    128,
+    64,
+    5
+   ],
+   "encoders.2.body.0.bias": [
+    128
+   ],
+   "encoders.2.body.2.weight": [
+    128,
+    128,
+    5
+   ],
+   "encoders.2.body.2.bias": [
+    128
+   ],
+   "encoders.3.body.0.weight": [
+    256,
+    128,
+    5
+   ],
+   "encoders.3.body.0.bias": [
+    256
+   ],
+   "encoders.3.body.2.weight": [
+    256,
+    256,
+    5
+   ],
+   "encoders.3.body.2.bias": [
+    256
+   ],
+   "bottleneck.body.0.weight": [
+    512,
+    256,
+    5
+   ],
+   "bottleneck.body.0.bias": [
+    512
+   ],
+   "bottleneck.body.2.weight": [
+    512,
+    512,
+    5
+   ],
+   "bottleneck.body.2.bias": [
+    512
+   ],
+   "decoders.0.body.0.weight": [
+    32,
+    96,
+    5
+   ],
+   "decoders.0.body.0.bias": [
+    32
+   ],
+   "decoders.0.body.2.weight": [
+    32,
+    32,
+    5
+   ],
+   "decoders.0.body.2.bias": [
+    32
+   ],
+   "decoders.1.body.0.weight": [
+    64,
+    192,
+    5
+   ],
+   "decoders.1.body.0.bias": [
+    64
+   ],
+   "decoders.1.body.2.weight": [
+    64,
+    64,
+    5
+   ],
+   "decoders.1.body.2.bias": [
+    64
+   ],
+   "decoders.2.body.0.weight": [
+    128,
+    384,
+    5
+   ],
+   "decoders.2.body.0.bias": [
+    128
+   ],
+   "decoders.2.body.2.weight": [
+    128,
+    128,
+    5
+   ],
+   "decoders.2.body.2.bias": [
+    128
+   ],
+   "decoders.3.body.0.weight": [
+    256,
+    768,
+    5
+   ],
+   "decoders.3.body.0.bias": [
+    256
+   ],
+   "decoders.3.body.2.weight": [
+    256,
+    256,
+    5
+   ],
+   "decoders.3.body.2.bias": [
+    256
+   ],
+   "output_proj.weight": [
+    1,
+    32,
+    1
+   ],
+   "output_proj.bias": [
+    1
+   ]
+  },
+  "param_sum": 11.804049259496278,
+  "param_abs_sum": 53063.157437308204,
+  "out_sum": 113.32374748587608,
+  "out_abs_sum": 113.32374748587608,
+  "out_head": [
+   0.1116601973772049,
+   0.11312267929315567,
+   0.11164721101522446,
+   0.11360067129135132,
+   0.11395320296287537,
+   0.11534426361322403,
+   0.11282864212989807,
+   0.11279845982789993
+  ],
+  "train_out_sum": 113.32374748587608,
+  "train_out_abs_sum": 113.32374748587608,
+  "train_rng": "0f9cd7b642a3f8f641c5e992f17138b2d094db4d56cc2329b3be2c794ddc79ad"
+ },
+ "timesnet": {
+  "shapes": {
+   "input_proj.weight": [
+    48,
+    5,
+    1
+   ],
+   "input_proj.bias": [
+    48
+   ],
+   "blocks.0.inception.0.weight": [
+    48,
+    48,
+    3,
+    3
+   ],
+   "blocks.0.inception.0.bias": [
+    48
+   ],
+   "blocks.0.inception.1.weight": [
+    48,
+    48,
+    5,
+    5
+   ],
+   "blocks.0.inception.1.bias": [
+    48
+   ],
+   "blocks.0.project.weight": [
+    48,
+    48,
+    1,
+    1
+   ],
+   "blocks.0.project.bias": [
+    48
+   ],
+   "blocks.1.inception.0.weight": [
+    48,
+    48,
+    3,
+    3
+   ],
+   "blocks.1.inception.0.bias": [
+    48
+   ],
+   "blocks.1.inception.1.weight": [
+    48,
+    48,
+    5,
+    5
+   ],
+   "blocks.1.inception.1.bias": [
+    48
+   ],
+   "blocks.1.project.weight": [
+    48,
+    48,
+    1,
+    1
+   ],
+   "blocks.1.project.bias": [
+    48
+   ],
+   "norms.0.weight": [
+    48
+   ],
+   "norms.0.bias": [
+    48
+   ],
+   "norms.1.weight": [
+    48
+   ],
+   "norms.1.bias": [
+    48
+   ],
+   "output_proj.weight": [
+    1,
+    48,
+    1
+   ],
+   "output_proj.bias": [
+    1
+   ]
+  },
+  "param_sum": 105.91472380954079,
+  "param_abs_sum": 3168.375990198138,
+  "out_sum": 40.5982299931602,
+  "out_abs_sum": 464.13126383905546,
+  "out_head": [
+   0.31126803159713745,
+   0.2157081961631775,
+   1.179399847984314,
+   0.856099009513855,
+   0.027653252705931664,
+   0.22280776500701904,
+   -0.42089417576789856,
+   -0.1733039766550064
+  ],
+  "train_out_sum": 40.5982299931602,
+  "train_out_abs_sum": 464.13126383905546,
+  "train_rng": "0f9cd7b642a3f8f641c5e992f17138b2d094db4d56cc2329b3be2c794ddc79ad"
+ },
+ "fits": {
+  "shapes": {
+   "weight": [
+    1285,
+    257,
+    2
+   ]
+  },
+  "param_sum": -24.5152172818679,
+  "param_abs_sum": 14706.196922587354,
+  "out_sum": -46.2175508774817,
+  "out_abs_sum": 1178.8024410270154,
+  "out_head": [
+   -0.6177293658256531,
+   -1.0841305255889893,
+   0.650317907333374,
+   0.15385305881500244,
+   1.1609468460083008,
+   1.3538426160812378,
+   -2.120269298553467,
+   -3.538301944732666
+  ],
+  "train_out_sum": -46.2175508774817,
+  "train_out_abs_sum": 1178.8024410270154,
+  "train_rng": "0f9cd7b642a3f8f641c5e992f17138b2d094db4d56cc2329b3be2c794ddc79ad"
+ },
+ "itransformer": {
+  "shapes": {
+   "variate": [
+    1,
+    5,
+    256
+   ],
+   "query": [
+    1,
+    1,
+    256
+   ],
+   "embed.weight": [
+    256,
+    512
+   ],
+   "embed.bias": [
+    256
+   ],
+   "encoder.layers.0.self_attn.in_proj_weight": [
+    768,
+    256
+   ],
+   "encoder.layers.0.self_attn.in_proj_bias": [
+    768
+   ],
+   "encoder.layers.0.self_attn.out_proj.weight": [
+    256,
+    256
+   ],
+   "encoder.layers.0.self_attn.out_proj.bias": [
+    256
+   ],
+   "encoder.layers.0.linear1.weight": [
+    1024,
+    256
+   ],
+   "encoder.layers.0.linear1.bias": [
+    1024
+   ],
+   "encoder.layers.0.linear2.weight": [
+    256,
+    1024
+   ],
+   "encoder.layers.0.linear2.bias": [
+    256
+   ],
+   "encoder.layers.0.norm1.weight": [
+    256
+   ],
+   "encoder.layers.0.norm1.bias": [
+    256
+   ],
+   "encoder.layers.0.norm2.weight": [
+    256
+   ],
+   "encoder.layers.0.norm2.bias": [
+    256
+   ],
+   "encoder.layers.1.self_attn.in_proj_weight": [
+    768,
+    256
+   ],
+   "encoder.layers.1.self_attn.in_proj_bias": [
+    768
+   ],
+   "encoder.layers.1.self_attn.out_proj.weight": [
+    256,
+    256
+   ],
+   "encoder.layers.1.self_attn.out_proj.bias": [
+    256
+   ],
+   "encoder.layers.1.linear1.weight": [
+    1024,
+    256
+   ],
+   "encoder.layers.1.linear1.bias": [
+    1024
+   ],
+   "encoder.layers.1.linear2.weight": [
+    256,
+    1024
+   ],
+   "encoder.layers.1.linear2.bias": [
+    256
+   ],
+   "encoder.layers.1.norm1.weight": [
+    256
+   ],
+   "encoder.layers.1.norm1.bias": [
+    256
+   ],
+   "encoder.layers.1.norm2.weight": [
+    256
+   ],
+   "encoder.layers.1.norm2.bias": [
+    256
+   ],
+   "encoder.layers.2.self_attn.in_proj_weight": [
+    768,
+    256
+   ],
+   "encoder.layers.2.self_attn.in_proj_bias": [
+    768
+   ],
+   "encoder.layers.2.self_attn.out_proj.weight": [
+    256,
+    256
+   ],
+   "encoder.layers.2.self_attn.out_proj.bias": [
+    256
+   ],
+   "encoder.layers.2.linear1.weight": [
+    1024,
+    256
+   ],
+   "encoder.layers.2.linear1.bias": [
+    1024
+   ],
+   "encoder.layers.2.linear2.weight": [
+    256,
+    1024
+   ],
+   "encoder.layers.2.linear2.bias": [
+    256
+   ],
+   "encoder.layers.2.norm1.weight": [
+    256
+   ],
+   "encoder.layers.2.norm1.bias": [
+    256
+   ],
+   "encoder.layers.2.norm2.weight": [
+    256
+   ],
+   "encoder.layers.2.norm2.bias": [
+    256
+   ],
+   "head.weight": [
+    512,
+    256
+   ],
+   "head.bias": [
+    512
+   ]
+  },
+  "param_sum": 1588.2874603853838,
+  "param_abs_sum": 74276.08351934986,
+  "out_sum": -20.486256808042526,
+  "out_abs_sum": 340.7023180946708,
+  "out_head": [
+   0.060249343514442444,
+   -0.17484083771705627,
+   -0.3259197473526001,
+   0.3835216164588928,
+   0.2627182900905609,
+   -0.33611059188842773,
+   0.20259755849838257,
+   -0.2827851474285126
+  ],
+  "train_out_sum": -14.43596806563437,
+  "train_out_abs_sum": 360.9569017421454,
+  "train_rng": "e5e252ff48128ee162b7a8f94d9e2cf460fd6b31858d9b76d999d418aaeec5d9"
+ },
+ "fno": {
+  "shapes": {
+   "input_proj.weight": [
+    48,
+    5,
+    1
+   ],
+   "input_proj.bias": [
+    48
+   ],
+   "spectral.0.weight": [
+    48,
+    48,
+    128,
+    2
+   ],
+   "spectral.1.weight": [
+    48,
+    48,
+    128,
+    2
+   ],
+   "spectral.2.weight": [
+    48,
+    48,
+    128,
+    2
+   ],
+   "spectral.3.weight": [
+    48,
+    48,
+    128,
+    2
+   ],
+   "pointwise.0.weight": [
+    48,
+    48,
+    1
+   ],
+   "pointwise.0.bias": [
+    48
+   ],
+   "pointwise.1.weight": [
+    48,
+    48,
+    1
+   ],
+   "pointwise.1.bias": [
+    48
+   ],
+   "pointwise.2.weight": [
+    48,
+    48,
+    1
+   ],
+   "pointwise.2.bias": [
+    48
+   ],
+   "pointwise.3.weight": [
+    48,
+    48,
+    1
+   ],
+   "pointwise.3.bias": [
+    48
+   ],
+   "output_proj.0.weight": [
+    48,
+    48,
+    1
+   ],
+   "output_proj.0.bias": [
+    48
+   ],
+   "output_proj.2.weight": [
+    1,
+    48,
+    1
+   ],
+   "output_proj.2.bias": [
+    1
+   ]
+  },
+  "param_sum": -55.54730378957967,
+  "param_abs_sum": 40116.92130616671,
+  "out_sum": 21.835719933733344,
+  "out_abs_sum": 21.835719933733344,
+  "out_head": [
+   0.020115353167057037,
+   0.02058282680809498,
+   0.021242031827569008,
+   0.020612353459000587,
+   0.02037971280515194,
+   0.021377848461270332,
+   0.020854664966464043,
+   0.02003195323050022
+  ],
+  "train_out_sum": 21.835719933733344,
+  "train_out_abs_sum": 21.835719933733344,
+  "train_rng": "0f9cd7b642a3f8f641c5e992f17138b2d094db4d56cc2329b3be2c794ddc79ad"
+ },
+ "prob_tcn": {
+  "shapes": {
+   "input_proj.weight": [
+    64,
+    5,
+    1
+   ],
+   "input_proj.bias": [
+    64
+   ],
+   "blocks.0.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.0.conv1.bias": [
+    64
+   ],
+   "blocks.0.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.0.conv2.bias": [
+    64
+   ],
+   "blocks.1.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.1.conv1.bias": [
+    64
+   ],
+   "blocks.1.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.1.conv2.bias": [
+    64
+   ],
+   "blocks.2.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.2.conv1.bias": [
+    64
+   ],
+   "blocks.2.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.2.conv2.bias": [
+    64
+   ],
+   "blocks.3.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.3.conv1.bias": [
+    64
+   ],
+   "blocks.3.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.3.conv2.bias": [
+    64
+   ],
+   "blocks.4.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.4.conv1.bias": [
+    64
+   ],
+   "blocks.4.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.4.conv2.bias": [
+    64
+   ],
+   "blocks.5.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.5.conv1.bias": [
+    64
+   ],
+   "blocks.5.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.5.conv2.bias": [
+    64
+   ],
+   "blocks.6.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.6.conv1.bias": [
+    64
+   ],
+   "blocks.6.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.6.conv2.bias": [
+    64
+   ],
+   "blocks.7.conv1.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.7.conv1.bias": [
+    64
+   ],
+   "blocks.7.conv2.weight": [
+    64,
+    64,
+    5
+   ],
+   "blocks.7.conv2.bias": [
+    64
+   ],
+   "output_proj.weight": [
+    2,
+    64,
+    1
+   ],
+   "output_proj.bias": [
+    2
+   ]
+  },
+  "param_sum": 4.1994293163920915,
+  "param_abs_sum": 9279.412534127381,
+  "out_sum": 58.422308849403635,
+  "out_abs_sum": 187.466761512449,
+  "out_head": [
+   0.1265837550163269,
+   0.10027569532394409,
+   0.1279391646385193,
+   0.1799454391002655,
+   0.09263906627893448,
+   0.10167152434587479,
+   0.10119498521089554,
+   0.11598734557628632
+  ],
+  "train_out_sum": 58.422308849403635,
+  "train_out_abs_sum": 187.466761512449,
+  "train_rng": "0f9cd7b642a3f8f641c5e992f17138b2d094db4d56cc2329b3be2c794ddc79ad"
+ },
+ "lstm": {
+  "shapes": {
+   "lstm.weight_ih_l0": [
+    384,
+    5
+   ],
+   "lstm.weight_hh_l0": [
+    384,
+    96
+   ],
+   "lstm.bias_ih_l0": [
+    384
+   ],
+   "lstm.bias_hh_l0": [
+    384
+   ],
+   "lstm.weight_ih_l0_reverse": [
+    384,
+    5
+   ],
+   "lstm.weight_hh_l0_reverse": [
+    384,
+    96
+   ],
+   "lstm.bias_ih_l0_reverse": [
+    384
+   ],
+   "lstm.bias_hh_l0_reverse": [
+    384
+   ],
+   "lstm.weight_ih_l1": [
+    384,
+    192
+   ],
+   "lstm.weight_hh_l1": [
+    384,
+    96
+   ],
+   "lstm.bias_ih_l1": [
+    384
+   ],
+   "lstm.bias_hh_l1": [
+    384
+   ],
+   "lstm.weight_ih_l1_reverse": [
+    384,
+    192
+   ],
+   "lstm.weight_hh_l1_reverse": [
+    384,
+    96
+   ],
+   "lstm.bias_ih_l1_reverse": [
+    384
+   ],
+   "lstm.bias_hh_l1_reverse": [
+    384
+   ],
+   "output_proj.weight": [
+    1,
+    192
+   ],
+   "output_proj.bias": [
+    1
+   ]
+  },
+  "param_sum": 9.320841698740665,
+  "param_abs_sum": 15409.92843074853,
+  "out_sum": -48.878470070660114,
+  "out_abs_sum": 48.878470070660114,
+  "out_head": [
+   -0.03968687728047371,
+   -0.05030951648950577,
+   -0.053204022347927094,
+   -0.056192170828580856,
+   -0.056116778403520584,
+   -0.058572083711624146,
+   -0.0563712902367115,
+   -0.05806397646665573
+  ],
+  "train_out_sum": -48.878470070660114,
+  "train_out_abs_sum": 48.878470070660114,
+  "train_rng": "0f9cd7b642a3f8f641c5e992f17138b2d094db4d56cc2329b3be2c794ddc79ad"
+ },
+ "transformer": {
+  "shapes": {
+   "positional": [
+    1,
+    1024,
+    128
+   ],
+   "embed.weight": [
+    128,
+    5,
+    16
+   ],
+   "embed.bias": [
+    128
+   ],
+   "encoder.layers.0.self_attn.in_proj_weight": [
+    384,
+    128
+   ],
+   "encoder.layers.0.self_attn.in_proj_bias": [
+    384
+   ],
+   "encoder.layers.0.self_attn.out_proj.weight": [
+    128,
+    128
+   ],
+   "encoder.layers.0.self_attn.out_proj.bias": [
+    128
+   ],
+   "encoder.layers.0.linear1.weight": [
+    512,
+    128
+   ],
+   "encoder.layers.0.linear1.bias": [
+    512
+   ],
+   "encoder.layers.0.linear2.weight": [
+    128,
+    512
+   ],
+   "encoder.layers.0.linear2.bias": [
+    128
+   ],
+   "encoder.layers.0.norm1.weight": [
+    128
+   ],
+   "encoder.layers.0.norm1.bias": [
+    128
+   ],
+   "encoder.layers.0.norm2.weight": [
+    128
+   ],
+   "encoder.layers.0.norm2.bias": [
+    128
+   ],
+   "encoder.layers.1.self_attn.in_proj_weight": [
+    384,
+    128
+   ],
+   "encoder.layers.1.self_attn.in_proj_bias": [
+    384
+   ],
+   "encoder.layers.1.self_attn.out_proj.weight": [
+    128,
+    128
+   ],
+   "encoder.layers.1.self_attn.out_proj.bias": [
+    128
+   ],
+   "encoder.layers.1.linear1.weight": [
+    512,
+    128
+   ],
+   "encoder.layers.1.linear1.bias": [
+    512
+   ],
+   "encoder.layers.1.linear2.weight": [
+    128,
+    512
+   ],
+   "encoder.layers.1.linear2.bias": [
+    128
+   ],
+   "encoder.layers.1.norm1.weight": [
+    128
+   ],
+   "encoder.layers.1.norm1.bias": [
+    128
+   ],
+   "encoder.layers.1.norm2.weight": [
+    128
+   ],
+   "encoder.layers.1.norm2.bias": [
+    128
+   ],
+   "encoder.layers.2.self_attn.in_proj_weight": [
+    384,
+    128
+   ],
+   "encoder.layers.2.self_attn.in_proj_bias": [
+    384
+   ],
+   "encoder.layers.2.self_attn.out_proj.weight": [
+    128,
+    128
+   ],
+   "encoder.layers.2.self_attn.out_proj.bias": [
+    128
+   ],
+   "encoder.layers.2.linear1.weight": [
+    512,
+    128
+   ],
+   "encoder.layers.2.linear1.bias": [
+    512
+   ],
+   "encoder.layers.2.linear2.weight": [
+    128,
+    512
+   ],
+   "encoder.layers.2.linear2.bias": [
+    128
+   ],
+   "encoder.layers.2.norm1.weight": [
+    128
+   ],
+   "encoder.layers.2.norm1.bias": [
+    128
+   ],
+   "encoder.layers.2.norm2.weight": [
+    128
+   ],
+   "encoder.layers.2.norm2.bias": [
+    128
+   ],
+   "encoder.layers.3.self_attn.in_proj_weight": [
+    384,
+    128
+   ],
+   "encoder.layers.3.self_attn.in_proj_bias": [
+    384
+   ],
+   "encoder.layers.3.self_attn.out_proj.weight": [
+    128,
+    128
+   ],
+   "encoder.layers.3.self_attn.out_proj.bias": [
+    128
+   ],
+   "encoder.layers.3.linear1.weight": [
+    512,
+    128
+   ],
+   "encoder.layers.3.linear1.bias": [
+    512
+   ],
+   "encoder.layers.3.linear2.weight": [
+    128,
+    512
+   ],
+   "encoder.layers.3.linear2.bias": [
+    128
+   ],
+   "encoder.layers.3.norm1.weight": [
+    128
+   ],
+   "encoder.layers.3.norm1.bias": [
+    128
+   ],
+   "encoder.layers.3.norm2.weight": [
+    128
+   ],
+   "encoder.layers.3.norm2.bias": [
+    128
+   ],
+   "head.weight": [
+    16,
+    128
+   ],
+   "head.bias": [
+    16
+   ]
+  },
+  "param_sum": 995.1029133250265,
+  "param_abs_sum": 34837.33663608541,
+  "out_sum": 81.69119211658835,
+  "out_abs_sum": 475.0346604026854,
+  "out_head": [
+   0.4455363154411316,
+   1.0788809061050415,
+   -0.2307138890028,
+   -0.48419320583343506,
+   0.49811413884162903,
+   1.1181268692016602,
+   0.974386990070343,
+   -0.691568911075592
+  ],
+  "train_out_sum": 75.96920788520947,
+  "train_out_abs_sum": 484.39973461953923,
+  "train_rng": "93e8e2a1107c296e897ba406baaaeebc9f9651438b894eb79d4acbcaeee9ab9c"
+ },
+ "chronos": {
+  "shapes": {
+   "encoder.embed_tokens.weight": [
+    4096,
+    512
+   ],
+   "encoder.block.0.layer.0.SelfAttention.q.weight": [
+    512,
+    512
+   ],
+   "encoder.block.0.layer.0.SelfAttention.k.weight": [
+    512,
+    512
+   ],
+   "encoder.block.0.layer.0.SelfAttention.v.weight": [
+    512,
+    512
+   ],
+   "encoder.block.0.layer.0.SelfAttention.o.weight": [
+    512,
+    512
+   ],
+   "encoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight": [
+    32,
+    8
+   ],
+   "encoder.block.0.layer.0.layer_norm.weight": [
+    512
+   ],
+   "encoder.block.0.layer.1.DenseReluDense.wi.weight": [
+    2048,
+    512
+   ],
+   "encoder.block.0.layer.1.DenseReluDense.wo.weight": [
+    512,
+    2048
+   ],
+   "encoder.block.0.layer.1.layer_norm.weight": [
+    512
+   ],
+   "encoder.block.1.layer.0.SelfAttention.q.weight": [
+    512,
+    512
+   ],
+   "encoder.block.1.layer.0.SelfAttention.k.weight": [
+    512,
+    512
+   ],
+   "encoder.block.1.layer.0.SelfAttention.v.weight": [
+    512,
+    512
+   ],
+   "encoder.block.1.layer.0.SelfAttention.o.weight": [
+    512,
+    512
+   ],
+   "encoder.block.1.layer.0.layer_norm.weight": [
+    512
+   ],
+   "encoder.block.1.layer.1.DenseReluDense.wi.weight": [
+    2048,
+    512
+   ],
+   "encoder.block.1.layer.1.DenseReluDense.wo.weight": [
+    512,
+    2048
+   ],
+   "encoder.block.1.layer.1.layer_norm.weight": [
+    512
+   ],
+   "encoder.block.2.layer.0.SelfAttention.q.weight": [
+    512,
+    512
+   ],
+   "encoder.block.2.layer.0.SelfAttention.k.weight": [
+    512,
+    512
+   ],
+   "encoder.block.2.layer.0.SelfAttention.v.weight": [
+    512,
+    512
+   ],
+   "encoder.block.2.layer.0.SelfAttention.o.weight": [
+    512,
+    512
+   ],
+   "encoder.block.2.layer.0.layer_norm.weight": [
+    512
+   ],
+   "encoder.block.2.layer.1.DenseReluDense.wi.weight": [
+    2048,
+    512
+   ],
+   "encoder.block.2.layer.1.DenseReluDense.wo.weight": [
+    512,
+    2048
+   ],
+   "encoder.block.2.layer.1.layer_norm.weight": [
+    512
+   ],
+   "encoder.block.3.layer.0.SelfAttention.q.weight": [
+    512,
+    512
+   ],
+   "encoder.block.3.layer.0.SelfAttention.k.weight": [
+    512,
+    512
+   ],
+   "encoder.block.3.layer.0.SelfAttention.v.weight": [
+    512,
+    512
+   ],
+   "encoder.block.3.layer.0.SelfAttention.o.weight": [
+    512,
+    512
+   ],
+   "encoder.block.3.layer.0.layer_norm.weight": [
+    512
+   ],
+   "encoder.block.3.layer.1.DenseReluDense.wi.weight": [
+    2048,
+    512
+   ],
+   "encoder.block.3.layer.1.DenseReluDense.wo.weight": [
+    512,
+    2048
+   ],
+   "encoder.block.3.layer.1.layer_norm.weight": [
+    512
+   ],
+   "encoder.block.4.layer.0.SelfAttention.q.weight": [
+    512,
+    512
+   ],
+   "encoder.block.4.layer.0.SelfAttention.k.weight": [
+    512,
+    512
+   ],
+   "encoder.block.4.layer.0.SelfAttention.v.weight": [
+    512,
+    512
+   ],
+   "encoder.block.4.layer.0.SelfAttention.o.weight": [
+    512,
+    512
+   ],
+   "encoder.block.4.layer.0.layer_norm.weight": [
+    512
+   ],
+   "encoder.block.4.layer.1.DenseReluDense.wi.weight": [
+    2048,
+    512
+   ],
+   "encoder.block.4.layer.1.DenseReluDense.wo.weight": [
+    512,
+    2048
+   ],
+   "encoder.block.4.layer.1.layer_norm.weight": [
+    512
+   ],
+   "encoder.block.5.layer.0.SelfAttention.q.weight": [
+    512,
+    512
+   ],
+   "encoder.block.5.layer.0.SelfAttention.k.weight": [
+    512,
+    512
+   ],
+   "encoder.block.5.layer.0.SelfAttention.v.weight": [
+    512,
+    512
+   ],
+   "encoder.block.5.layer.0.SelfAttention.o.weight": [
+    512,
+    512
+   ],
+   "encoder.block.5.layer.0.layer_norm.weight": [
+    512
+   ],
+   "encoder.block.5.layer.1.DenseReluDense.wi.weight": [
+    2048,
+    512
+   ],
+   "encoder.block.5.layer.1.DenseReluDense.wo.weight": [
+    512,
+    2048
+   ],
+   "encoder.block.5.layer.1.layer_norm.weight": [
+    512
+   ],
+   "encoder.final_layer_norm.weight": [
+    512
+   ],
+   "head.0.weight": [
+    128,
+    513,
+    1
+   ],
+   "head.0.bias": [
+    128
+   ],
+   "head.2.weight": [
+    128,
+    128,
+    5
+   ],
+   "head.2.bias": [
+    128
+   ],
+   "head.4.weight": [
+    1,
+    128,
+    1
+   ],
+   "head.4.bias": [
+    1
+   ]
+  },
+  "param_sum": 14321.650353178675,
+  "param_abs_sum": 3140358.64230002,
+  "out_sum": -80.06676452606916,
+  "out_abs_sum": 80.06676452606916,
+  "out_head": [
+   -0.07544361054897308,
+   -0.08097848296165466,
+   -0.08046755939722061,
+   -0.08208442479372025,
+   -0.07955840975046158,
+   -0.08030436187982559,
+   -0.07784812152385712,
+   -0.08152741938829422
+  ],
+  "train_out_sum": -80.00580257922411,
+  "train_out_abs_sum": 80.00580257922411,
+  "train_rng": "109ee271f054c582bdca8b03f532f363b8d01a6ab36c0559875add9599e5839f"
+ },
+ "moment": {
+  "shapes": {
+   "pipeline.patch_embedding.mask_embedding": [
+    512
+   ],
+   "pipeline.patch_embedding.value_embedding.weight": [
+    512,
+    8
+   ],
+   "pipeline.patch_embedding.position_embedding.pe": [
+    1,
+    5000,
+    512
+   ],
+   "pipeline.encoder.embed_tokens.weight": [
+    32128,
+    512
+   ],
+   "pipeline.encoder.block.0.layer.0.SelfAttention.q.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.0.layer.0.SelfAttention.k.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.0.layer.0.SelfAttention.v.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.0.layer.0.SelfAttention.o.weight": [
+    512,
+    384
+   ],
+   "pipeline.encoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight": [
+    32,
+    6
+   ],
+   "pipeline.encoder.block.0.layer.0.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.0.layer.1.DenseReluDense.wi_0.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.0.layer.1.DenseReluDense.wi_1.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.0.layer.1.DenseReluDense.wo.weight": [
+    512,
+    1024
+   ],
+   "pipeline.encoder.block.0.layer.1.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.1.layer.0.SelfAttention.q.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.1.layer.0.SelfAttention.k.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.1.layer.0.SelfAttention.v.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.1.layer.0.SelfAttention.o.weight": [
+    512,
+    384
+   ],
+   "pipeline.encoder.block.1.layer.0.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.1.layer.1.DenseReluDense.wi_0.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.1.layer.1.DenseReluDense.wi_1.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.1.layer.1.DenseReluDense.wo.weight": [
+    512,
+    1024
+   ],
+   "pipeline.encoder.block.1.layer.1.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.2.layer.0.SelfAttention.q.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.2.layer.0.SelfAttention.k.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.2.layer.0.SelfAttention.v.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.2.layer.0.SelfAttention.o.weight": [
+    512,
+    384
+   ],
+   "pipeline.encoder.block.2.layer.0.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.2.layer.1.DenseReluDense.wi_0.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.2.layer.1.DenseReluDense.wi_1.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.2.layer.1.DenseReluDense.wo.weight": [
+    512,
+    1024
+   ],
+   "pipeline.encoder.block.2.layer.1.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.3.layer.0.SelfAttention.q.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.3.layer.0.SelfAttention.k.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.3.layer.0.SelfAttention.v.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.3.layer.0.SelfAttention.o.weight": [
+    512,
+    384
+   ],
+   "pipeline.encoder.block.3.layer.0.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.3.layer.1.DenseReluDense.wi_0.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.3.layer.1.DenseReluDense.wi_1.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.3.layer.1.DenseReluDense.wo.weight": [
+    512,
+    1024
+   ],
+   "pipeline.encoder.block.3.layer.1.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.4.layer.0.SelfAttention.q.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.4.layer.0.SelfAttention.k.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.4.layer.0.SelfAttention.v.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.4.layer.0.SelfAttention.o.weight": [
+    512,
+    384
+   ],
+   "pipeline.encoder.block.4.layer.0.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.4.layer.1.DenseReluDense.wi_0.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.4.layer.1.DenseReluDense.wi_1.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.4.layer.1.DenseReluDense.wo.weight": [
+    512,
+    1024
+   ],
+   "pipeline.encoder.block.4.layer.1.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.5.layer.0.SelfAttention.q.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.5.layer.0.SelfAttention.k.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.5.layer.0.SelfAttention.v.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.5.layer.0.SelfAttention.o.weight": [
+    512,
+    384
+   ],
+   "pipeline.encoder.block.5.layer.0.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.5.layer.1.DenseReluDense.wi_0.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.5.layer.1.DenseReluDense.wi_1.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.5.layer.1.DenseReluDense.wo.weight": [
+    512,
+    1024
+   ],
+   "pipeline.encoder.block.5.layer.1.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.6.layer.0.SelfAttention.q.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.6.layer.0.SelfAttention.k.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.6.layer.0.SelfAttention.v.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.6.layer.0.SelfAttention.o.weight": [
+    512,
+    384
+   ],
+   "pipeline.encoder.block.6.layer.0.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.6.layer.1.DenseReluDense.wi_0.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.6.layer.1.DenseReluDense.wi_1.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.6.layer.1.DenseReluDense.wo.weight": [
+    512,
+    1024
+   ],
+   "pipeline.encoder.block.6.layer.1.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.7.layer.0.SelfAttention.q.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.7.layer.0.SelfAttention.k.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.7.layer.0.SelfAttention.v.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.7.layer.0.SelfAttention.o.weight": [
+    512,
+    384
+   ],
+   "pipeline.encoder.block.7.layer.0.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.7.layer.1.DenseReluDense.wi_0.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.7.layer.1.DenseReluDense.wi_1.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.7.layer.1.DenseReluDense.wo.weight": [
+    512,
+    1024
+   ],
+   "pipeline.encoder.block.7.layer.1.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.final_layer_norm.weight": [
+    512
+   ],
+   "pipeline.head.linear.weight": [
+    8,
+    512
+   ],
+   "pipeline.head.linear.bias": [
+    8
+   ]
+  },
+  "param_sum": 349397.48083500867,
+  "param_abs_sum": 15325361.252657745,
+  "out_sum": 34.31380545441061,
+  "out_abs_sum": 591.9677191385999,
+  "out_head": [
+   0.1380762904882431,
+   0.07981857657432556,
+   -0.9824513792991638,
+   1.2840986251831055,
+   0.2242976427078247,
+   0.3623274564743042,
+   0.6280632615089417,
+   -0.8517544865608215
+  ],
+  "train_out_sum": 39.24210278177634,
+  "train_out_abs_sum": 639.004237649031,
+  "train_rng": "102f9151bf390df6fc77d8af8d49d7e210e4b3dc95e0d68b48551d86f572869d"
+ },
+ "moment_ft": {
+  "shapes": {
+   "pipeline.patch_embedding.mask_embedding": [
+    512
+   ],
+   "pipeline.patch_embedding.value_embedding.weight": [
+    512,
+    8
+   ],
+   "pipeline.patch_embedding.position_embedding.pe": [
+    1,
+    5000,
+    512
+   ],
+   "pipeline.encoder.embed_tokens.weight": [
+    32128,
+    512
+   ],
+   "pipeline.encoder.block.0.layer.0.SelfAttention.q.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.0.layer.0.SelfAttention.k.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.0.layer.0.SelfAttention.v.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.0.layer.0.SelfAttention.o.weight": [
+    512,
+    384
+   ],
+   "pipeline.encoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight": [
+    32,
+    6
+   ],
+   "pipeline.encoder.block.0.layer.0.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.0.layer.1.DenseReluDense.wi_0.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.0.layer.1.DenseReluDense.wi_1.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.0.layer.1.DenseReluDense.wo.weight": [
+    512,
+    1024
+   ],
+   "pipeline.encoder.block.0.layer.1.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.1.layer.0.SelfAttention.q.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.1.layer.0.SelfAttention.k.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.1.layer.0.SelfAttention.v.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.1.layer.0.SelfAttention.o.weight": [
+    512,
+    384
+   ],
+   "pipeline.encoder.block.1.layer.0.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.1.layer.1.DenseReluDense.wi_0.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.1.layer.1.DenseReluDense.wi_1.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.1.layer.1.DenseReluDense.wo.weight": [
+    512,
+    1024
+   ],
+   "pipeline.encoder.block.1.layer.1.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.2.layer.0.SelfAttention.q.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.2.layer.0.SelfAttention.k.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.2.layer.0.SelfAttention.v.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.2.layer.0.SelfAttention.o.weight": [
+    512,
+    384
+   ],
+   "pipeline.encoder.block.2.layer.0.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.2.layer.1.DenseReluDense.wi_0.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.2.layer.1.DenseReluDense.wi_1.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.2.layer.1.DenseReluDense.wo.weight": [
+    512,
+    1024
+   ],
+   "pipeline.encoder.block.2.layer.1.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.3.layer.0.SelfAttention.q.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.3.layer.0.SelfAttention.k.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.3.layer.0.SelfAttention.v.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.3.layer.0.SelfAttention.o.weight": [
+    512,
+    384
+   ],
+   "pipeline.encoder.block.3.layer.0.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.3.layer.1.DenseReluDense.wi_0.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.3.layer.1.DenseReluDense.wi_1.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.3.layer.1.DenseReluDense.wo.weight": [
+    512,
+    1024
+   ],
+   "pipeline.encoder.block.3.layer.1.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.4.layer.0.SelfAttention.q.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.4.layer.0.SelfAttention.k.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.4.layer.0.SelfAttention.v.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.4.layer.0.SelfAttention.o.weight": [
+    512,
+    384
+   ],
+   "pipeline.encoder.block.4.layer.0.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.4.layer.1.DenseReluDense.wi_0.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.4.layer.1.DenseReluDense.wi_1.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.4.layer.1.DenseReluDense.wo.weight": [
+    512,
+    1024
+   ],
+   "pipeline.encoder.block.4.layer.1.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.5.layer.0.SelfAttention.q.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.5.layer.0.SelfAttention.k.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.5.layer.0.SelfAttention.v.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.5.layer.0.SelfAttention.o.weight": [
+    512,
+    384
+   ],
+   "pipeline.encoder.block.5.layer.0.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.5.layer.1.DenseReluDense.wi_0.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.5.layer.1.DenseReluDense.wi_1.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.5.layer.1.DenseReluDense.wo.weight": [
+    512,
+    1024
+   ],
+   "pipeline.encoder.block.5.layer.1.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.6.layer.0.SelfAttention.q.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.6.layer.0.SelfAttention.k.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.6.layer.0.SelfAttention.v.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.6.layer.0.SelfAttention.o.weight": [
+    512,
+    384
+   ],
+   "pipeline.encoder.block.6.layer.0.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.6.layer.1.DenseReluDense.wi_0.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.6.layer.1.DenseReluDense.wi_1.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.6.layer.1.DenseReluDense.wo.weight": [
+    512,
+    1024
+   ],
+   "pipeline.encoder.block.6.layer.1.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.7.layer.0.SelfAttention.q.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.7.layer.0.SelfAttention.k.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.7.layer.0.SelfAttention.v.weight": [
+    384,
+    512
+   ],
+   "pipeline.encoder.block.7.layer.0.SelfAttention.o.weight": [
+    512,
+    384
+   ],
+   "pipeline.encoder.block.7.layer.0.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.block.7.layer.1.DenseReluDense.wi_0.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.7.layer.1.DenseReluDense.wi_1.weight": [
+    1024,
+    512
+   ],
+   "pipeline.encoder.block.7.layer.1.DenseReluDense.wo.weight": [
+    512,
+    1024
+   ],
+   "pipeline.encoder.block.7.layer.1.layer_norm.weight": [
+    512
+   ],
+   "pipeline.encoder.final_layer_norm.weight": [
+    512
+   ],
+   "pipeline.head.linear.weight": [
+    8,
+    512
+   ],
+   "pipeline.head.linear.bias": [
+    8
+   ]
+  },
+  "param_sum": 349397.48083500867,
+  "param_abs_sum": 15325361.252657745,
+  "out_sum": 34.31380545441061,
+  "out_abs_sum": 591.9677191385999,
+  "out_head": [
+   0.1380762904882431,
+   0.07981857657432556,
+   -0.9824513792991638,
+   1.2840986251831055,
+   0.2242976427078247,
+   0.3623274564743042,
+   0.6280632615089417,
+   -0.8517544865608215
+  ],
+  "train_out_sum": 39.24210278177634,
+  "train_out_abs_sum": 639.004237649031,
+  "train_rng": "102f9151bf390df6fc77d8af8d49d7e210e4b3dc95e0d68b48551d86f572869d"
+ },
+ "timesfm": {
+  "shapes": {
+   "encoder.tokenizer.hidden_layer.weight": [
+    1280,
+    64
+   ],
+   "encoder.tokenizer.hidden_layer.bias": [
+    1280
+   ],
+   "encoder.tokenizer.output_layer.weight": [
+    1280,
+    1280
+   ],
+   "encoder.tokenizer.output_layer.bias": [
+    1280
+   ],
+   "encoder.tokenizer.residual_layer.weight": [
+    1280,
+    64
+   ],
+   "encoder.tokenizer.residual_layer.bias": [
+    1280
+   ],
+   "encoder.stacked_xf.0.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.0.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.0.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.0.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.0.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.0.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.0.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.0.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.0.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.0.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.0.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.1.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.1.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.1.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.1.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.1.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.1.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.1.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.1.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.1.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.1.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.1.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.2.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.2.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.2.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.2.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.2.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.2.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.2.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.2.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.2.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.2.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.2.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.3.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.3.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.3.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.3.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.3.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.3.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.3.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.3.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.3.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.3.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.3.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.4.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.4.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.4.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.4.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.4.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.4.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.4.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.4.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.4.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.4.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.4.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.5.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.5.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.5.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.5.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.5.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.5.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.5.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.5.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.5.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.5.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.5.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.6.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.6.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.6.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.6.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.6.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.6.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.6.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.6.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.6.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.6.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.6.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.7.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.7.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.7.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.7.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.7.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.7.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.7.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.7.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.7.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.7.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.7.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.8.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.8.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.8.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.8.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.8.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.8.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.8.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.8.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.8.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.8.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.8.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.9.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.9.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.9.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.9.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.9.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.9.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.9.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.9.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.9.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.9.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.9.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.10.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.10.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.10.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.10.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.10.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.10.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.10.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.10.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.10.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.10.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.10.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.11.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.11.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.11.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.11.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.11.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.11.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.11.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.11.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.11.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.11.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.11.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.12.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.12.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.12.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.12.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.12.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.12.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.12.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.12.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.12.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.12.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.12.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.13.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.13.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.13.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.13.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.13.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.13.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.13.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.13.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.13.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.13.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.13.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.14.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.14.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.14.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.14.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.14.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.14.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.14.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.14.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.14.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.14.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.14.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.15.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.15.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.15.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.15.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.15.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.15.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.15.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.15.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.15.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.15.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.15.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.16.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.16.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.16.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.16.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.16.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.16.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.16.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.16.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.16.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.16.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.16.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.17.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.17.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.17.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.17.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.17.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.17.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.17.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.17.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.17.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.17.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.17.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.18.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.18.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.18.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.18.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.18.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.18.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.18.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.18.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.18.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.18.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.18.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.19.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.19.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.19.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.19.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.19.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.19.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.19.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.19.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.19.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.19.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.19.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.output_projection_point.hidden_layer.weight": [
+    1280,
+    1280
+   ],
+   "encoder.output_projection_point.output_layer.weight": [
+    1280,
+    1280
+   ],
+   "encoder.output_projection_point.residual_layer.weight": [
+    1280,
+    1280
+   ],
+   "encoder.output_projection_quantiles.hidden_layer.weight": [
+    1280,
+    1280
+   ],
+   "encoder.output_projection_quantiles.output_layer.weight": [
+    10240,
+    1280
+   ],
+   "encoder.output_projection_quantiles.residual_layer.weight": [
+    10240,
+    1280
+   ],
+   "head.0.weight": [
+    128,
+    1281,
+    1
+   ],
+   "head.0.bias": [
+    128
+   ],
+   "head.2.weight": [
+    128,
+    128,
+    5
+   ],
+   "head.2.bias": [
+    128
+   ],
+   "head.4.weight": [
+    32,
+    128,
+    1
+   ],
+   "head.4.bias": [
+    32
+   ]
+  },
+  "param_sum": 97464.28180086771,
+  "param_abs_sum": 13497600.762904266,
+  "out_sum": -6.593725170750986,
+  "out_abs_sum": 89.6197254825529,
+  "out_head": [
+   -0.0530846044421196,
+   0.1730450689792633,
+   -0.010368182323873043,
+   0.16499768197536469,
+   -0.19867759943008423,
+   0.16321854293346405,
+   -0.20177848637104034,
+   -0.008727398701012135
+  ],
+  "train_out_sum": -6.593725170750986,
+  "train_out_abs_sum": 89.6197254825529,
+  "train_rng": "0f9cd7b642a3f8f641c5e992f17138b2d094db4d56cc2329b3be2c794ddc79ad"
+ },
+ "timesfm_ft": {
+  "shapes": {
+   "encoder.tokenizer.hidden_layer.weight": [
+    1280,
+    64
+   ],
+   "encoder.tokenizer.hidden_layer.bias": [
+    1280
+   ],
+   "encoder.tokenizer.output_layer.weight": [
+    1280,
+    1280
+   ],
+   "encoder.tokenizer.output_layer.bias": [
+    1280
+   ],
+   "encoder.tokenizer.residual_layer.weight": [
+    1280,
+    64
+   ],
+   "encoder.tokenizer.residual_layer.bias": [
+    1280
+   ],
+   "encoder.stacked_xf.0.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.0.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.0.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.0.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.0.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.0.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.0.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.0.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.0.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.0.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.0.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.1.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.1.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.1.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.1.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.1.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.1.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.1.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.1.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.1.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.1.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.1.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.2.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.2.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.2.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.2.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.2.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.2.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.2.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.2.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.2.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.2.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.2.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.3.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.3.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.3.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.3.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.3.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.3.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.3.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.3.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.3.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.3.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.3.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.4.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.4.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.4.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.4.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.4.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.4.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.4.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.4.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.4.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.4.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.4.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.5.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.5.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.5.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.5.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.5.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.5.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.5.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.5.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.5.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.5.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.5.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.6.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.6.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.6.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.6.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.6.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.6.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.6.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.6.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.6.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.6.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.6.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.7.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.7.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.7.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.7.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.7.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.7.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.7.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.7.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.7.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.7.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.7.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.8.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.8.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.8.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.8.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.8.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.8.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.8.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.8.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.8.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.8.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.8.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.9.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.9.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.9.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.9.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.9.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.9.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.9.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.9.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.9.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.9.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.9.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.10.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.10.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.10.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.10.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.10.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.10.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.10.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.10.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.10.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.10.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.10.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.11.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.11.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.11.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.11.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.11.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.11.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.11.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.11.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.11.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.11.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.11.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.12.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.12.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.12.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.12.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.12.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.12.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.12.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.12.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.12.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.12.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.12.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.13.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.13.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.13.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.13.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.13.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.13.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.13.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.13.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.13.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.13.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.13.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.14.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.14.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.14.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.14.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.14.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.14.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.14.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.14.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.14.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.14.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.14.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.15.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.15.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.15.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.15.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.15.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.15.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.15.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.15.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.15.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.15.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.15.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.16.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.16.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.16.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.16.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.16.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.16.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.16.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.16.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.16.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.16.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.16.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.17.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.17.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.17.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.17.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.17.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.17.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.17.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.17.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.17.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.17.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.17.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.18.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.18.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.18.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.18.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.18.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.18.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.18.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.18.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.18.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.18.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.18.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.19.pre_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.19.post_attn_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.19.attn.qkv_proj.weight": [
+    3840,
+    1280
+   ],
+   "encoder.stacked_xf.19.attn.out.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.19.attn.query_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.19.attn.key_ln.scale": [
+    80
+   ],
+   "encoder.stacked_xf.19.attn.per_dim_scale.per_dim_scale": [
+    80
+   ],
+   "encoder.stacked_xf.19.pre_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.19.post_ff_ln.scale": [
+    1280
+   ],
+   "encoder.stacked_xf.19.ff0.weight": [
+    1280,
+    1280
+   ],
+   "encoder.stacked_xf.19.ff1.weight": [
+    1280,
+    1280
+   ],
+   "encoder.output_projection_point.hidden_layer.weight": [
+    1280,
+    1280
+   ],
+   "encoder.output_projection_point.output_layer.weight": [
+    1280,
+    1280
+   ],
+   "encoder.output_projection_point.residual_layer.weight": [
+    1280,
+    1280
+   ],
+   "encoder.output_projection_quantiles.hidden_layer.weight": [
+    1280,
+    1280
+   ],
+   "encoder.output_projection_quantiles.output_layer.weight": [
+    10240,
+    1280
+   ],
+   "encoder.output_projection_quantiles.residual_layer.weight": [
+    10240,
+    1280
+   ],
+   "head.0.weight": [
+    128,
+    1281,
+    1
+   ],
+   "head.0.bias": [
+    128
+   ],
+   "head.2.weight": [
+    128,
+    128,
+    5
+   ],
+   "head.2.bias": [
+    128
+   ],
+   "head.4.weight": [
+    32,
+    128,
+    1
+   ],
+   "head.4.bias": [
+    32
+   ]
+  },
+  "param_sum": 97464.28180086771,
+  "param_abs_sum": 13497600.762904266,
+  "out_sum": -6.593725170750986,
+  "out_abs_sum": 89.6197254825529,
+  "out_head": [
+   -0.0530846044421196,
+   0.1730450689792633,
+   -0.010368182323873043,
+   0.16499768197536469,
+   -0.19867759943008423,
+   0.16321854293346405,
+   -0.20177848637104034,
+   -0.008727398701012135
+  ],
+  "train_out_sum": -6.593725170750986,
+  "train_out_abs_sum": 89.6197254825529,
+  "train_rng": "0f9cd7b642a3f8f641c5e992f17138b2d094db4d56cc2329b3be2c794ddc79ad"
+ }
+}
