@@ -12,6 +12,6 @@ from .physics import PhysicsReconstruction
 from .physics import parked_c_theta
 from .physics import parked_constants
 from .release import ReleasedTower
-from .release import TowerSections
+from .release import TowerGauges
 from .release import load_tower
 from .trainer import SequenceModelTrainer

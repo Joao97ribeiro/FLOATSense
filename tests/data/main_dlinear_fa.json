@@ -1,0 +1,10 @@
+{
+ "model": "dlinear",
+ "direction": "fa",
+ "seed": 3,
+ "tag": "main",
+ "num_sims": 6,
+ "r2_log_damage": -13.710359727918052,
+ "median_damage_ratio": 0.08349490399030483,
+ "fraction_within_factor2": 0.0
+}

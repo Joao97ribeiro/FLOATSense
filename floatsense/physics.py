@@ -32,9 +32,11 @@ Calibration, one estimate per training simulation and the median over them:
 
 Scoring: the gain is applied to the series from 300 to 1000 s and the
 last 50 s mirrored about the record end, and 50 s cut on each side, so the
-scored window is 400-1,000 s (the window of the FLOATBench labels) with a
-margin on both sides against the circular convolution; both the reconstruction and the simulated moment
-are low-passed at 3 Hz before the damage is computed.
+scored window is 400.0-1,000.0 s inclusive (6,001 samples, the window of
+the FLOATBench labels) with a margin on both sides against the circular
+convolution. The gain is zero above the reconstruction band (`band_hz`, 3 Hz),
+and both the reconstruction and the simulated moment pass through the
+zero-phase Butterworth low-pass of the damage metric (`damage_filter`).
 """
 
 import dataclasses
@@ -47,8 +49,19 @@ import pandas as pd
 import scipy.signal
 from tqdm import tqdm
 
-from .fatigue import compute_base_damage
+from .constants import BAND_HZ
+from .constants import HARMONIC_ORDERS
+from .constants import LF_FIT_BAND
+from .constants import LOWPASS_HZ
+from .constants import LOWPASS_ORDER
+from .constants import MAX_TIME
+from .constants import MIN_TIME
+from .constants import OPERATING_POWER_KW
+from .constants import PAD_SECONDS
+from .constants import SEGMENT_LENGTH
+from .fatigue import damage_filter
 from .release import ReleasedTower
+from .release import load_gauges
 from .release import load_parked
 
 # `sign` restores the phase of the reconstruction: the gains are fitted on
@@ -68,7 +81,6 @@ DIRECTION_CHANNELS = {
         "sign": 1.0
     },
 }
-HARMONIC_ORDERS = (3, 6, 9)
 PSD_EPS = 1e-30
 
 
@@ -77,17 +89,6 @@ def _linear_fit(x: np.ndarray, y: np.ndarray) -> Tuple[float, float]:
     design = np.stack([np.ones_like(x), x], axis=1)
     coeffs, *_ = np.linalg.lstsq(design, y, rcond=None)
     return float(coeffs[0]), float(coeffs[1])
-
-
-def lowpass(series: np.ndarray, sampling_frequency: float,
-            cutoff_hz: float) -> np.ndarray:
-    """Zeroes every rFFT bin above `cutoff_hz` (no-op when cutoff is 0)."""
-    if not cutoff_hz:
-        return series
-    spectrum = np.fft.rfft(series)
-    freqs = np.fft.rfftfreq(len(series), d=1.0 / sampling_frequency)
-    spectrum[freqs > cutoff_hz] = 0.0
-    return np.fft.irfft(spectrum, n=len(series))
 
 
 @dataclasses.dataclass
@@ -186,12 +187,8 @@ def band_masks(
     return low_mask, masks
 
 
-GAUGE_STEMS = (["tower_bottom"] + [f"tower_{k}" for k in range(1, 10)] +
-               ["tower_top"])
-
-
 def parked_constants(dataset_dir: str, tower: str,
-                     min_time: float = 400.0) -> pd.DataFrame:
+                     min_time: float = MIN_TIME) -> pd.DataFrame:
     """Parked C1 of one tower at the 11 gauges, per direction.
 
     C1 is the least-squares slope, with a free intercept, of the standard
@@ -200,7 +197,8 @@ def parked_constants(dataset_dir: str, tower: str,
     record (Pimenta et al., 2024).
 
     Args:
-        dataset_dir (str): Released dataset directory (parked.parquet).
+        dataset_dir (str): Released dataset directory (parked.parquet
+          and <tower>/sections.parquet).
         tower (str): Tower name.
         min_time (float): Start of the scored window [s].
 
@@ -215,7 +213,7 @@ def parked_constants(dataset_dir: str, tower: str,
                           for i, name in enumerate(channels)}
                          for data in runs.values()])
     rows = []
-    for stem in GAUGE_STEMS:
+    for stem in load_gauges(dataset_dir, tower).channels:
         row = {"gauge": stem}
         for direction, config in DIRECTION_CHANNELS.items():
             row[direction] = float(np.polyfit(stds[config["accel"]],
@@ -238,13 +236,16 @@ class PhysicsReconstruction:
                  release: ReleasedTower,
                  output_dir: str,
                  parked_c_theta: Dict[str, float],
-                 min_time: float = 400.0,
-                 max_time: float = 1000.0,
-                 pad_seconds: float = 50.0,
-                 segment_length: int = 4096,
-                 lf_fit_band: Tuple[float, float] = (0.01, 0.05),
-                 operating_power_kw: float = 100.0,
-                 lowpass_hz: float = 3.0,
+                 min_time: float = MIN_TIME,
+                 max_time: float = MAX_TIME,
+                 pad_seconds: float = PAD_SECONDS,
+                 segment_length: int = SEGMENT_LENGTH,
+                 lf_fit_band: Tuple[float, float] = LF_FIT_BAND,
+                 operating_power_kw: float = OPERATING_POWER_KW,
+                 band_hz: float = BAND_HZ,
+                 apply_lowpass: bool = True,
+                 lowpass_hz: float = LOWPASS_HZ,
+                 lowpass_order: int = LOWPASS_ORDER,
                  sn_intercepts_log10: Optional[List[float]] = None,
                  sn_slopes: Optional[List[float]] = None):
         """Initializes the baseline.
@@ -265,8 +266,13 @@ class PhysicsReconstruction:
             lf_fit_band (Tuple[float, float]): Bins [Hz] fitting C4 and C5.
             operating_power_kw (float): Generated power above which a sample
               counts as operating, for the rotor-speed windows.
-            lowpass_hz (float): Low-pass cutoff applied to both the
-              reconstruction and the simulated moment before the damage.
+            band_hz (float): Upper edge of the reconstruction band: the gain
+              is zero above it (part of the method; 0 keeps every bin).
+            apply_lowpass (bool): Low-pass the true and the reconstructed
+              moment before the damage (on by default: the damage of these
+              towers lies below 3 Hz).
+            lowpass_hz (float): Cutoff of that low-pass [Hz].
+            lowpass_order (int): Butterworth order of one pass.
             sn_intercepts_log10 (List[float], optional): SN log10 intercepts.
             sn_slopes (List[float], optional): SN slopes.
         """
@@ -280,7 +286,10 @@ class PhysicsReconstruction:
         self.segment_length = segment_length
         self.lf_fit_band = tuple(lf_fit_band)
         self.operating_power_kw = operating_power_kw
+        self.band_hz = band_hz
+        self.apply_lowpass = apply_lowpass
         self.lowpass_hz = lowpass_hz
+        self.lowpass_order = lowpass_order
         self.sn_intercepts_log10 = sn_intercepts_log10
         self.sn_slopes = sn_slopes
         self.channels = release.channels
@@ -430,15 +439,15 @@ class PhysicsReconstruction:
         for mask in masks:
             harmonic_mask |= mask
         gains = calibration.gain(freqs, low_mask, harmonic_mask)
-        if self.lowpass_hz:
-            gains[freqs > self.lowpass_hz] = 0.0
+        if self.band_hz:
+            gains[freqs > self.band_hz] = 0.0
         moment = np.fft.irfft(np.fft.rfft(accel) * gains, n=num_samples)
         return DIRECTION_CHANNELS[direction]["sign"] * moment[pad:num_samples - pad]
 
     def damage(self, moment: np.ndarray) -> float:
         """Base-section damage of a moment series."""
-        return compute_base_damage(moment, self.tower, self.sn_intercepts_log10,
-                                   self.sn_slopes)
+        return self.tower.damage(moment, 0, self.sn_intercepts_log10,
+                                 self.sn_slopes)
 
     def evaluate(self,
                  sim_ids: List[int],
@@ -455,12 +464,15 @@ class PhysicsReconstruction:
             data = self.load(sim_id)
             row = {"sim_id": sim_id}
             for direction, calibration in calibrations.items():
-                # The reconstruction is already low-passed through its gain;
-                # the simulated moment gets the same filter here.
-                moment_true = lowpass(
+                # Metric filter (on by default), the same on both.
+                moment_true = damage_filter(
                     self.scored(data, DIRECTION_CHANNELS[direction]["moment"]),
-                    self.sampling_frequency, self.lowpass_hz)
-                moment_rec = self.reconstruct(data, direction, calibration)
+                    self.sampling_frequency, self.apply_lowpass,
+                    self.lowpass_hz, self.lowpass_order)
+                moment_rec = damage_filter(
+                    self.reconstruct(data, direction, calibration),
+                    self.sampling_frequency, self.apply_lowpass,
+                    self.lowpass_hz, self.lowpass_order)
                 row[f"damage_true_{direction}"] = self.damage(moment_true)
                 row[f"damage_rec_{direction}"] = self.damage(moment_rec)
                 row[f"var_ratio_{direction}"] = float(
