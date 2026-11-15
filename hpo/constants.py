@@ -25,7 +25,7 @@ TRIAL_SEED = 0  # training seed of every trial
 # Extension rule: if a study's best eligible trial comes after the
 # EXTEND_AFTER-th, the three studies of that model get EXTEND_BY more.
 EXTEND_AFTER = 20
-EXTEND_BY = 20
+EXTEND_BY = 0  # rule withdrawn 2026-11-12: fixed budget of 30 trials
 TOWERS_SEARCHED = ("ref", "opt1", "opt2")
 SEARCH_TRAIN_SPLIT = "val/train"  # 1,380 simulations
 SEARCH_VAL_SPLIT = "val/val"  # 348 simulations

@@ -469,6 +469,11 @@ def run_trial(study: optuna.Study,
     cfg = S.formatted(S.suggest(trial, args.model))
     run_dir = trial.user_attrs.get("resume_from") or os.path.join(
         args.root, common.TRIALS_DIR, study.study_name, f"t{trial.number:03d}")
+    # A study merged from another root keeps that root in its run paths:
+    # resume from the same run directory under this root.
+    if not run_dir.startswith(args.root):
+        run_dir = os.path.join(args.root, common.TRIALS_DIR, study.study_name,
+                               os.path.basename(os.path.normpath(run_dir)))
     trial.set_user_attr("run_dir", run_dir)
     trial.set_user_attr("config", cfg)
     outcome = {"trial": trial.number, "status": "lost", "run_dir": run_dir}

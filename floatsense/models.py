@@ -21,6 +21,7 @@ Two families:
     (train on crops, evaluate on full series).
 """
 
+import os
 from typing import Any, Dict, Optional, Sequence
 
 import torch
@@ -536,7 +537,14 @@ class ChronosEncoderModel(nn.Module):
         chunks = accel.view(batch, -1, chunk).reshape(-1, chunk)
         scale = chunks.abs().mean(dim=-1, keepdim=True) + 1e-6
         with torch.no_grad():
-            tokens, _ = self.pipeline.embed(chunks.cpu())
+            # pipeline.embed without its GPU -> CPU copy of the embeddings:
+            # the same tokenizer (on CPU) and the same encoder call, so the
+            # embeddings are identical; they just stay on the device.
+            token_ids, attention_mask, _ = (
+                self.pipeline.tokenizer.context_input_transform(chunks.cpu()))
+            tokens = self.pipeline.model.encode(
+                input_ids=token_ids.to(self.pipeline.model.device),
+                attention_mask=attention_mask.to(self.pipeline.model.device))
         tokens = tokens[:, :chunk, :].to(accel.device).transpose(1, 2)
         scale_row = scale.to(accel.device)[:, :, None].expand(-1, 1, chunk)
         moment = self.head(torch.cat([tokens, scale_row], dim=1))
@@ -931,7 +939,8 @@ class _SelectiveSSMLayer(nn.Module):
                  state_dim: int = 4,
                  expand: int = 2,
                  conv_kernel: int = 4,
-                 chunk: int = 64):
+                 chunk: int = 64,
+                 scan: Optional[str] = None):
         """Initializes the layer.
 
         Args:
@@ -940,8 +949,15 @@ class _SelectiveSSMLayer(nn.Module):
             expand (int): Expansion factor of the inner branch.
             conv_kernel (int): Depthwise causal convolution kernel.
             chunk (int): Chunk length of the scan.
+            scan (str, optional): 'chunked' (this file, pure PyTorch) or
+              'cuda' (the fused selective_scan_fn of mamba_ssm, the same
+              recurrence); None reads FLOATSENSE_MAMBA_SCAN (default
+              'chunked').
         """
         super().__init__()
+        self.scan = scan or os.environ.get("FLOATSENSE_MAMBA_SCAN", "chunked")
+        if self.scan not in ("chunked", "cuda"):
+            raise ValueError(f"unknown Mamba scan: {self.scan}")
         inner = expand * channels
         self.state_dim = state_dim
         self.inner = inner
@@ -988,6 +1004,21 @@ class _SelectiveSSMLayer(nn.Module):
         output = local + cumulative * torch.stack(initial, dim=-1)[..., None]
         return output.reshape(shape[:3] + (-1,))[..., :length]
 
+    def _fused_scan(self, hidden: torch.Tensor, delta: torch.Tensor,
+                    a_matrix: torch.Tensor, b_matrix: torch.Tensor,
+                    c_matrix: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
+        """The same recurrence, readout, skip and gate as the chunked path,
+        with the fused selective_scan_fn of mamba_ssm (CUDA only)."""
+        from mamba_ssm.ops.selective_scan_interface import selective_scan_fn
+        return selective_scan_fn(hidden.contiguous(),
+                                 delta.contiguous(),
+                                 a_matrix.contiguous(),
+                                 b_matrix.contiguous(),
+                                 c_matrix.contiguous(),
+                                 D=self.skip.float(),
+                                 z=gate.contiguous(),
+                                 delta_softplus=False)
+
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """Applies the layer to (batch, channels, length) inputs."""
         length = inputs.shape[-1]
@@ -999,6 +1030,10 @@ class _SelectiveSSMLayer(nn.Module):
         b_matrix = state_params[:, :self.state_dim, :]
         c_matrix = state_params[:, self.state_dim:, :]
         a_matrix = -torch.exp(self.a_log)
+        if self.scan == "cuda":
+            return inputs + self.out_proj(
+                self._fused_scan(hidden, delta, a_matrix, b_matrix, c_matrix,
+                                 gate))
         decay = torch.exp(delta[:, :, None, :] * a_matrix[None, :, :, None])
         source = (delta[:, :, None, :] * b_matrix[:, None, :, :] *
                   hidden[:, :, None, :])
