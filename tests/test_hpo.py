@@ -1425,6 +1425,8 @@ class RobustnessTest(unittest.TestCase):
         self.assertEqual(
             pick.study_state(self.root, "fits", "opt2", 10)["phase"], "held")
 
+    # The protocol runs with EXTEND_BY = 0; enable the rule to test it.
+    @mock.patch.object(C, "EXTEND_BY", 5)
     def test_capped_after_base_budget_freezes(self):
         """A study with its N_TRIALS counted trials that stops drawing (here
         during an extension) is not shelved: its plan is frozen from the
@@ -1684,6 +1686,8 @@ class RobustnessTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             pick.operator_retry(self.root, "search/tcn_ref")
 
+    # The protocol runs with EXTEND_BY = 0; enable the rule to test it.
+    @mock.patch.object(C, "EXTEND_BY", 5)
     def test_extension_capped_retried_once(self):
         """An extension capped by shelved trials shelves the study for one
         delayed retry; capped again after it, the plan is frozen."""
