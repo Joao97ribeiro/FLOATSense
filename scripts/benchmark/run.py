@@ -40,7 +40,7 @@ flags.DEFINE_string("output_root", "outputs", "Root of the run outputs.")
 flags.DEFINE_string("results_csv", None,
                     "Where the table goes (default: <output_root>/tables/results.csv).")
 flags.DEFINE_string("test_split", "test", "Split providing the regime cells.")
-flags.DEFINE_integer("num_resamples", 1000, "Bootstrap resamples (0 = none).")
+flags.DEFINE_integer("num_resamples", 2000, "Bootstrap resamples (0 = none).")
 flags.DEFINE_integer("num_workers", 16, "Parallel scoring processes.")
 
 TOWERS = ("ref", "opt1", "opt2")

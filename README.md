@@ -440,7 +440,7 @@ paper runs were trained with `--deterministic=False`.
 ### Bootstrap confidence intervals
 
 The confidence intervals are percentile-bootstrap intervals
-($B = 1{,}000$, 95%) whose resampling unit is the **operating
+($B = 2{,}000$, 95%) whose resampling unit is the **operating
 condition** (wind speed, $H_s$, $T_p$): each replicate draws the test
 conditions with replacement and keeps all six realizations of each
 drawn condition. The six realizations share their met-ocean state, so

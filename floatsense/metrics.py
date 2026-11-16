@@ -93,7 +93,7 @@ def condition_key(index_df: pd.DataFrame) -> pd.Series:
 def cluster_bootstrap(damage_true: np.ndarray,
                       damage_rec: np.ndarray,
                       clusters: np.ndarray,
-                      num_resamples: int = 1000,
+                      num_resamples: int = 2000,
                       seed: int = 0) -> Dict[str, List[float]]:
     """Percentile 95% CI of each metric, resampling clusters with replacement.
 
