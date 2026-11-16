@@ -128,7 +128,7 @@ EXIT_RESTART = 99
 MAX_ALERTS_SHOWN = 20  # most recent alerts listed by the status
 STATUS_REFRESH_SECONDS = 600  # reload period of status.html
 TOP_K = 3  # best ranked models listed per criterion (top<TOP_K>.csv)
-NUM_RESAMPLES = 1000  # bootstrap resamples of the benchmark scorer
+NUM_RESAMPLES = 2000  # bootstrap resamples of the benchmark scorer
 
 # --- Defaults of the command lines -------------------------------------------
 DEFAULT_ROOT = "outputs/hpo"
