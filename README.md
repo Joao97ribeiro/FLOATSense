@@ -254,7 +254,7 @@ python -c "from floatsense import load_tower; \
   t = load_tower('data/FLOATSense', 'opt2'); print(t.load(25).shape, t.channels[:4])"
 ```
 
-(Manual alternative: download `FLOATSense-review.zip` from
+(Manual alternative: download `FLOATSense-review-r2.zip` from
 [https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e](https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e), unzip it, and
 `mkdir -p data && mv FLOATSense-review data/FLOATSense`.) The subset also holds the
 trained checkpoints, the reference per-simulation results of the paper,
