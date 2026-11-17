@@ -31,7 +31,7 @@ CODE_URL = f"https://anonymous.4open.science/r/{CODE_ID}/" if CODE_ID else ""
 CODE_ZIP = (f"https://anonymous.4open.science/api/repo/{CODE_ID}/zip"
             if CODE_ID else "")
 DATA_URL = "https://osf.io/h54t6/?view_only=73f55c8d86214fe1b943ede5260ddf4e"
-DATA_ZIP = ("https://osf.io/download/6ab737febca12c92231409b9/"
+DATA_ZIP = ("https://osf.io/download/6afcb47b41ee7cf6a5557210/"
             "?view_only=73f55c8d86214fe1b943ede5260ddf4e")
 FORBIDDEN = [
     "joao", "ribeiro", "tavares", "faez", "ahmed", "decodelab", "mit.edu",
