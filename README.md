@@ -489,9 +489,10 @@ below by name with its value; the search grids are in
    gradient clipping (`GRAD_CLIP`), the batch size, the crops, the loss,
    the inputs and the targets. Models above `MAX_PARAMS_M` (60) million
    trainable parameters are rejected before training (a failed trial, not
-   counted). If a study's best trial comes after the `EXTEND_AFTER`-th
-   (20th), the three studies of that model get `EXTEND_BY` (20) more
-   trials.
+   counted). The budget is fixed: no study receives extra trials. The
+   extension rule of the code (more trials for the three studies of a
+   model when a study's best trial comes after the `EXTEND_AFTER`-th,
+   20th) is withdrawn, with `EXTEND_BY` set to 0.
 2. **Confirmation** ([`hpo/confirm.py`](./hpo/confirm.py)): the `N_TOP`
    (2) best configurations of each study, frozen once, are retrained with
    `N_SEEDS` (3) seeds for `EPOCHS_FINAL` (300) epochs; the winner has
@@ -611,7 +612,9 @@ details. Worker and advance alerts are named after the worker or model.
   retry first, and its plan is frozen only if it stops again. The plan
   records `n_trials_counted`, `target` and `stopped_early` (why it
   stopped before its target, with its kind), shown by the status and in
-  `configs.csv`. A study is also shelved for good with too few eligible
+  `configs.csv`. (With `EXTEND_BY` at 0 no study is extended, so the
+  extension cases here and below apply only if the rule is enabled.) A
+  study is also shelved for good with too few eligible
   trials for a plan (`no_plan`), no finite median in the confirmation
   (`no_finite_median`), or a unit shelved for good (`unit_shelved`). The
   extension rule of a model waits while one of its studies is shelved
