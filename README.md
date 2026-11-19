@@ -46,15 +46,19 @@ Dataset and Benchmark for Fatigue Load Reconstruction on Floating
 Offshore Wind Turbine Towers*, which fully describes the dataset, the
 task, the evaluation protocols and the results.
 
-Twenty learned models in eight families and a field-validated physics
-baseline are evaluated within tower, across towers zero-shot and
-few-shot, and under sensor ablation. **Sensor-level leaderboards
-mislead**: the base of the tower does not separate the models and its
-leaders collapse at the top, where at the declared budget only three
-learned models beat a one-gain floor; longer training recovers the top
-for convolutional models, not for attention and state-space ones; five
-simulations of a new tower recover its base, not its top; and a second
-accelerometer axis improves the top at every budget.
+Twenty learned models in eight families and a physics baseline adapted
+from a field-validated method are evaluated within tower, across towers
+zero-shot and few-shot, and under sensor ablation, on two training
+tracks: a fixed 50-epoch budget and a validation-tuned track (`hpo/`).
+**Aggregate accuracy can be misleading**: near the tower top, a control
+that sees only the true operating condition beats every sensor model
+trained under the fixed budget, yet tracks no individual realization.
+The leading models saturate at the base, but only three beat a
+one-constant baseline at the top under that budget; training longer
+closes the gap for the two convolutional models, and a base-to-top gap
+persists after tuning all twenty. On a new tower, one scale factor per
+height fitted on five simulations beats fine-tuning at the top, and a
+second accelerometer axis improves the top at every training budget.
 
 
 ## What FLOATSense Provides
